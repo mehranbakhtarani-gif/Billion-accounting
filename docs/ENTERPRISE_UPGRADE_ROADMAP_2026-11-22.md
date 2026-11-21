@@ -6,7 +6,7 @@ Baseline: `main` at `fcb443ea7fa22924871aefef13f35d1285841eef`
 
 ## Goals and non-negotiable safeguards
 
-Implement the ten selected capabilities without deleting or silently rewriting existing company data. Existing local IndexedDB snapshots, Firestore collections, invoices, vouchers, inventory, cheques, imports, currencies, and audit logs remain readable throughout migration.
+Implement the ten selected capabilities without deleting or silently rewriting existing company data. Existing local IndexedDB snapshots, Supabase company-scoped records, invoices, vouchers, inventory, cheques, imports, currencies, and audit logs remain readable throughout migration.
 
 - No destructive schema migration.
 - No automatic rewrite of permanent vouchers.
@@ -14,13 +14,13 @@ Implement the ten selected capabilities without deleting or silently rewriting e
 - No stock issue if eligible lot balances are insufficient.
 - No bank auto-match when more than one ledger candidate exists.
 - No production deployment until type-check, build, domain tests, migration checks, and a controlled test-company scenario pass.
-- Device identity is not authentication. Cloud writes must continue to be authorized by Firebase Security Rules and a verified company membership model.
+- Device identity is not authentication. Cloud writes must continue to be authorized by Supabase Row Level Security policies and a verified company membership model.
 
 ## Repository baseline findings
 
-1. The app persists a complete local snapshot in IndexedDB (`src/lib/localAccountingStore.ts`) and subscribes to owner-scoped Firestore collections in `AccountingContext.tsx`.
-2. Firestore ownership currently binds records to `request.auth.uid`. Three devices must therefore use a properly authorized shared company identity/membership design; simply assigning three device IDs or relaxing rules to public access would be unsafe.
-3. Existing Firestore rules are default-deny and validate many entity schemas. Any new fields/collections must be introduced with matching rules and tests, not by broadening access.
+1. The app persists a complete local snapshot in IndexedDB (`src/lib/localAccountingStore.ts`) and subscribes to owner-scoped Supabase company-scoped records in `AccountingContext.tsx`.
+2. Supabase company membership currently binds records to `request.auth.uid`. Three devices must therefore use a properly authorized shared company identity/membership design; simply assigning three device IDs or relaxing rules to public access would be unsafe.
+3. Existing Supabase RLS policies are default-deny and validate many entity schemas. Any new fields/collections must be introduced with matching rules and tests, not by broadening access.
 4. Product currently has a single `lotNumber` field and aggregate `stock`; that is not a multi-lot inventory ledger.
 5. Invoice items carry quantities and unit prices; current product profitability uses the product's current `buyPrice`, not actual issue-layer costs.
 6. Voucher update/delete and year-end closing flows exist. A period lock must guard every entry point, not just the UI.
@@ -51,8 +51,8 @@ Acceptance: replaying one operation twice changes balances once; concurrent edit
 ## Stage 2 — Atomic financial operations
 
 - Introduce a validated command layer for invoice issue/cancel, stock movement, cheque transitions and treasury receipts/payments.
-- Commit related Firestore documents and operation-journal marker in one transaction/batch where Firestore limits permit.
-- For workflows exceeding one Firestore transaction, use a durable saga with explicit pending/completed/compensated states and a reconciliation worker.
+- Commit related Supabase records and operation-journal marker in one transaction/batch where Postgres limits permit.
+- For workflows exceeding one Postgres transaction, use a durable saga with explicit pending/completed/compensated states and a reconciliation worker.
 - Enforce balanced journal lines, unique source references, nonnegative inventory policy, and idempotency at the command boundary.
 - Make retry safe; a network timeout must not create a second voucher.
 
@@ -141,21 +141,31 @@ Do not merge or deploy unfinished enterprise controls to the production Pages br
 
 - Added pure domain primitives for fiscal-period validation, operation-envelope validation and conflict classification, FIFO lot allocation, open-item aging, atomic-plan validation, bank-line reconciliation suggestions, and treasury-voucher link auditing.
 - Upgraded IndexedDB from version 1 to 2 with additive creation of a durable sync outbox and a stable installation identity. Existing snapshot storage is retained.
-- The AccountingContext now initializes the local device identity before auth readiness and registers/updates a device heartbeat under the authenticated Firebase UID.
-- Added owner-scoped Firestore rules for the device registry. Device IDs are explicitly metadata and are not treated as credentials.
+- The AccountingContext now initializes the local device identity before auth readiness and registers/updates a device heartbeat under the authenticated Supabase Auth user ID.
+- Added owner-scoped Supabase RLS policies for the device registry. Device IDs are explicitly metadata and are not treated as credentials.
 - Added automated tests and a GitHub Actions workflow. The base foundation commit `4abaf84` passed type-check, domain tests, and Vite build. Subsequent context/rules integration commits are awaiting their own workflow completion.
 
-### Validation update — 2026-11-22\n\n- GitHub Actions completed successfully for the current PR head `8164ea668134e0b5b79a8b5ab0d2e88f426f566c` (type-check, enterprise domain tests, and production build).\n- This green CI validates compilation and the current pure domain tests; it does not validate Firestore Rules in an emulator, shared membership, real multi-device replay, or accounting concurrency.\n- A dedicated design gate for passwordless company membership and three-device enrollment is documented in `docs/SECURE_COMPANY_ENROLLMENT.md`. The repository currently has no Firebase Functions deployment scaffold, so trusted backend enrollment is not yet live.\n\n### Supabase backend progress — 2026-11-22
+### Validation update — 2026-11-22\n\n- GitHub Actions completed successfully for the current PR head `8164ea668134e0b5b79a8b5ab0d2e88f426f566c` (type-check, enterprise domain tests, and production build).\n- This green CI validates compilation and the current pure domain tests; it does not validate Supabase RLS in an emulator, shared membership, real multi-device replay, or accounting concurrency.\n- A dedicated design gate for passwordless company membership and three-device enrollment is documented in `docs/SECURE_COMPANY_ENROLLMENT.md`. The repository currently has no Supabase Edge Functions deployment scaffold, so trusted backend enrollment is not yet live.\n\n### Supabase backend progress — 2026-11-22
 
 - Confirmed the correct Billion Supabase project is `Holoo pro` (`qsdlthvnfmjbodtdkbqc`); the separate `Glass-Accounting` project is not the Billion target.
 - Applied additive migrations for `billion_company_devices`, `billion_company_invites`, membership-aware RLS policies for passwordless identities, and the transactional `billion_apply_record_batch` RPC.
 - Deployed JWT-verified Edge Function `billion-enrollment` for one-time company bootstrap, invite acceptance, and invite creation.
 - Added browser-safe Supabase client and enrollment helper modules to the repository.
 - Required dashboard actions remain: enable Anonymous Sign-Ins and set the server-only `BILLION_BOOTSTRAP_TOKEN` secret. No service-role key is embedded in the client.
-- The accounting React context still uses its Firebase adapter. Supabase is provisioned, but frontend CRUD/realtime cutover and historical data reconciliation are not yet complete. Do not describe the app as fully migrated yet.
+- The accounting React context still uses its Supabase adapter. Supabase is provisioned, but frontend CRUD/realtime cutover and historical data reconciliation are not yet complete. Do not describe the app as fully migrated yet.
 
 ### Still outstanding in Stage 1
 
-- A device registry scoped to one Firebase UID does not yet allow separate Mehran/Ehsan identities to share one company. That requires a secure company-membership and device-enrollment mechanism, preferably a trusted backend or callable function issuing one-time enrollment grants.
+- A device registry scoped to one Supabase Auth user ID does not yet allow separate Mehran/Ehsan identities to share one company. That requires a secure company-membership and device-enrollment mechanism, preferably a trusted backend or callable function issuing one-time enrollment grants.
 - The outbox is durable locally but is not yet connected to every CRUD write or a cloud replay worker. No claim of live three-device synchronization is made at this point.
 - Conflict review, server-side idempotent application, membership revocation, and multi-device concurrency tests remain outstanding.
+
+
+## Supabase-only cutover update — 2026-11-22
+
+- Removed Firebase SDK and security-rules dependencies, configuration files, Firestore rules, and Firebase PWA network routes.
+- Replaced the accounting context's cloud authentication, CRUD, batched writes, and live subscriptions with Supabase Auth, the company-scoped `billion_records` table, transactional RPC, and Realtime.
+- The app now uses passwordless anonymous sessions and one-time invitation enrollment. The owner can issue a one-time invite from the app for the other devices.
+- The owner explicitly accepted loss of previous Firebase cloud data; no Firestore export/import was attempted. Existing local IndexedDB snapshots remain device-local and are not automatically imported to the new company.
+- Supabase dashboard setup remains required: enable Anonymous Sign-Ins and set the server-only `BILLION_BOOTSTRAP_TOKEN` Edge Function secret.
+- End-to-end three-device validation and final GitHub Actions validation remain release gates.
