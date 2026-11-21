@@ -2105,6 +2105,13 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       if (!inv || inv.status === 'cancelled') return;
 
       if (inv.invoiceType !== 'proforma') {
+        const reversalIssuesStock = ['purchase', 'sale_return'].includes(inv.invoiceType);
+        if (reversalIssuesStock) {
+          assertSufficientStock(
+            new Map(products.map((product) => [product.id, product.stock])),
+            inv.items.map((item) => ({ productId: item.productId, quantity: item.quantity })),
+          );
+        }
         // Restore stock accurately
         for (const item of inv.items) {
           const prod = products.find((p) => p.id === item.productId);
@@ -2163,13 +2170,27 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       const inv = invoices.find((i) => i.id === invoiceId);
       if (!inv || inv.invoiceType !== 'proforma' || inv.status === 'cancelled') return;
 
+      assertSufficientStock(
+        new Map(products.map((product) => [product.id, product.stock])),
+        inv.items.map((item) => ({ productId: item.productId, quantity: item.quantity })),
+      );
       let cogsTotal = 0;
+      const stockDeltas = new Map<string, number>();
       for (const item of inv.items) {
         const prod = products.find((p) => p.id === item.productId);
-        if (prod) {
-          cogsTotal += prod.buyPrice * item.quantity;
-          await adjustProductStock(prod.id, Math.max(0, prod.stock - item.quantity));
+        if (!prod) throw new Error(`کالای پیش‌فاکتور یافت نشد: ${item.productName || item.productId}`);
+        if (!Number.isFinite(item.quantity) || item.quantity <= 0) {
+          throw new Error(`مقدار کالای پیش‌فاکتور معتبر نیست: ${item.productName || item.productId}`);
         }
+        cogsTotal += prod.buyPrice * item.quantity;
+        stockDeltas.set(prod.id, (stockDeltas.get(prod.id) ?? 0) - item.quantity);
+      }
+      for (const [productId, delta] of stockDeltas) {
+        const prod = products.find((p) => p.id === productId);
+        if (!prod) throw new Error(`کالای پیش‌فاکتور یافت نشد: ${productId}`);
+        const nextStock = Number((prod.stock + delta).toFixed(2));
+        if (nextStock < -1e-9) throw new Error(`موجودی کالا برای تبدیل پیش‌فاکتور کافی نیست: ${prod.name}`);
+        await adjustProductStock(productId, Math.max(0, nextStock));
       }
 
       const saleNumber = inv.invoiceNumber.replace(/^PF-/, 'F-');
