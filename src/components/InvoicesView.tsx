@@ -654,7 +654,7 @@ export const InvoicesView: React.FC<{ initialIntent?: string; clearIntent?: () =
 
   const handleExportCsv = () => {
     exportToCsv(
-      `holoo-yarn-invoices-${profile.fiscalYear}.csv`,
+      `billion-yarn-invoices-${profile.fiscalYear}.csv`,
       [
         'شماره فاکتور',
         'شماره مالیاتی مودیان',
