@@ -254,7 +254,7 @@ export const BrandStudioView: React.FC = () => {
               <div className="relative w-full h-full min-h-[340px]">
                 <img
                   src="/src/assets/images/corporate_hq_banner_1795265734976.jpg"
-                  alt="نمونه هویت بصری شرکتی هلو Apex"
+                  alt="نمونه هویت بصری شرکتی بیلیون"
                   referrerPolicy="no-referrer"
                   onError={() => setImgFallback(true)}
                   className="w-full h-full object-cover min-h-[340px]"
@@ -282,7 +282,7 @@ export const BrandStudioView: React.FC = () => {
             <div className="flex justify-end">
               <a
                 href={generatedUrl}
-                download={`holoo-apex-asset-${imageSize}-${aspectRatio.replace(':', 'x')}.png`}
+                download={`billion-brand-asset-${imageSize}-${aspectRatio.replace(':', 'x')}.png`}
                 className="inline-flex items-center gap-2 px-4 py-2 text-xs font-semibold text-white bg-slate-900 dark:bg-teal-700 hover:bg-slate-800 rounded-lg"
               >
                 <Download className="w-4 h-4" />
