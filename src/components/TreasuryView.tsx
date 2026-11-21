@@ -23,6 +23,7 @@ import { addDaysToShamsi, diffShamsiDays, useChequeAlertPreferences } from '../l
 import { fuzzyFilterAndRank } from '../lib/fuzzySearch';
 import { numberToPersianWords } from '../lib/enterpriseAccounting';
 import { reconcileBankLines } from '../lib/enterpriseControls';
+import { computeFxRevaluationReport } from '../lib/enterpriseAccounting';
 import { SmartSearchCombobox, SmartSearchOption } from './SmartSearchCombobox';
 import { FuzzyTableOption, FuzzyTableSearch } from './FuzzyTableSearch';
 
@@ -46,6 +47,8 @@ export const TreasuryView: React.FC<TreasuryViewProps> = ({ initialIntent, clear
     parties,
     accounts,
     vouchers,
+    currencies,
+    exchangeRates,
     trialBalance,
     profile,
     addCheque,
@@ -60,7 +63,7 @@ export const TreasuryView: React.FC<TreasuryViewProps> = ({ initialIntent, clear
   const { prefs: alertPrefs } = useChequeAlertPreferences();
 
   const [tab, setTab] = useState<
-    'cheques' | 'quick' | 'transfer' | 'rasgiri' | 'reconciliation' | 'cheque-print' | 'fx'
+    'cheques' | 'quick' | 'transfer' | 'rasgiri' | 'reconciliation' | 'cheque-print' | 'fx' | 'fx-revaluation'
   >('cheques');
   const [showAddCheque, setShowAddCheque] = useState(false);
 
@@ -223,6 +226,8 @@ export const TreasuryView: React.FC<TreasuryViewProps> = ({ initialIntent, clear
       setTab('cheque-print');
     } else if (initialIntent === 'fx') {
       setTab('fx');
+    } else if (initialIntent === 'fx-revaluation') {
+      setTab('fx-revaluation');
     }
     clearIntent?.();
   }, [initialIntent, clearIntent]);
@@ -329,6 +334,12 @@ export const TreasuryView: React.FC<TreasuryViewProps> = ({ initialIntent, clear
     }
   };
 
+  const [fxAsOfDate, setFxAsOfDate] = useState(getTodayShamsi());
+  const fxRevaluationRows = useMemo(
+    () => computeFxRevaluationReport(vouchers, exchangeRates, currencies, fxAsOfDate),
+    [vouchers, exchangeRates, currencies, fxAsOfDate]
+  );
+  const fxRevaluationNet = fxRevaluationRows.reduce((sum, row) => sum + row.revaluationDiffIrr, 0);
   const foreignBalances = useMemo(() => {
     const balances = new Map<string, { currencyCode: string; accountCode: string; accountTitle: string; foreignBalance: number; baseBalance: number }>();
     vouchers.filter((voucher) => voucher.status === 'permanent' && voucher.currencyCode && voucher.currencyCode !== 'IRR').forEach((voucher) => {
@@ -538,6 +549,7 @@ export const TreasuryView: React.FC<TreasuryViewProps> = ({ initialIntent, clear
             { id: 'reconciliation', label: 'مغایرت‌گیری بانکی' },
             { id: 'cheque-print', label: 'چاپ چک صیادی' },
             { id: 'fx', label: 'مانده حساب‌های ارزی' },
+            { id: 'fx-revaluation', label: 'گزارش و سند تسعیر ارز' },
           ].map((t) => (
             <button
               key={t.id}
@@ -580,6 +592,52 @@ export const TreasuryView: React.FC<TreasuryViewProps> = ({ initialIntent, clear
           );
         })}
       </div>
+
+      {tab === 'fx-revaluation' && (
+        <div className="space-y-4">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4 flex flex-wrap items-end justify-between gap-3">
+            <div><label className="block text-xs text-slate-500 mb-1">تاریخ مبنای تسعیر</label>
+              <input value={fxAsOfDate} onChange={(e) => setFxAsOfDate(e.target.value)} className="px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 font-code text-xs" /></div>
+            <div className="text-xs"><div className="text-slate-500">خالص سود / (زیان) تسعیر</div>
+              <strong className={`font-code text-base ${fxRevaluationNet >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>{formatMoney(fxRevaluationNet, unit)}</strong></div>
+            <button disabled={fxRevaluationRows.length === 0 || Math.abs(fxRevaluationNet) < 0.5 || vouchers.some((v) => v.referenceId === `fx-revaluation:${fxAsOfDate}`)}
+              onClick={async () => {
+                const rows = fxRevaluationRows.filter((row) => Math.abs(row.revaluationDiffIrr) >= 0.5);
+                if (!rows.length) { showToast('اختلاف بااهمیتی برای ثبت تسعیر وجود ندارد.'); return; }
+                const lines = rows.map((row) => row.revaluationDiffIrr > 0 ? ({
+                  accountCode: row.accountCode, accountTitle: row.accountTitle, partyId: row.partyId, partyName: row.partyName,
+                  description: `افزایش ارزش دفتری ناشی از تسعیر ${row.currencyCode}`, debit: row.revaluationDiffIrr, credit: 0,
+                }) : ({
+                  accountCode: row.accountCode, accountTitle: row.accountTitle, partyId: row.partyId, partyName: row.partyName,
+                  description: `کاهش ارزش دفتری ناشی از تسعیر ${row.currencyCode}`, debit: 0, credit: Math.abs(row.revaluationDiffIrr),
+                }));
+                if (fxRevaluationNet > 0) lines.push({ accountCode: '60901', accountTitle: 'سود ناشی از تسعیر دارایی‌ها و بدهی‌های ارزی', description: 'سود خالص تسعیر ارز', debit: 0, credit: fxRevaluationNet });
+                else if (fxRevaluationNet < 0) lines.push({ accountCode: '80901', accountTitle: 'زیان تسعیر ارز و کارمزدهای بانکی', description: 'زیان خالص تسعیر ارز', debit: Math.abs(fxRevaluationNet), credit: 0 });
+                await createVoucher({ date: fxAsOfDate, description: `سند تسعیر ارز در تاریخ ${fxAsOfDate}`, voucherType: 'general', status: 'permanent', referenceId: `fx-revaluation:${fxAsOfDate}`, lines });
+              }} className="px-4 py-2 rounded-lg bg-teal-700 text-white text-xs font-semibold disabled:opacity-40">صدور سند تسعیر ارز</button>
+          </div>
+          <div className="rounded-xl border border-amber-200 bg-amber-50 dark:border-amber-900/60 dark:bg-amber-950/20 p-3 text-xs text-amber-900 dark:text-amber-200">
+            این گزارش فقط اسناد دائم و حساب‌های پولی ارزی را لحاظ می‌کند. نرخ مؤثر از نرخ‌های ثبت‌شده تا تاریخ مبنا گرفته می‌شود؛ قبل از صدور سند، نرخ‌های روز و طبقه‌بندی حساب‌ها را بررسی کنید. سند هر تاریخ فقط یک‌بار قابل صدور است.
+          </div>
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden">
+            <div className="overflow-x-auto"><table className="w-full text-right text-xs">
+              <thead><tr className="bg-slate-50 dark:bg-slate-950 text-slate-500 border-b border-slate-200 dark:border-slate-800">
+                <th className="px-3 py-3">حساب / طرف‌حساب</th><th className="px-3 py-3">ارز</th><th className="px-3 py-3 text-left">مانده ارزی</th>
+                <th className="px-3 py-3 text-left">نرخ مبنا</th><th className="px-3 py-3 text-left">مانده تسعیرشده</th><th className="px-3 py-3 text-left">اختلاف تسعیر</th>
+              </tr></thead><tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                {fxRevaluationRows.length === 0 ? <tr><td colSpan={6} className="px-4 py-10 text-center text-slate-500">مانده پولی ارزی برای تسعیر وجود ندارد یا نرخ معتبری ثبت نشده است.</td></tr> : fxRevaluationRows.map((row) => (
+                  <tr key={row.key}><td className="px-3 py-3"><div className="font-semibold">{row.accountTitle}</div><div className="text-[10px] text-slate-500">{row.accountCode}{row.partyName ? ` · ${row.partyName}` : ''}</div></td>
+                    <td className="px-3 py-3 font-bold text-sky-700">{row.currencyCode}</td>
+                    <td className="px-3 py-3 text-left font-code">{toPersianDigits(row.netForeignBalance.toLocaleString('en-US', { maximumFractionDigits: 4 }))}</td>
+                    <td className="px-3 py-3 text-left font-code">{toPersianDigits(row.currentRateToIrr.toLocaleString('en-US'))}</td>
+                    <td className="px-3 py-3 text-left font-code">{formatMoney(row.revaluedIrrBalance, unit, false)}</td>
+                    <td className={`px-3 py-3 text-left font-code font-bold ${row.revaluationDiffIrr >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>{formatMoney(row.revaluationDiffIrr, unit, false)}</td>
+                  </tr>
+                ))}
+              </tbody></table></div>
+          </div>
+        </div>
+      )}
 
       {tab === 'fx' && (
         <div className="space-y-4">
