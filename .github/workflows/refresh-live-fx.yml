@@ -21,60 +21,67 @@ jobs:
         with:
           ref: main
           fetch-depth: 0
-      - name: Fetch Tehran market rates
+      - name: Fetch Tehran market rates from AlanChand
+        env:
+          ALANCHAND_TOKEN: ${{ secrets.ALANCHAND_TOKEN }}
         run: |
           node <<'NODE'
           const fs = require('node:fs');
-          const url = 'https://call1.tgju.org/ajax.json';
-          const normalize = (v) => {
-            const p = '۰۱۲۳۴۵۶۷۸۹', a = '٠١٢٣٤٥٦٧٨٩';
-            const s = String(v ?? '').replace(/[۰-۹٠-٩]/g, ch => {
-              const i = p.indexOf(ch); return String(i >= 0 ? i : a.indexOf(ch));
-            }).replace(/[^0-9.-]/g, '');
-            const n = Number(s); return Number.isFinite(n) ? n : 0;
+          const token = process.env.ALANCHAND_TOKEN;
+          if (!token) throw new Error('Missing ALANCHAND_TOKEN GitHub Actions secret. Add the free test token in repository Settings > Secrets and variables > Actions.');
+          const specs = [
+            { code: 'USD', key: 'usd', name: 'دلار آمریکا', symbol: '$' },
+            { code: 'CNY', key: 'cny', name: 'یوان چین', symbol: '¥' },
+            { code: 'AED', key: 'aed', name: 'درهم امارات', symbol: 'د.إ' },
+            { code: 'EUR', key: 'eur', name: 'یورو اروپا', symbol: '€' }
+          ];
+          const number = value => {
+            const n = Number(String(value ?? '').replace(/,/g, '').trim());
+            return Number.isFinite(n) ? n : 0;
           };
           (async () => {
-            const response = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0 HolooERP/1.0' }, signal: AbortSignal.timeout(15000) });
-            if (!response.ok) throw new Error('TGJU HTTP ' + response.status);
-            const payload = await response.json();
-            const current = payload?.current || {};
-            const specs = [
-              { code: 'USD', key: 'price_dollar_rl', name: 'دلار آمریکا', symbol: '$' },
-              { code: 'EUR', key: 'price_eur', name: 'یورو اروپا', symbol: '€' },
-              { code: 'AED', key: 'price_aed', name: 'درهم امارات', symbol: 'د.إ' },
-              { code: 'CNY', key: 'price_cny', name: 'یوان چین', symbol: '¥' }
-            ];
-            const items = specs.flatMap(s => {
-              const row = current[s.key];
-              const priceIrr = Math.round(normalize(row?.p));
-              if (!row || priceIrr <= 0) return [];
-              const dt = String(row.dt || '').toLowerCase();
-              const direction = dt === 'high' ? 'up' : dt === 'low' ? 'down' : 'flat';
-              const change = Math.round(normalize(row.d));
-              const percent = Math.abs(normalize(row.dp));
+            const url = 'https://api.alanchand.com/?type=currencies&symbols=usd,cny,aed,eur';
+            const response = await fetch(url, {
+              headers: { Authorization: 'Bearer ' + token, Accept: 'application/json' },
+              signal: AbortSignal.timeout(20000)
+            });
+            const body = await response.text();
+            if (!response.ok) throw new Error('AlanChand API HTTP ' + response.status + ': ' + body.slice(0, 500));
+            const payload = JSON.parse(body);
+            const items = specs.flatMap(spec => {
+              const row = payload?.[spec.key];
+              // AlanChand currency values are published in toman; the ERP stores IRR.
+              const sellToman = number(row?.sell);
+              if (!row || sellToman <= 0) return [];
+              const changePercent = number(row.dayChange);
               return [{
-                ...s, priceIrr,
-                highIrr: Math.round(normalize(row.h)) || undefined,
-                lowIrr: Math.round(normalize(row.l)) || undefined,
-                changeIrr: direction === 'down' ? -Math.abs(change) : Math.abs(change),
-                changePercent: direction === 'down' ? -percent : percent,
-                direction,
-                updatedTime: String(row.t || row.ts || '')
+                code: spec.code,
+                name: spec.name,
+                symbol: spec.symbol,
+                priceIrr: Math.round(sellToman * 10),
+                highIrr: Math.round(number(row.high) * 10) || undefined,
+                lowIrr: Math.round(number(row.low) * 10) || undefined,
+                changeIrr: 0,
+                changePercent,
+                direction: changePercent > 0 ? 'up' : changePercent < 0 ? 'down' : 'flat',
+                updatedTime: String(row.updated_at || '')
               }];
             });
-            if (!items.length) throw new Error('TGJU returned no valid FX rows; preserving last published data.');
+            if (items.length !== specs.length) {
+              throw new Error('AlanChand returned incomplete currency data. Received: ' + items.map(x => x.code).join(', '));
+            }
             fs.mkdirSync('public', { recursive: true });
             fs.writeFileSync('public/live-fx.json', JSON.stringify({
               fetchedAt: Date.now(),
-              source: 'بازار آزاد تهران (TGJU)',
-              sourceUrl: 'https://www.tgju.org/',
+              source: 'بازار آزاد تهران (الان‌چند)',
+              sourceUrl: 'https://alanchand.com/',
               items
             }, null, 2) + '\n');
-            console.log('Published rates:', items.map(x => x.code).join(', '));
+            console.log('Published AlanChand rates:', items.map(x => x.code + '=' + x.priceIrr).join(', '));
           })().catch(err => { console.error(err); process.exit(1); });
           NODE
       - name: Commit updated rates
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: "chore: refresh live FX rates"
+          commit_message: "chore: refresh live FX rates from AlanChand"
           file_pattern: public/live-fx.json
