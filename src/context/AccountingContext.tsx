@@ -2099,66 +2099,49 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
   const cancelInvoice = useCallback(
     async (invoiceId: string) => {
-      const inv = invoices.find((i) => i.id === invoiceId);
+      const inv = invoices.find((invoice) => invoice.id === invoiceId);
       if (!inv || inv.status === 'cancelled') return;
-
-      if (inv.invoiceType !== 'proforma') {
-        const reversalIssuesStock = ['purchase', 'sale_return'].includes(inv.invoiceType);
-        if (reversalIssuesStock) {
-          assertSufficientStock(
-            new Map(products.map((product) => [product.id, product.stock])),
-            inv.items.map((item) => ({ productId: item.productId, quantity: item.quantity })),
-          );
-        }
-        // Restore stock accurately
-        for (const item of inv.items) {
-          const prod = products.find((p) => p.id === item.productId);
-          if (prod) {
-            const wasOut =
-              inv.invoiceType === 'sale' ||
-              inv.invoiceType === 'purchase_return' ||
-              inv.invoiceType === 'waste';
-            const restoreDelta = wasOut ? item.quantity : -item.quantity;
-            await adjustProductStock(prod.id, Math.max(0, Number((prod.stock + restoreDelta).toFixed(2))));
+      const origVoucher = inv.voucherId ? vouchers.find((voucher) => voucher.id === inv.voucherId) : undefined;
+      if (inv.voucherId && !origVoucher) throw new Error(`سند اصلی فاکتور ${inv.invoiceNumber} یافت نشد؛ ابطال بدون سند معکوس مجاز نیست.`);
+      const appliedStock: Array<{ productId: string; previousStock: number }> = [];
+      let reversalVoucher: Voucher | undefined;
+      try {
+        if (inv.invoiceType !== 'proforma') {
+          const wasOut = ['sale', 'purchase_return', 'waste'].includes(inv.invoiceType);
+          const stockDeltas = new Map<string, number>();
+          for (const item of inv.items) {
+            if (!Number.isFinite(item.quantity) || item.quantity <= 0) throw new Error(`مقدار کالای فاکتور ${inv.invoiceNumber} معتبر نیست.`);
+            const product = products.find((candidate) => candidate.id === item.productId);
+            if (!product) throw new Error(`کالای فاکتور یافت نشد: ${item.productName || item.productId}`);
+            stockDeltas.set(product.id, (stockDeltas.get(product.id) || 0) + (wasOut ? item.quantity : -item.quantity));
           }
-        }
-
-        // Issue reversing voucher for linked accounting voucher
-        if (inv.voucherId) {
-          const origVoucher = vouchers.find((v) => v.id === inv.voucherId);
+          if (!wasOut) assertSufficientStock(new Map(products.map((product) => [product.id, product.stock])), inv.items.map((item) => ({ productId: item.productId, quantity: item.quantity })));
+          for (const [productId, delta] of stockDeltas) {
+            const product = products.find((candidate) => candidate.id === productId);
+            if (!product) throw new Error(`کالای فاکتور یافت نشد: ${productId}`);
+            const nextStock = Number((product.stock + delta).toFixed(2));
+            if (!Number.isFinite(nextStock) || nextStock < -1e-9) throw new Error(`موجودی کالا برای ابطال فاکتور کافی نیست: ${product.name}`);
+            await adjustProductStock(productId, Math.max(0, nextStock));
+            appliedStock.push({ productId, previousStock: product.stock });
+          }
           if (origVoucher) {
-            await createVoucher({
-              date: getTodayShamsi(),
-              description: `سند ابطال فاکتور ${inv.invoiceNumber} (معکوس سند #${origVoucher.voucherNumber})`,
-              voucherType: 'general',
-              status: 'permanent',
-              lines: origVoucher.lines.map((l) => ({
-                ...l,
-                description: `ابطال فاکتور ${inv.invoiceNumber}: ${l.description}`,
-                debit: l.credit,
-                credit: l.debit,
-              })),
-              referenceId: inv.id,
-            });
+            reversalVoucher = await createVoucher({ date: getTodayShamsi(), description: `سند ابطال فاکتور ${inv.invoiceNumber} (معکوس سند #${origVoucher.voucherNumber})`, voucherType: 'general', status: 'permanent', lines: origVoucher.lines.map((line) => ({ ...line, description: `ابطال فاکتور ${inv.invoiceNumber}: ${line.description}`, debit: line.credit, credit: line.debit, foreignDebit: line.foreignCredit, foreignCredit: line.foreignDebit })), referenceId: inv.id });
           }
         }
-      }
-
-      if (user) {
-        try {
-          await updateDoc(doc(db, 'invoices', invoiceId), {
-            status: 'cancelled',
-            updatedAt: serverTimestamp(),
-          });
-        } catch (err) {
-          handleSupabaseError(err, OperationType.UPDATE, `invoices/${invoiceId}`);
+        if (user) await updateDoc(doc(db, 'invoices', invoiceId), { status: 'cancelled', updatedAt: serverTimestamp() });
+        else setInvoices((prev) => prev.map((invoice) => invoice.id === invoiceId ? { ...invoice, status: 'cancelled' } : invoice));
+      } catch (error) {
+        for (const snapshot of appliedStock.reverse()) {
+          try { await adjustProductStock(snapshot.productId, snapshot.previousStock); }
+          catch (rollbackError) { console.error('Invoice cancellation stock rollback failed', snapshot.productId, rollbackError); }
         }
-      } else {
-        setInvoices((prev) =>
-          prev.map((i) => (i.id === invoiceId ? { ...i, status: 'cancelled' } : i))
-        );
+        if (reversalVoucher) {
+          try { await createVoucher({ date: getTodayShamsi(), description: `سند جبرانی خودکار بابت عدم تکمیل ابطال فاکتور ${inv.invoiceNumber}`, voucherType: 'general', status: 'permanent', referenceId: `invoice-cancel-compensation:${inv.id}`, lines: reversalVoucher.lines.map((line) => ({ ...line, description: `برگشت سند ابطال فاکتور #${reversalVoucher!.voucherNumber}: ${line.description}`, debit: line.credit, credit: line.debit, foreignDebit: line.foreignCredit, foreignCredit: line.foreignDebit })) }); }
+          catch (compensationError) { console.error('Invoice cancellation voucher compensation failed', reversalVoucher.id, compensationError); }
+        }
+        throw new Error(`ابطال فاکتور کامل نشد؛ تلاش برای جبران موجودی و اسناد انجام شد. علت: ${error instanceof Error ? error.message : String(error)}`);
       }
-      showToast(`فاکتور ${inv.invoiceNumber} ابطال شد، موجودی انبار برگشت خورد و سند معکوس ثبت گردید.`);
+      showToast(`فاکتور ${inv.invoiceNumber} ابطال شد و گردش موجودی/سند معکوس ثبت گردید.`);
     },
     [invoices, products, vouchers, adjustProductStock, createVoucher, user, showToast]
   );
