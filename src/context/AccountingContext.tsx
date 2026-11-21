@@ -3073,6 +3073,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       const productSnapshots = [...groupedItems.values()].map((item) => {
         const product = products.find((candidate) => candidate.id === item.productId);
         if (!product) throw new Error(`کالای ${item.productName} در انبار یافت نشد.`);
+        if (!Number.isFinite(product.stock) || product.stock < 0 || !Number.isFinite(product.buyPrice) || product.buyPrice < 0) throw new Error(`موجودی یا بهای میانگین کالای ${item.productName} معتبر نیست.`);
         return { item, product };
       });
       const costTotal = dossier.costs.reduce((sum, cost) => {
@@ -3104,7 +3105,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       const updated: typeof productSnapshots = [];
       try {
         for (const { item, product } of productSnapshots) {
-          const previousQuantity = Math.max(0, product.stock);
+          const previousQuantity = product.stock;
           const nextQuantity = Number((previousQuantity + item.weightKg).toFixed(2));
           const weightedBuy = nextQuantity > 0 ? Math.round((previousQuantity * product.buyPrice + item.weightKg * item.finalUnitCostIrr) / nextQuantity) : item.finalUnitCostIrr;
           await updateProduct(product.id, { stock: nextQuantity, buyPrice: weightedBuy, lotNumber: item.lotNumber || product.lotNumber });
