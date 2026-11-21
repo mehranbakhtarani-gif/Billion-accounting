@@ -200,6 +200,10 @@ export const CorporateView: React.FC<CorporateViewProps> = ({ initialIntent, cle
             </div>
           </div>
 
+          <div className="rounded-xl border border-amber-200 bg-amber-50 dark:border-amber-900/60 dark:bg-amber-950/20 p-3 text-xs text-amber-900 dark:text-amber-200">
+            <div className="font-semibold mb-1">توجه: مبانی محاسبه حقوق نمونه و قابل بازبینی هستند</div>
+            <p>نرخ‌های بیمه ۷٪ کارمند و ۲۳٪ کارفرما، سقف مشمول بیمه و پله‌های مالیات در این نسخه صرفاً فرض محاسباتی‌اند و تنظیمات قانونی سال جاری شرکت محسوب نمی‌شوند. مالیات، معافیت‌ها، مزایای مشمول/غیرمشمول و کارکرد را پیش از قطعی‌سازی با حسابدار و مقررات جاری تطبیق دهید.</p>
+          </div>
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden">
             <div className="overflow-x-auto">
               <table className="w-full text-right text-xs border-collapse">
