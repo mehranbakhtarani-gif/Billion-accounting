@@ -7,13 +7,11 @@ import {
   Calculator,
   ChevronDown,
   ChevronLeft,
-  Cloud,
   FileText,
   FolderTree,
   Keyboard,
   Landmark,
   LayoutDashboard,
-  LogIn,
   Menu,
   Moon,
   Package,
@@ -251,11 +249,27 @@ export default function App() {
     isCloudMode,
     isSyncing,
     toast,
-    loginWithGoogle,
+    bootstrapCloud,
+    joinCloud,
+    showToast,
     setCurrencyUnit,
   } = useAccounting();
 
   const { prefs: chequeAlertPrefs } = useChequeAlertPreferences();
+
+  const connectToCloud = useCallback(async () => {
+    const isFirstDevice = window.confirm('آیا این دستگاه، اولین دستگاه و مدیر اصلی شرکت است؟\n\nتأیید: راه‌اندازی شرکت با کلید اولیه\nلغو: پیوستن به شرکت با کد دعوت');
+    const token = window.prompt(isFirstDevice ? 'کلید راه‌اندازی اولیه را وارد کنید:' : 'کد دعوت یک‌بارمصرف شرکت را وارد کنید:');
+    if (!token?.trim()) return;
+    try {
+      if (isFirstDevice) await bootstrapCloud(token.trim());
+      else await joinCloud(token.trim());
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'اتصال به Supabase ناموفق بود.');
+    }
+  }, [bootstrapCloud, joinCloud, showToast]);
+
+
 
   const chequeAlertSummary = useMemo(
     () =>
@@ -602,11 +616,11 @@ export default function App() {
             </button>
             {!isCloudMode && (
               <button
-                onClick={loginWithGoogle}
-                title="ورود با حساب گوگل برای ذخیره ابری"
+                onClick={connectToCloud}
+                title="اتصال امن به شرکت در Supabase"
                 className="p-1.5 rounded-lg text-teal-700 dark:text-teal-400 hover:bg-teal-50 dark:hover:bg-teal-950/40 shrink-0"
               >
-                <LogIn className="w-4 h-4" />
+                <span className="text-xs font-bold">ابر</span>
               </button>
             )}
           </div>
@@ -861,11 +875,11 @@ export default function App() {
 
             {!isCloudMode ? (
               <button
-                onClick={loginWithGoogle}
+                onClick={connectToCloud}
                 className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold text-white bg-teal-700 hover:bg-teal-800 rounded-lg transition-colors whitespace-nowrap shrink-0"
               >
-                <Cloud className="w-3.5 h-3.5" />
-                <span>ذخیره ابری</span>
+                <span className="text-sm">☁</span>
+                <span>اتصال به شرکت</span>
               </button>
             ) : (
               <button
