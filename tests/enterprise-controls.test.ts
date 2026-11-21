@@ -208,13 +208,7 @@ test('treasury audit detects missing, duplicate and mismatched vouchers', () => 
     { transactionId: 't3', kind: 'amount-mismatch' },
   ]);
 });
-, isBase: false, decimalPlaces: 2, defaultRateToIrr: 600000, active: true }] as any,
-    '1405/09/01',
-  );
-  assert.equal(rows.length, 1);
-  assert.equal(rows[0].netForeignBalance, 10);
-  assert.equal(rows[0].revaluationDiffIrr, 1000000);
-});
+
 test('straight-line depreciation never exceeds depreciable base or salvage value', () => {
   const asset = { id: 'a1', ownerId: 'o1', assetCode: 'FA-1', title: 'تجهیزات', purchaseDate: '2026/01/01', purchaseCost: 1200, salvageValue: 120, usefulLifeYears: 5, accumulatedDepreciation: 1070 };
   assert.equal(calculateMonthlyDepreciation(asset as any), 10);
