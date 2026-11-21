@@ -6,6 +6,22 @@
  * after migration and compatibility tests are in place.
  */
 
+/** Parse one RFC-4180-style CSV row, including quoted commas and escaped double quotes. */
+export function parseCsvRow(input: string): string[] {
+  const fields: string[] = [];
+  let value = '';
+  let quoted = false;
+  for (let index = 0; index < input.length; index += 1) {
+    const char = input[index];
+    if (char === '"') {
+      if (quoted && input[index + 1] === '"') { value += '"'; index += 1; }
+      else quoted = !quoted;
+    } else if (char === ',' && !quoted) { fields.push(value.trim()); value = ''; }
+    else value += char;
+  }
+  fields.push(value.trim());
+  return fields;
+}
 export type FiscalPeriodStatus = 'open' | 'closed';
 
 export interface FiscalPeriod {
