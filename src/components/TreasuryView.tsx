@@ -600,10 +600,12 @@ export const TreasuryView: React.FC<TreasuryViewProps> = ({ initialIntent, clear
               <input value={fxAsOfDate} onChange={(e) => setFxAsOfDate(e.target.value)} className="px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 font-code text-xs" /></div>
             <div className="text-xs"><div className="text-slate-500">خالص سود / (زیان) تسعیر</div>
               <strong className={`font-code text-base ${fxRevaluationNet >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>{formatMoney(fxRevaluationNet, unit)}</strong></div>
-            <button disabled={fxRevaluationRows.length === 0 || Math.abs(fxRevaluationNet) < 0.5 || vouchers.some((v) => v.referenceId === `fx-revaluation:${fxAsOfDate}`)}
+            <button disabled={fxRevaluationRows.every((row) => Math.abs(row.revaluationDiffIrr) < 0.5) || vouchers.some((v) => v.referenceId === `fx-revaluation:${fxAsOfDate}`)}
               onClick={async () => {
                 const rows = fxRevaluationRows.filter((row) => Math.abs(row.revaluationDiffIrr) >= 0.5);
                 if (!rows.length) { showToast('اختلاف بااهمیتی برای ثبت تسعیر وجود ندارد.'); return; }
+                const totalGains = rows.reduce((sum, row) => sum + Math.max(0, row.revaluationDiffIrr), 0);
+                const totalLosses = rows.reduce((sum, row) => sum + Math.max(0, -row.revaluationDiffIrr), 0);
                 const lines = rows.map((row) => row.revaluationDiffIrr > 0 ? ({
                   accountCode: row.accountCode, accountTitle: row.accountTitle, partyId: row.partyId, partyName: row.partyName,
                   description: `افزایش ارزش دفتری ناشی از تسعیر ${row.currencyCode}`, debit: row.revaluationDiffIrr, credit: 0,
@@ -611,8 +613,8 @@ export const TreasuryView: React.FC<TreasuryViewProps> = ({ initialIntent, clear
                   accountCode: row.accountCode, accountTitle: row.accountTitle, partyId: row.partyId, partyName: row.partyName,
                   description: `کاهش ارزش دفتری ناشی از تسعیر ${row.currencyCode}`, debit: 0, credit: Math.abs(row.revaluationDiffIrr),
                 }));
-                if (fxRevaluationNet > 0) lines.push({ accountCode: '60901', accountTitle: 'سود ناشی از تسعیر دارایی‌ها و بدهی‌های ارزی', description: 'سود خالص تسعیر ارز', debit: 0, credit: fxRevaluationNet });
-                else if (fxRevaluationNet < 0) lines.push({ accountCode: '80901', accountTitle: 'زیان تسعیر ارز و کارمزدهای بانکی', description: 'زیان خالص تسعیر ارز', debit: Math.abs(fxRevaluationNet), credit: 0 });
+                if (totalGains > 0) lines.push({ accountCode: '60901', accountTitle: 'سود ناشی از تسعیر دارایی‌ها و بدهی‌های ارزی', description: 'سود تسعیر ارز', debit: 0, credit: totalGains });
+                if (totalLosses > 0) lines.push({ accountCode: '80901', accountTitle: 'زیان تسعیر ارز و کارمزدهای بانکی', description: 'زیان تسعیر ارز', debit: totalLosses, credit: 0 });
                 await createVoucher({ date: fxAsOfDate, description: `سند تسعیر ارز در تاریخ ${fxAsOfDate}`, voucherType: 'general', status: 'permanent', referenceId: `fx-revaluation:${fxAsOfDate}`, lines });
               }} className="px-4 py-2 rounded-lg bg-teal-700 text-white text-xs font-semibold disabled:opacity-40">صدور سند تسعیر ارز</button>
           </div>
