@@ -840,7 +840,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       currencyCode?: string;
       exchangeRate?: number;
     }): Promise<Voucher> => {
-      if (payload.voucherType !== 'closing' && vouchers.some((voucher) => voucher.voucherType === 'closing' && voucher.date.slice(0, 4) === payload.date.slice(0, 4))) throw new Error(`دوره مالی ${payload.date.slice(0, 4)} بسته شده است؛ ثبت سند جدید مجاز نیست.`);
+      if (payload.voucherType !== 'closing' && vouchers.some((voucher) => voucher.voucherType === 'closing' && voucher.date.slice(0, 4) === payload.date.slice(0, 4))) { const message = `دوره مالی ${payload.date.slice(0, 4)} بسته شده است؛ ثبت سند جدید مجاز نیست.`; showToast(message); throw new Error(message); }
       const totalDebit = payload.lines.reduce((s, l) => s + (Number(l.debit) || 0), 0);
       const totalCredit = payload.lines.reduce((s, l) => s + (Number(l.credit) || 0), 0);
       if (Math.abs(totalDebit - totalCredit) > 0 || payload.lines.length < 2) {
@@ -944,7 +944,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     ) => {
       const existing = vouchers.find((v) => v.id === voucherId);
       if (!existing) return;
-      if (vouchers.some((voucher) => voucher.voucherType === 'closing' && (voucher.date.slice(0, 4) === existing.date.slice(0, 4) || voucher.date.slice(0, 4) === payload.date.slice(0, 4)))) throw new Error(`دوره مالی ${existing.date.slice(0, 4)} بسته شده است؛ ویرایش سند مجاز نیست.`);
+      if (vouchers.some((voucher) => voucher.voucherType === 'closing' && (voucher.date.slice(0, 4) === existing.date.slice(0, 4) || voucher.date.slice(0, 4) === payload.date.slice(0, 4)))) { const message = `دوره مالی ${existing.date.slice(0, 4)} بسته شده است؛ ویرایش سند مجاز نیست.`; showToast(message); throw new Error(message); }
       if (existing.status === 'permanent') {
         showToast('اسناد دائم طبق قانون دفاتر قابل ویرایش مستقیم نیستند؛ از دکمه «صدور سند اصلاحی/معکوس» استفاده کنید.');
         return;
@@ -1046,7 +1046,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     async (voucherId: string) => {
       const existing = vouchers.find((voucher) => voucher.id === voucherId);
       if (!existing) return;
-      if (vouchers.some((voucher) => voucher.voucherType === 'closing' && voucher.date.slice(0, 4) === existing.date.slice(0, 4))) throw new Error(`دوره مالی ${existing.date.slice(0, 4)} بسته شده است؛ قطعی‌سازی سند مجاز نیست.`);
+      if (vouchers.some((voucher) => voucher.voucherType === 'closing' && voucher.date.slice(0, 4) === existing.date.slice(0, 4))) { const message = `دوره مالی ${existing.date.slice(0, 4)} بسته شده است؛ قطعی‌سازی سند مجاز نیست.`; showToast(message); throw new Error(message); }
       if (user) {
         try {
           await updateDoc(doc(db, 'vouchers', voucherId), {
