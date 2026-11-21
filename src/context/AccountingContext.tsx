@@ -3035,7 +3035,22 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       if (!dossier.items.length || dossier.items.some((item) => !Number.isFinite(item.weightKg) || item.weightKg <= 0 || !Number.isFinite(item.finalUnitCostIrr) || item.finalUnitCostIrr < 0)) {
         throw new Error('اقلام پرونده واردات دارای وزن یا بهای تمام‌شده نامعتبر هستند.');
       }
-      const productSnapshots = dossier.items.map((item) => {
+      const groupedItems = new Map<string, ImportDossier['items'][number]>();
+      for (const item of dossier.items) {
+        const previous = groupedItems.get(item.productId);
+        if (!previous) groupedItems.set(item.productId, { ...item });
+        else {
+          const combinedWeight = previous.weightKg + item.weightKg;
+          const combinedCost = previous.weightKg * previous.finalUnitCostIrr + item.weightKg * item.finalUnitCostIrr;
+          groupedItems.set(item.productId, {
+            ...previous,
+            weightKg: combinedWeight,
+            finalUnitCostIrr: combinedWeight > 0 ? Math.round(combinedCost / combinedWeight) : 0,
+            lotNumber: previous.lotNumber === item.lotNumber ? previous.lotNumber : '',
+          });
+        }
+      }
+      const productSnapshots = [...groupedItems.values()].map((item) => {
         const product = products.find((candidate) => candidate.id === item.productId);
         if (!product) throw new Error(`کالای ${item.productName} در انبار یافت نشد.`);
         return { item, product };
