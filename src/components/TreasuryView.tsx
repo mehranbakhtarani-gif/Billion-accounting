@@ -22,7 +22,7 @@ import {
 import { addDaysToShamsi, diffShamsiDays, useChequeAlertPreferences } from '../lib/chequeAlerts';
 import { fuzzyFilterAndRank } from '../lib/fuzzySearch';
 import { numberToPersianWords } from '../lib/enterpriseAccounting';
-import { reconcileBankLines } from '../lib/enterpriseControls';
+import { parseCsvRow, reconcileBankLines } from '../lib/enterpriseControls';
 import { computeFxRevaluationReport } from '../lib/enterpriseAccounting';
 import { SmartSearchCombobox, SmartSearchOption } from './SmartSearchCombobox';
 import { FuzzyTableOption, FuzzyTableSearch } from './FuzzyTableSearch';
@@ -256,7 +256,7 @@ export const TreasuryView: React.FC<TreasuryViewProps> = ({ initialIntent, clear
       });
     }));
     const parsedBankRows = bankCsvText.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).map((line, idx) => {
-      const parts = line.split(',').map((p) => p.trim());
+      const parts = parseCsvRow(line);
       const date = parts[0] || getTodayShamsi();
       const desc = parts[1] || `تراکنش بانکی ${idx + 1}`;
       const deposit = Number((parts[2] || '0').replace(/[^\d.-]/g, '')) || 0;
