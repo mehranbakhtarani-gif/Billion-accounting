@@ -281,7 +281,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ initialIntent, clearIn
   const handleExportCurrentReport = () => {
     if (tab === 'trial') {
       exportToCsv(
-        `holoo-trial-balance-8col-${profile.fiscalYear}.csv`,
+        `billion-trial-balance-8col-${profile.fiscalYear}.csv`,
         [
           'کد حساب',
           'عنوان حساب',
@@ -309,7 +309,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ initialIntent, clearIn
       );
     } else if (tab === 'ledger') {
       exportToCsv(
-        `holoo-ledger-${ledgerCode}-${profile.fiscalYear}.csv`,
+        `billion-ledger-${ledgerCode}-${profile.fiscalYear}.csv`,
         ['شماره سند', 'تاریخ', 'کد حساب', 'شرح', 'بدهکار', 'بستانکار', 'مانده'],
         ledgerEntries.map((r) => [
           r.voucherNumber,
@@ -324,7 +324,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ initialIntent, clearIn
     } else if (tab === 'party-ledger') {
       const pName = parties.find((p) => p.id === selectedPartyId)?.code ?? 'party';
       exportToCsv(
-        `holoo-party-ledger-${pName}-${profile.fiscalYear}.csv`,
+        `billion-party-ledger-${pName}-${profile.fiscalYear}.csv`,
         ['شماره سند', 'تاریخ', 'حساب', 'شرح', 'بدهکار', 'بستانکار', 'مانده'],
         partyLedgerEntries.map((r) => [
           r.voucherNumber,
@@ -338,7 +338,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ initialIntent, clearIn
       );
     } else if (tab === 'moroor') {
       exportToCsv(
-        `holoo-moroor-${moroorLevel}-${profile.fiscalYear}.csv`,
+        `billion-moroor-${moroorLevel}-${profile.fiscalYear}.csv`,
         ['کد', 'عنوان حساب', 'تعداد آرتیکل', 'گردش بدهکار', 'گردش بستانکار', 'مانده بدهکار', 'مانده بستانکار'],
         moroorRows.map((r) => [
           r.code,
@@ -352,7 +352,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ initialIntent, clearIn
       );
     } else if (tab === 'seasonal-169') {
       exportToCsv(
-        `holoo-seasonal-169-${profile.fiscalYear}.csv`,
+        `billion-seasonal-169-${profile.fiscalYear}.csv`,
         ['کد طرف‌حساب', 'نام شخص/شرکت', 'شناسه ملی', 'کد اقتصادی', 'تعداد فاکتور', 'فروش خالص', 'مالیات فروش', 'خرید خالص', 'مالیات خرید'],
         seasonal169Rows.map((r) => [
           r.partyCode,
@@ -369,7 +369,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ initialIntent, clearIn
     } else if (tab === 'product-profit') {
       if (profitMode === 'invoice') {
         exportToCsv(
-          `holoo-invoice-profit-${profile.fiscalYear}.csv`,
+          `billion-invoice-profit-${profile.fiscalYear}.csv`,
           ['شماره فاکتور', 'تاریخ', 'مشتری', 'فروش خالص', 'بهای تمام‌شده', 'سود ناخالص', 'حاشیه سود %'],
           invoiceProfitability.map((r) => [
             r.invoiceNumber,
@@ -383,7 +383,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ initialIntent, clearIn
         );
       } else {
         exportToCsv(
-          `holoo-product-profit-${profile.fiscalYear}.csv`,
+          `billion-product-profit-${profile.fiscalYear}.csv`,
           ['کد کالا', 'نام کالا', 'تعداد فروش', 'برگشت از فروش', 'خالص تعداد', 'فروش خالص', 'بهای تمام‌شده', 'سود ناخالص', 'حاشیه سود %'],
           productProfitability.map((r) => [
             r.sku,
@@ -400,7 +400,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ initialIntent, clearIn
       }
     } else {
       exportToCsv(
-        `holoo-trial-balance-${profile.fiscalYear}.csv`,
+        `billion-trial-balance-${profile.fiscalYear}.csv`,
         ['کد حساب', 'عنوان حساب', 'مانده بدهکار', 'مانده بستانکار'],
         trialBalance.map((r) => [r.accountCode, r.accountTitle, r.balanceDebit, r.balanceCredit])
       );
@@ -1030,7 +1030,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ initialIntent, clearIn
                           type="button"
                           onClick={() => openVoucherByNumber(row.voucherNumber)}
                           className="text-teal-700 dark:text-teal-400 hover:underline"
-                          title="مشاهده جزئیات سند حسابداری (دریل‌داون هلو)"
+                          title="مشاهده جزئیات سند حسابداری (دریل‌داون بیلیون)"
                         >
                           #{toPersianDigits(row.voucherNumber)}
                         </button>
@@ -1165,7 +1165,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ initialIntent, clearIn
                           type="button"
                           onClick={() => openVoucherByNumber(row.voucherNumber)}
                           className="text-teal-700 dark:text-teal-400 hover:underline"
-                          title="مشاهده جزئیات سند حسابداری (دریل‌داون هلو)"
+                          title="مشاهده جزئیات سند حسابداری (دریل‌داون بیلیون)"
                         >
                           #{toPersianDigits(row.voucherNumber)}
                         </button>
