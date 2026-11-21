@@ -49,7 +49,7 @@ import {
   VoucherType,
 } from '../types/accounting';
 import { createHolooSeedData } from '../data/holooSeed';
-import { loadLocalAccountingSnapshot, saveLocalAccountingSnapshot } from '../lib/localAccountingStore';
+import { getOrCreateLocalDeviceIdentity, loadLocalAccountingSnapshot, LocalDeviceIdentity, saveLocalAccountingSnapshot } from '../lib/localAccountingStore';
 import { FxRevaluationRow } from '../lib/enterpriseAccounting';
 import {
   AuditReport,
@@ -76,6 +76,7 @@ interface AccountingContextValue {
   authReady: boolean;
   isCloudMode: boolean;
   isSyncing: boolean;
+  deviceIdentity: LocalDeviceIdentity | null;
   profile: CompanyProfile;
   accounts: Account[];
   parties: Party[];
@@ -273,6 +274,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const [authReady, setAuthReady] = useState(false);
   const [localDataReady, setLocalDataReady] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [deviceIdentity, setDeviceIdentity] = useState<LocalDeviceIdentity | null>(null);
   const [toast, setToast] = useState<string | null>(null);
 
   const [profile, setProfile] = useState<CompanyProfile>(DEFAULT_PROFILE);
@@ -313,8 +315,10 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     let cancelled = false;
     let unsubscribe: (() => void) | undefined;
 
-    loadLocalAccountingSnapshot()
-      .then((saved) => {
+    Promise.all([loadLocalAccountingSnapshot(), getOrCreateLocalDeviceIdentity()])
+      .then(([saved, identity]) => {
+        if (cancelled) return;
+        setDeviceIdentity(identity);
         if (cancelled) return;
         if (saved) {
           if (saved.profile) setProfile(saved.profile as CompanyProfile);
@@ -3516,6 +3520,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         authReady,
         isCloudMode,
         isSyncing,
+        deviceIdentity,
         profile,
         accounts,
         parties,
