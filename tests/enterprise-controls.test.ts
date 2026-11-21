@@ -8,11 +8,16 @@ import {
   classifySyncOperation,
   computeOpenItemAging,
   reconcileBankLines,
+  parseCsvRow,
   validateAtomicFinancialPlan,
   validateSyncOperation,
 } from '../src/lib/enterpriseControls.ts';
 import { computeReceivablesAging, computePayablesAging, computeFxRevaluationReport } from '../src/lib/enterpriseAccounting.ts';
 import { calculateMonthlyDepreciation } from '../src/lib/accountingEngine.ts';
+
+test('CSV parser preserves quoted commas and escaped quotes', () => {
+  assert.deepEqual(parseCsvRow('1405/09/01,"کارمزد، انتقال, فوری","شناسه ""ABC""",1250,0'), ['1405/09/01', 'کارمزد، انتقال, فوری', 'شناسه "ABC"', '1250', '0']);
+});
 
 test('fiscal period rejects closed periods and overlapping ranges', () => {
   assert.throws(() => assertFiscalPeriodOpen('2026-03-20', [
