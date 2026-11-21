@@ -1639,6 +1639,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ initialIntent, clearIn
 
       {/* Receivables Aging Report (گزارش سنی مطالبات) */}
       {tab === 'aging' && (
+        <>
         <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden print-container">
           <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-800">
             <h2 className="text-sm font-bold text-slate-900 dark:text-white">
@@ -1789,6 +1790,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ initialIntent, clearIn
               </table>
             </div>
           </div>
+        </>
       )}
 
       {/* Broker / Intermediary Commissions Report */}
