@@ -3032,6 +3032,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       const dossier = importDossiers.find((item) => item.id === dossierId);
       if (!dossier || dossier.status === 'cleared') return;
       if (vouchers.some((voucher) => voucher.referenceId === dossier.id)) throw new Error('برای این پرونده قبلاً سند ترخیص صادر شده است.');
+      if (!Number.isFinite(dossier.totalForeignAmount) || dossier.totalForeignAmount <= 0 || !Number.isFinite(dossier.exchangeRate) || dossier.exchangeRate <= 0 || !Number.isFinite(dossier.totalFobIrr) || dossier.totalFobIrr <= 0 || !dossier.currencyCode.trim()) throw new Error('مبلغ ارزی، نرخ تبدیل، ارز یا بهای پروفرما معتبر نیست.');
       if (!dossier.items.length || dossier.items.some((item) => !Number.isFinite(item.weightKg) || item.weightKg <= 0 || !Number.isFinite(item.finalUnitCostIrr) || item.finalUnitCostIrr < 0)) {
         throw new Error('اقلام پرونده واردات دارای وزن یا بهای تمام‌شده نامعتبر هستند.');
       }
