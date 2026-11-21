@@ -602,7 +602,8 @@ export const InvoicesView: React.FC<{ initialIntent?: string; clearIntent?: () =
 
     const selectedBroker = brokerParties.find((b) => b.id === intermediaryId);
 
-    await createInvoice({
+    try {
+      await createInvoice({
       invoiceNumber,
       taxSerial,
       invoiceType,
@@ -636,7 +637,11 @@ export const InvoicesView: React.FC<{ initialIntent?: string; clearIntent?: () =
           ? 'settled'
           : 'issued',
       items: computedItems,
-    });
+      });
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'ثبت فاکتور ناموفق بود.');
+      return;
+    }
 
     setShowComposer(false);
     setIntermediaryId('');
