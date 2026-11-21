@@ -1023,6 +1023,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     async (voucherId: string): Promise<boolean> => {
       const existing = vouchers.find((v) => v.id === voucherId);
       if (!existing) return false;
+      if (vouchers.some((voucher) => voucher.voucherType === 'closing' && voucher.date.slice(0, 4) === existing.date.slice(0, 4))) { showToast(`دوره مالی ${existing.date.slice(0, 4)} بسته شده است؛ حذف سند مجاز نیست.`); return false; }
       if (existing.status === 'permanent') {
         showToast('حذف سند دائم مجاز نیست! برای ابطال اثر سند دائم، «سند معکوس» صادر کنید.');
         return false;
