@@ -18,14 +18,14 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24.12.0
       - name: Set up Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '21'
       - name: Install dependencies
-        run: npm install
+        run: npm install --no-audit --no-fund
       - name: Type-check
         run: npm run lint
       - name: Build web application
