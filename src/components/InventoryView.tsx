@@ -755,7 +755,7 @@ export const InventoryView: React.FC<{ initialIntent?: string; clearIntent?: () 
           {/* Multi-Unit Packaging Strip */}
           <div className="p-3.5 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 space-y-3 text-xs">
             <div className="font-semibold text-slate-800 dark:text-slate-200">
-              تنظیمات چندواحدی هلو (تبدیل خودکار کارتن/عدل ↔ کیلوگرم باسکول ↔ بوبین/دوک)
+              تنظیمات چندواحدی بیلیون (تبدیل خودکار کارتن/عدل ↔ کیلوگرم باسکول ↔ بوبین/دوک)
             </div>
             <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
               <div>
@@ -1269,7 +1269,7 @@ export const InventoryView: React.FC<{ initialIntent?: string; clearIntent?: () 
                 <div className="space-y-3">
                   <div className="flex items-center justify-between gap-2">
                     <div className="text-xs font-semibold text-slate-600 dark:text-slate-300">
-                      کاردکس ریالی و تعدادی (میانگین موزون هلو)
+                      کاردکس ریالی و تعدادی (میانگین موزون)
                     </div>
                     <button
                       type="button"
@@ -1277,7 +1277,7 @@ export const InventoryView: React.FC<{ initialIntent?: string; clearIntent?: () 
                       className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-semibold bg-teal-700 hover:bg-teal-800 text-white"
                     >
                       <Maximize2 className="w-3 h-3" />
-                      <span>جدول ۴بخشی هلو</span>
+                      <span>جدول چهار‌بخشی</span>
                     </button>
                   </div>
                   {kardexRows.length === 0 ? (
@@ -1400,7 +1400,7 @@ export const InventoryView: React.FC<{ initialIntent?: string; clearIntent?: () 
             <div className="px-5 py-4 bg-slate-50 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3">
               <div>
                 <h3 className="text-sm font-bold text-slate-900 dark:text-white">
-                  کاردکس ۴بخشی تعدادی و ریالی کالا (میانگین موزون هلو) — {selectedProduct.name}
+                  کاردکس ۴بخشی تعدادی و ریالی کالا (میانگین موزون) — {selectedProduct.name}
                 </h3>
                 <p className="text-[11px] text-slate-500 mt-0.5">
                   کد {selectedProduct.sku} · انبار: {selectedProduct.warehouse} · واحد: {selectedProduct.unit}
@@ -1412,7 +1412,7 @@ export const InventoryView: React.FC<{ initialIntent?: string; clearIntent?: () 
                   type="button"
                   onClick={() => {
                     exportToCsv(
-                      `holoo-kardex-${selectedProduct.sku}.csv`,
+                      `billion-kardex-${selectedProduct.sku}.csv`,
                       [
                         'تاریخ',
                         'شماره سند/فاکتور',
