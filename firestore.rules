@@ -542,7 +542,8 @@ service cloud.firestore {
     // A device can register only under the currently authenticated owner's UID.
     match /companyDevices/{deviceId} {
       allow get: if isValidId(deviceId) && isVerified()
-        && existing().ownerId == request.auth.uid;
+        && (!exists(/databases/$(database)/documents/companyDevices/$(deviceId))
+          || existing().ownerId == request.auth.uid);
       allow list: if isVerified() && resource.data.ownerId == request.auth.uid;
       allow create: if isValidId(deviceId) && isVerified()
         && incoming().keys().hasAll(['ownerId', 'deviceId', 'label', 'platform', 'createdAt', 'lastSeenAt', 'updatedAt'])
