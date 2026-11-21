@@ -381,7 +381,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       setIsSyncing(true);
       try {
         if (deviceIdentity?.deviceId) {
-          const deviceRef = doc(db, 'companyDevices', deviceIdentity.deviceId);
+          const deviceRef = doc(db, 'companyDevices', `${uid}_${deviceIdentity.deviceId}`);
           const deviceSnap = await getDoc(deviceRef);
           const deviceLabel =
             typeof navigator !== 'undefined' && /android/i.test(navigator.userAgent)
