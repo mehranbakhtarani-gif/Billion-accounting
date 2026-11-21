@@ -145,7 +145,16 @@ Do not merge or deploy unfinished enterprise controls to the production Pages br
 - Added owner-scoped Firestore rules for the device registry. Device IDs are explicitly metadata and are not treated as credentials.
 - Added automated tests and a GitHub Actions workflow. The base foundation commit `4abaf84` passed type-check, domain tests, and Vite build. Subsequent context/rules integration commits are awaiting their own workflow completion.
 
-### Validation update — 2026-11-22\n\n- GitHub Actions completed successfully for the current PR head `8164ea668134e0b5b79a8b5ab0d2e88f426f566c` (type-check, enterprise domain tests, and production build).\n- This green CI validates compilation and the current pure domain tests; it does not validate Firestore Rules in an emulator, shared membership, real multi-device replay, or accounting concurrency.\n- A dedicated design gate for passwordless company membership and three-device enrollment is documented in `docs/SECURE_COMPANY_ENROLLMENT.md`. The repository currently has no Firebase Functions deployment scaffold, so trusted backend enrollment is not yet live.\n\n### Still outstanding in Stage 1
+### Validation update — 2026-11-22\n\n- GitHub Actions completed successfully for the current PR head `8164ea668134e0b5b79a8b5ab0d2e88f426f566c` (type-check, enterprise domain tests, and production build).\n- This green CI validates compilation and the current pure domain tests; it does not validate Firestore Rules in an emulator, shared membership, real multi-device replay, or accounting concurrency.\n- A dedicated design gate for passwordless company membership and three-device enrollment is documented in `docs/SECURE_COMPANY_ENROLLMENT.md`. The repository currently has no Firebase Functions deployment scaffold, so trusted backend enrollment is not yet live.\n\n### Supabase backend progress — 2026-11-22
+
+- Confirmed the correct Billion Supabase project is `Holoo pro` (`qsdlthvnfmjbodtdkbqc`); the separate `Glass-Accounting` project is not the Billion target.
+- Applied additive migrations for `billion_company_devices`, `billion_company_invites`, membership-aware RLS policies for passwordless identities, and the transactional `billion_apply_record_batch` RPC.
+- Deployed JWT-verified Edge Function `billion-enrollment` for one-time company bootstrap, invite acceptance, and invite creation.
+- Added browser-safe Supabase client and enrollment helper modules to the repository.
+- Required dashboard actions remain: enable Anonymous Sign-Ins and set the server-only `BILLION_BOOTSTRAP_TOKEN` secret. No service-role key is embedded in the client.
+- The accounting React context still uses its Firebase adapter. Supabase is provisioned, but frontend CRUD/realtime cutover and historical data reconciliation are not yet complete. Do not describe the app as fully migrated yet.
+
+### Still outstanding in Stage 1
 
 - A device registry scoped to one Firebase UID does not yet allow separate Mehran/Ehsan identities to share one company. That requires a secure company-membership and device-enrollment mechanism, preferably a trusted backend or callable function issuing one-time enrollment grants.
 - The outbox is durable locally but is not yet connected to every CRUD write or a cloud replay worker. No claim of live three-device synchronization is made at this point.
