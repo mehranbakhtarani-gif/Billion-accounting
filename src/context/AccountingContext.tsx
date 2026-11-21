@@ -2651,6 +2651,10 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   );
 
   const runYearEndClosing = useCallback(async () => {
+    const closingReference = `year-end-closing:${profile.fiscalYear}`;
+    if (vouchers.some((voucher) => voucher.referenceId === closingReference || (voucher.voucherType === 'closing' && voucher.date.startsWith(`${profile.fiscalYear}/`)))) throw new Error(`دوره مالی ${profile.fiscalYear} قبلاً بسته شده است.`);
+    const draftCount = vouchers.filter((voucher) => voucher.status === 'draft' && voucher.date.startsWith(`${profile.fiscalYear}/`)).length;
+    if (draftCount > 0) throw new Error(`برای بستن سال مالی ابتدا ${draftCount} سند پیش‌نویس را تعیین تکلیف کنید.`);
     const tempRows = trialBalance.filter(
       (r) =>
         (r.category === 'revenue' || r.category === 'cogs' || r.category === 'expense') &&
@@ -2709,9 +2713,10 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       description: `سند بستن حساب‌های موقت و انتقال سود سال مالی ${profile.fiscalYear}`,
       voucherType: 'closing',
       status: 'permanent',
+      referenceId: closingReference,
       lines,
     });
-  }, [trialBalance, profile.fiscalYear, createVoucher, showToast]);
+  }, [trialBalance, vouchers, profile.fiscalYear, createVoucher, showToast]);
 
   // ---------------- MULTI-CURRENCY & DAILY EXCHANGE RATES ----------------
   const addCurrency = useCallback(
