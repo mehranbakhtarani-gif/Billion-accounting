@@ -258,7 +258,7 @@ export const TreasuryView: React.FC<TreasuryViewProps> = ({ initialIntent, clear
     const matching = reconcileBankLines(
       parsedBankRows.map((row) => ({ id: row.id, accountId: reconBankCode, date: row.date, amount: row.amount, reference: row.reference })),
       ledgerTx.map((tx) => ({ id: tx.id, accountId: reconBankCode, date: tx.date, amount: tx.amount, reference: tx.reference })),
-      2, (from, to) => diffShamsiDays(from, to),
+      2, (from, to) => diffShamsiDays(from, to) ?? Number.POSITIVE_INFINITY,
     );
     const matchByStatement = new Map(matching.matches.map((match) => [match.statementLineId, match.ledgerLineId]));
     const ambiguousIds = new Set(matching.ambiguousStatementIds);
