@@ -360,6 +360,46 @@ export function computeReceivablesAging(
   return rows.sort((a, b) => b.totalReceivable - a.totalReceivable);
 }
 
+
+export interface PayablesAgingRow {
+  partyId: string; partyCode: string; partyName: string; phone?: string;
+  totalPayable: number; bucket0to30: number; bucket31to60: number; bucket61to90: number; bucketOver90: number;
+  oldestInvoiceDate?: string; maxOverdueDays: number;
+}
+
+/** Read-only supplier aging based on outstanding purchase invoices and their due dates. */
+export function computePayablesAging(
+  parties: Party[], invoices: Invoice[], partyBalances: Map<string, number>, todayShamsi: string = getTodayShamsi(),
+): PayablesAgingRow[] {
+  const rows: PayablesAgingRow[] = [];
+  for (const party of parties) {
+    const totalPayable = Math.abs(Math.min(0, partyBalances.get(party.id) ?? 0));
+    if (totalPayable <= 0) continue;
+    const purchases = invoices
+      .filter((invoice) => invoice.partyId === party.id && invoice.invoiceType === 'purchase' && invoice.status !== 'cancelled')
+      .sort((a, b) => b.date.localeCompare(a.date));
+    let remaining = totalPayable, bucket0to30 = 0, bucket31to60 = 0, bucket61to90 = 0, bucketOver90 = 0;
+    let maxOverdueDays = 0; let oldestInvoiceDate: string | undefined;
+    for (const invoice of purchases) {
+      if (remaining <= 0) break;
+      const portion = Math.min(remaining, Math.max(0, invoice.creditAmount));
+      if (portion <= 0) continue;
+      const dueDate = invoice.dueDate || invoice.date;
+      const age = Math.max(0, diffShamsiDays(dueDate, todayShamsi) ?? 0);
+      if (age > maxOverdueDays) { maxOverdueDays = age; oldestInvoiceDate = dueDate; }
+      if (age <= 30) bucket0to30 += portion;
+      else if (age <= 60) bucket31to60 += portion;
+      else if (age <= 90) bucket61to90 += portion;
+      else bucketOver90 += portion;
+      remaining -= portion;
+    }
+    if (remaining > 0) { bucketOver90 += remaining; maxOverdueDays = Math.max(maxOverdueDays, 95); }
+    rows.push({ partyId: party.id, partyCode: party.code, partyName: party.name, phone: party.phone, totalPayable,
+      bucket0to30, bucket31to60, bucket61to90, bucketOver90, oldestInvoiceDate, maxOverdueDays });
+  }
+  return rows.sort((a, b) => b.totalPayable - a.totalPayable);
+}
+
 // ---------------- BROKER / INTERMEDIARY COMMISSIONS ----------------
 export interface BrokerCommissionRow {
   partyId: string;
