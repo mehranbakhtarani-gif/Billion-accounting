@@ -3059,13 +3059,15 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         if (!Number.isFinite(cost.amountIrr) || cost.amountIrr < 0) throw new Error('هزینه جانبی پرونده واردات نامعتبر است.');
         return sum + Math.round(cost.amountIrr);
       }, 0);
-      const expectedLanded = Math.round(dossier.totalFobIrr + costTotal);
-      if (!Number.isFinite(dossier.grandTotalLandedIrr) || Math.abs(expectedLanded - dossier.grandTotalLandedIrr) > 1) {
+      const fobTotal = Math.round(dossier.totalFobIrr);
+      const landedTotal = Math.round(dossier.grandTotalLandedIrr);
+      const expectedLanded = fobTotal + costTotal;
+      if (!Number.isFinite(dossier.totalFobIrr) || !Number.isFinite(dossier.grandTotalLandedIrr) || Math.abs(expectedLanded - landedTotal) > 0) {
         throw new Error('جمع بهای تمام‌شده پرونده با بهای ارزی و هزینه‌های جانبی هم‌خوانی ندارد.');
       }
       const lines: VoucherLine[] = [
-        { accountCode: '10501', accountTitle: 'موجودی انبار نخ و کالای وارداتی', description: `ورود محموله ترخیص‌شده پرونده ${dossier.dossierNumber} با سرشکن هزینه‌ها`, debit: dossier.grandTotalLandedIrr, credit: 0 },
-        { accountCode: '30101', accountTitle: 'بستانکاران و تأمین‌کنندگان واردات نخ', partyId: dossier.supplierId, partyName: dossier.supplierName, description: `بهای ارزی پروفرما ${dossier.proformaNumber} (${dossier.totalForeignAmount} ${dossier.currencyCode})`, debit: 0, credit: dossier.totalFobIrr },
+        { accountCode: '10501', accountTitle: 'موجودی انبار نخ و کالای وارداتی', description: `ورود محموله ترخیص‌شده پرونده ${dossier.dossierNumber} با سرشکن هزینه‌ها`, debit: landedTotal, credit: 0 },
+        { accountCode: '30101', accountTitle: 'بستانکاران و تأمین‌کنندگان واردات نخ', partyId: dossier.supplierId, partyName: dossier.supplierName, description: `بهای ارزی پروفرما ${dossier.proformaNumber} (${dossier.totalForeignAmount} ${dossier.currencyCode})`, debit: 0, credit: fobTotal },
       ];
       const costByAccount = new Map<string, { title: string; total: number }>();
       for (const cost of dossier.costs) {
