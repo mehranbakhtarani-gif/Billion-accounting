@@ -226,7 +226,7 @@ export function computeFxRevaluationReport(
   >();
 
   for (const v of vouchers) {
-    if (!isForeignCurrency(v.currencyCode)) continue;
+    if (v.status !== 'permanent' || !isForeignCurrency(v.currencyCode)) continue;
     const code = normalizeCurrencyCode(v.currencyCode);
     const rate = v.exchangeRate && v.exchangeRate > 0 ? v.exchangeRate : 1;
 
