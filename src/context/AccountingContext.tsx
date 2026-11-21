@@ -1301,14 +1301,23 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
                 },
               ];
 
-        await createVoucher({
-          date: getTodayShamsi(),
-          description: `سند تعدیل انبارگردانی کالا ${prod.sku} (${diffQty > 0 ? 'اضافی' : 'کسری'} ${Math.abs(diffQty)} ${prod.unit})`,
-          voucherType: 'general',
-          status: 'permanent',
-          lines,
-          referenceId: prod.id,
-        });
+        try {
+          await createVoucher({
+            date: getTodayShamsi(),
+            description: `سند تعدیل انبارگردانی کالا ${prod.sku} (${diffQty > 0 ? 'اضافی' : 'کسری'} ${Math.abs(diffQty)} ${prod.unit})`,
+            voucherType: 'general',
+            status: 'permanent',
+            lines,
+            referenceId: prod.id,
+          });
+        } catch (error) {
+          try {
+            await adjustProductStock(productId, prod.stock);
+          } catch (rollbackError) {
+            console.error('Inventory adjustment rollback failed:', rollbackError);
+          }
+          throw error;
+        }
       } else {
         showToast('موجودی انبارگردانی با موفقیت تعدیل شد.');
       }
@@ -1319,8 +1328,10 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const bulkStocktakingWithVoucher = useCallback(
     async (items: { productId: string; countedStock: number }[], reason: string) => {
       const voucherLines: VoucherLine[] = [];
+      const changedProducts: Array<{ productId: string; previousStock: number }> = [];
       let changedCount = 0;
 
+      try {
       for (const entry of items) {
         const prod = products.find((p) => p.id === entry.productId);
         if (!prod) continue;
@@ -1329,6 +1340,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         if (diffQty === 0) continue;
 
         changedCount += 1;
+        changedProducts.push({ productId: prod.id, previousStock: prod.stock });
         await adjustProductStock(prod.id, safeCounted);
         const valueDiff = Math.round(Math.abs(diffQty) * prod.buyPrice);
         if (valueDiff > 0) {
@@ -1387,6 +1399,17 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         });
       } else {
         showToast(`موجودی ${changedCount} قلم کالا با موفقیت اصلاح شد.`);
+      }
+      } catch (error) {
+        const rollbackResults = await Promise.allSettled(
+          changedProducts.map((entry) => adjustProductStock(entry.productId, entry.previousStock)),
+        );
+        rollbackResults.forEach((result) => {
+          if (result.status === 'rejected') {
+            console.error('Bulk stocktake rollback failed:', result.reason);
+          }
+        });
+        throw error;
       }
     },
     [products, adjustProductStock, createVoucher, showToast]
