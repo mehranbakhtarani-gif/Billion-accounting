@@ -176,7 +176,7 @@ export function onSnapshot(
 ): () => void;
 export function onSnapshot(
   ref: RecordRef | QueryRef,
-  onNext: (value: Snapshot | QuerySnapshot) => void,
+  onNext: (value: any) => void,
   onError?: (error: unknown) => void,
 ): () => void {
   let closed = false;
