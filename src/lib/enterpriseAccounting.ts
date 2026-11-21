@@ -324,10 +324,10 @@ export function computeReceivablesAging(
       // Use the actual outstanding balance, not the original invoice gross amount.
       const portion = Math.min(remaining, Math.max(0, inv.creditAmount));
       if (portion <= 0) continue;
-      const age = Math.max(0, diffShamsiDays(inv.dueDate || inv.date, todayShamsi) ?? 0);
+      const age = Math.max(0, diffShamsiDays(todayShamsi, inv.dueDate || inv.date) ?? 0);
       if (age > maxDays) {
         maxDays = age;
-        oldestDate = inv.date;
+        oldestDate = inv.dueDate || inv.date;
       }
       if (age <= 30) b0 += portion;
       else if (age <= 60) b31 += portion;
@@ -385,7 +385,7 @@ export function computePayablesAging(
       const portion = Math.min(remaining, Math.max(0, invoice.creditAmount));
       if (portion <= 0) continue;
       const dueDate = invoice.dueDate || invoice.date;
-      const age = Math.max(0, diffShamsiDays(dueDate, todayShamsi) ?? 0);
+      const age = Math.max(0, diffShamsiDays(todayShamsi, dueDate) ?? 0);
       if (age > maxOverdueDays) { maxOverdueDays = age; oldestInvoiceDate = dueDate; }
       if (age <= 30) bucket0to30 += portion;
       else if (age <= 60) bucket31to60 += portion;
