@@ -380,6 +380,38 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       const uid = firebaseUser.uid;
       setIsSyncing(true);
       try {
+        if (deviceIdentity?.deviceId) {
+          const deviceRef = doc(db, 'companyDevices', deviceIdentity.deviceId);
+          const deviceSnap = await getDoc(deviceRef);
+          const deviceLabel =
+            typeof navigator !== 'undefined' && /android/i.test(navigator.userAgent)
+              ? 'دستگاه Android'
+              : typeof navigator !== 'undefined' && /iphone|ipad/i.test(navigator.userAgent)
+                ? 'دستگاه iOS'
+                : 'دستگاه مرورگر';
+          if (deviceSnap.exists()) {
+            await updateDoc(deviceRef, {
+              lastSeenAt: serverTimestamp(),
+              updatedAt: serverTimestamp(),
+            });
+          } else {
+            await setDoc(deviceRef, {
+              ownerId: uid,
+              deviceId: deviceIdentity.deviceId,
+              label: deviceLabel,
+              platform:
+                typeof navigator !== 'undefined' && /android/i.test(navigator.userAgent)
+                  ? 'android'
+                  : typeof navigator !== 'undefined' && /iphone|ipad/i.test(navigator.userAgent)
+                    ? 'ios'
+                    : 'web',
+              createdAt: serverTimestamp(),
+              lastSeenAt: serverTimestamp(),
+              updatedAt: serverTimestamp(),
+            });
+          }
+        }
+
         const profileRef = doc(db, 'users', uid);
         const profileSnap = await getDoc(profileRef);
         if (!profileSnap.exists()) {
@@ -470,7 +502,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         setIsSyncing(false);
       }
     },
-    [showToast]
+    [showToast, deviceIdentity]
   );
 
   useEffect(() => {
