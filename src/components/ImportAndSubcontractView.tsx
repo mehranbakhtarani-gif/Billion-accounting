@@ -83,7 +83,7 @@ export const ImportAndSubcontractView: React.FC<{
   const [tab, setTab] = useState<CommercialTab>('imports');
   const unit = profile.currencyUnit;
 
-  // Holoo-style Modal States
+  // Billion Modal States
   const [showImportModal, setShowImportModal] = useState(false);
   const [showOrderModal, setShowOrderModal] = useState(false);
   const [dispatchingOrder, setDispatchingOrder] = useState<SalesOrder | null>(null);
@@ -730,7 +730,7 @@ export const ImportAndSubcontractView: React.FC<{
         </div>
       )}
 
-      {/* HOLOO MODAL: NEW IMPORT DOSSIER */}
+      {/* BILLION MODAL: NEW IMPORT DOSSIER */}
       {showImportModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 overflow-y-auto">
           <form
@@ -927,7 +927,7 @@ export const ImportAndSubcontractView: React.FC<{
         </div>
       )}
 
-      {/* HOLOO MODAL: NEW SALES ORDER */}
+      {/* BILLION MODAL: NEW SALES ORDER */}
       {showOrderModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4">
           <form onSubmit={handleCreateOrder} className="w-full max-w-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden text-xs">
@@ -983,7 +983,7 @@ export const ImportAndSubcontractView: React.FC<{
         </div>
       )}
 
-      {/* HOLOO MODAL: WEIGHBRIDGE DISPATCH */}
+      {/* BILLION MODAL: WEIGHBRIDGE DISPATCH */}
       {dispatchingOrder && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4">
           <div className="w-full max-w-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden text-xs">
@@ -1104,7 +1104,7 @@ export const ImportAndSubcontractView: React.FC<{
         </div>
       )}
 
-      {/* HOLOO MODAL: NEW SUBCONTRACT JOB */}
+      {/* BILLION MODAL: NEW SUBCONTRACT JOB */}
       {showSubModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4">
           <form onSubmit={handleCreateSubcontract} className="w-full max-w-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden text-xs">
@@ -1168,7 +1168,7 @@ export const ImportAndSubcontractView: React.FC<{
         </div>
       )}
 
-      {/* HOLOO MODAL: COMPLETE SUBCONTRACT */}
+      {/* BILLION MODAL: COMPLETE SUBCONTRACT */}
       {completingSub && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4">
           <div className="w-full max-w-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden text-xs">
