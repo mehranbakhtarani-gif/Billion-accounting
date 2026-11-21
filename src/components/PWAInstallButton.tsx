@@ -36,7 +36,7 @@ export const PWAInstallButton: React.FC<{ compact?: boolean }> = ({ compact = fa
           <div className="w-full max-w-md rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-6 space-y-5">
             <div className="flex items-center justify-between">
               <h3 className="text-base font-bold text-slate-900 dark:text-white">
-                نصب نسخه دسکتاپ و موبایل (PWA) هلو Apex
+                نصب نسخه دسکتاپ و موبایل (PWA) بیلیون
               </h3>
               <button
                 onClick={() => setShowGuide(false)}
@@ -54,7 +54,7 @@ export const PWAInstallButton: React.FC<{ compact?: boolean }> = ({ compact = fa
                   <span>اپلیکیشن دسکتاپ (Windows / macOS / Linux)</span>
                 </div>
                 <p className="text-xs leading-6">
-                  در مرورگر Chrome یا Edge، روی آیکون <strong>نصب (Install)</strong> در نوار آدرس کلیک کنید یا از منوی مرورگر گزینه <strong>Save and share ← Install page as app</strong> را انتخاب نمایید تا آیکون مستقل هلو Apex روی دسکتاپ کارکنان ایجاد شود.
+                  در مرورگر Chrome یا Edge، روی آیکون <strong>نصب (Install)</strong> در نوار آدرس کلیک کنید یا از منوی مرورگر گزینه <strong>Save and share ← Install page as app</strong> را انتخاب نمایید تا آیکون مستقل بیلیون روی دسکتاپ کارکنان ایجاد شود.
                 </p>
               </div>
 
