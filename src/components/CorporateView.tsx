@@ -49,6 +49,7 @@ export const CorporateView: React.FC<CorporateViewProps> = ({ initialIntent, cle
     updateCostCenter,
     deleteCostCenter,
     runYearEndClosing,
+    showToast,
   } = useAccounting();
   const unit = profile.currencyUnit;
 
@@ -477,7 +478,8 @@ export const CorporateView: React.FC<CorporateViewProps> = ({ initialIntent, cle
           <form
             onSubmit={async (e) => {
               e.preventDefault();
-              if (!assetTitle.trim() || !Number.isFinite(assetCost) || assetCost <= 0 || !Number.isFinite(assetSalvage) || assetSalvage < 0 || assetSalvage > assetCost || !Number.isInteger(assetLife) || assetLife < 1) return;
+              if (!assetTitle.trim()) { showToast('شرح دارایی ثابت را وارد کنید.'); return; }
+              if (!Number.isFinite(assetCost) || assetCost <= 0 || !Number.isFinite(assetSalvage) || assetSalvage < 0 || assetSalvage > assetCost || !Number.isInteger(assetLife) || assetLife < 1) { showToast('بهای خرید، ارزش اسقاط و عمر مفید دارایی را بررسی کنید.'); return; }
               await addFixedAsset({
                 assetCode: `FA-${profile.fiscalYear}-0${assets.length + 1}`,
                 title: assetTitle.trim(),
@@ -506,7 +508,7 @@ export const CorporateView: React.FC<CorporateViewProps> = ({ initialIntent, cle
               <input
                 type="number"
                 value={assetCost}
-                onChange={(e) => setAssetCost(Number(e.target.value))}
+                onChange={(e) => { const value = Number(e.target.value); setAssetCost(value); setAssetSalvage((current) => Math.min(current, Math.max(0, value))); }}
                 className="w-full px-3 py-2 font-code rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950"
               />
             </div>
