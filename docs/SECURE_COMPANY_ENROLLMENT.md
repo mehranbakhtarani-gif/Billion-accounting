@@ -1,58 +1,41 @@
 # Secure company membership and device enrollment
 
-Status: design gate; implementation must not be enabled until the trusted backend is deployed.
-
-## Why this is required
-
-The current data model authorizes Firestore records by `ownerId == request.auth.uid`. The device registry is also scoped to that UID. This is safe for one authenticated owner, but it does not let different Firebase identities collaborate on one company. A device UUID is attacker-controlled metadata and must never grant access.
-
-The repository currently has no `firebase.json`, Firebase Functions source tree, or Firebase Admin SDK dependency. The existing Express `server.ts` is an application/API server, not a trusted Firebase membership service. Adding a client-side invite check or a public Firestore write rule would not be a safe substitute.
+Status: implemented on the Supabase backend; requires the dashboard setup in `docs/SUPABASE_MIGRATION.md`.
 
 ## Target model
 
-- One immutable `companyId` identifies the single company.
-- `companyMembers/{uid}` stores `companyId`, role, status, enrolledAt, and revokedAt.
-- `companyDevices/{deviceId}` stores companyId, uid, label, platform, enrolledAt, lastSeenAt, and revokedAt.
-- At most three active devices are enrolled for the company.
-- Every accounting document is migrated additively to include `companyId`; existing `ownerId` is retained during the compatibility period.
-- Reads and writes require an authenticated Firebase principal and an active membership for the document's company. Device metadata is never an authorization factor.
-- Permanent accounting records remain append-only or use explicit reversal/correction workflows; enrollment does not imply unrestricted accounting privileges.
+- One company row in `public.billion_companies`.
+- Memberships in `public.billion_company_members`, keyed by company and Supabase Auth user.
+- Device metadata in `public.billion_company_devices`.
+- Hashed, one-time invitations in `public.billion_company_invites`.
+- A maximum of three active enrolled devices.
+- Accounting records in `public.billion_records`, scoped by company ID and protected by RLS.
+- Device UUIDs are not credentials and never authorize access.
 
-## Passwordless enrollment flow
+## Passwordless flow
 
-1. A trusted bootstrap operation creates the company and its first owner membership. It must not be callable by an arbitrary unauthenticated client.
-2. An authorized owner creates a one-time enrollment invitation. The backend stores only a cryptographic hash of a high-entropy random token, plus companyId, allowed role, expiry, remaining uses, and creator UID.
-3. Each target installation authenticates with Firebase Anonymous Authentication (only after that provider is enabled in Firebase Console) and submits the token to a callable backend function.
-4. The callable function verifies the Firebase ID token, validates the invitation hash and expiry, checks that fewer than three devices are active, and atomically consumes the invitation and creates the membership/device records in a Firestore transaction.
-5. The backend returns only the enrolled company metadata. The raw token is never persisted in Firestore or local storage.
-6. Revocation disables membership/device access in Security Rules. Revocation must not delete accounting history.
+1. Each installation obtains a Supabase Anonymous Auth session.
+2. The first installation calls the JWT-verified `billion-enrollment` Edge Function with the server-configured bootstrap token. The backend creates the single company, owner membership, and first device in one transaction.
+3. The owner creates one-time invitations. The raw token is shown once; only its SHA-256 hash is stored. It expires after 24 hours.
+4. Each additional installation submits its invite token. The backend locks the invitation and company, checks expiry/replay and the three-device ceiling, then creates membership and device records transactionally.
+5. Accounting data is accessible only after membership exists. RLS checks `auth.uid()` against company membership.
+6. Revocation should be performed by an owner-only administrative backend workflow; revoking a device must not delete accounting records.
 
-This supports a passwordless flow, but it still requires a short-lived enrollment action on each device. Anonymous auth is per installation; it is not a cross-device identity by itself.
+## Trusted backend
 
-## Required trusted backend endpoints
+The `billion-enrollment` Edge Function verifies the caller JWT and uses the service-role key only in the Edge Function runtime. The service-role key is never included in the PWA/APK.
 
-- `createCompanyInvite`: owner/admin only; creates a high-entropy, expiring, single-use invite (or explicitly bounded use count).
-- `acceptCompanyInvite`: authenticated user only; transactionally consumes invite and enrolls the device, enforcing the three-device ceiling.
-- `revokeCompanyMember` and `revokeCompanyDevice`: owner/admin only; append audit event and revoke access.
-- `applyAccountingOperation`: authenticated active member; validates company membership, idempotency key, entity version, and operation schema; applies one operation transactionally or records a conflict without overwriting the source record.
-
-All functions must use Firebase Admin SDK on a trusted runtime. Secrets and service-account credentials must never be shipped to the PWA/APK.
-
-## Data migration and compatibility
-
-1. Back up all Firestore collections and export a verified local snapshot.
-2. Create company and owner membership records through the trusted bootstrap.
-3. Backfill companyId for each existing owner-scoped document in bounded, restartable batches.
-4. Deploy rules that temporarily accept the legacy owner path only for records without companyId and only for their original owner.
-5. Verify record counts, references, and totals before enabling company-scoped access.
-6. Switch client queries and writes to companyId; then remove the legacy owner-only rule after a successful reconciliation.
-7. Keep a rollback plan and do not delete legacy ownerId fields during the migration.
+Database RPCs:
+- `billion_bootstrap_company`: creates the single company, owner membership, and first device.
+- `billion_accept_company_invite`: atomically consumes an invitation and enrolls another device.
+- `billion_apply_record_batch`: applies company-scoped record mutations transactionally under the caller's RLS identity.
 
 ## Release gates
 
-- Rules emulator tests prove non-members cannot read/write and revoked members lose access.
-- Invitation tests cover expired, replayed, brute-force throttling, and concurrent acceptance.
-- Concurrent enrollment tests prove the active-device count never exceeds three.
-- Operation tests prove replay is idempotent and stale versions become reviewable conflicts.
-- Test the exact topology: one Mehran installation and two Ehsan installations.
-- Do not enable this design until Firebase Anonymous Authentication is enabled, the trusted backend is deployed, and all three target devices can be enrolled and revoked in a controlled test company.
+- Enable Anonymous Sign-Ins in Supabase Auth.
+- Set a high-entropy `BILLION_BOOTSTRAP_TOKEN` secret in Edge Function secrets.
+- Test invalid, expired, and replayed invitations.
+- Test concurrent invite acceptance and verify no more than three active devices can be enrolled.
+- Verify non-members and revoked members cannot read or mutate company records.
+- Test all three installations: bootstrap owner device, then two invite-based devices.
+- Test record create/update/delete and Realtime propagation across all devices.
