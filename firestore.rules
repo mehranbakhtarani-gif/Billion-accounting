@@ -538,6 +538,33 @@ service cloud.firestore {
       );
     }
 
+    // Device registry is metadata only; deviceId is never an authentication factor.
+    // A device can register only under the currently authenticated owner's UID.
+    match /companyDevices/{deviceId} {
+      allow get: if isValidId(deviceId) && isVerified()
+        && existing().ownerId == request.auth.uid;
+      allow list: if isVerified() && resource.data.ownerId == request.auth.uid;
+      allow create: if isValidId(deviceId) && isVerified()
+        && incoming().keys().hasAll(['ownerId', 'deviceId', 'label', 'platform', 'createdAt', 'lastSeenAt', 'updatedAt'])
+        && incoming().keys().hasOnly(['ownerId', 'deviceId', 'label', 'platform', 'createdAt', 'lastSeenAt', 'updatedAt'])
+        && incoming().ownerId == request.auth.uid
+        && incoming().deviceId == deviceId
+        && isNonEmptyString(incoming().label, 80)
+        && incoming().platform in ['android', 'ios', 'web']
+        && incoming().createdAt == request.time
+        && incoming().lastSeenAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(deviceId) && isVerified()
+        && existing().ownerId == request.auth.uid
+        && incoming().ownerId == existing().ownerId
+        && incoming().deviceId == existing().deviceId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['lastSeenAt', 'updatedAt'])
+        && incoming().lastSeenAt == request.time;
+      allow delete: if false;
+    }
+
     match /exchangeRates/{rateId} {
       allow get: if isValidId(rateId) && isVerified() && (existing().ownerId == request.auth.uid || isAdmin());
       allow list: if isVerified() && resource.data.ownerId == request.auth.uid;
