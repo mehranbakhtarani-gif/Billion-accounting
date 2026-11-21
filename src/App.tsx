@@ -251,11 +251,23 @@ export default function App() {
     toast,
     bootstrapCloud,
     joinCloud,
+    createDeviceInvite,
     showToast,
     setCurrencyUnit,
   } = useAccounting();
 
   const { prefs: chequeAlertPrefs } = useChequeAlertPreferences();
+
+  const inviteAnotherDevice = useCallback(async () => {
+    try {
+      const token = await createDeviceInvite();
+      window.prompt('کد دعوت یک‌بارمصرف (اعتبار ۲۴ ساعت):', token);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'ساخت کد دعوت ناموفق بود.');
+    }
+  }, [createDeviceInvite, showToast]);
+
+
 
   const connectToCloud = useCallback(async () => {
     const isFirstDevice = window.confirm('آیا این دستگاه، اولین دستگاه و مدیر اصلی شرکت است؟\n\nتأیید: راه‌اندازی شرکت با کلید اولیه\nلغو: پیوستن به شرکت با کد دعوت');
@@ -882,6 +894,13 @@ export default function App() {
                 <span>اتصال به شرکت</span>
               </button>
             ) : (
+              <>
+              <button
+                onClick={inviteAnotherDevice}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-teal-700 border border-teal-700 rounded-lg hover:bg-teal-50 whitespace-nowrap shrink-0"
+              >
+                دعوت دستگاه
+              </button>
               <button
                 onClick={() => navigate('invoices', 'new-sale', 'inv-sale')}
                 className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold text-white bg-teal-700 hover:bg-teal-800 rounded-lg transition-colors whitespace-nowrap shrink-0"
@@ -889,6 +908,7 @@ export default function App() {
                 <FileText className="w-3.5 h-3.5" />
                 <span>فاکتور فروش</span>
               </button>
+              </>
             )}
           </div>
         </header>
