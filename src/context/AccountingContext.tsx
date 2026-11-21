@@ -472,7 +472,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     ensureCloudSeed(user)
       .then(() => {
         if (cancelled) return;
-        const uid = user.uid;
+        const uid = user.id;
 
         unsubs.push(
           onSnapshot(
@@ -542,7 +542,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     };
   }, [authReady, user, ensureCloudSeed]);
 
-  const ownerId = user?.uid ?? DEMO_OWNER;
+  const ownerId = user?.id ?? DEMO_OWNER;
   const isCloudMode = !!user;
 
   const trialBalance = useMemo(() => computeTrialBalance(accounts, vouchers), [accounts, vouchers]);
@@ -606,9 +606,9 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       const next = { ...profile, ...patch };
       setProfile(next);
       if (user) {
-        const path = `users/${user.uid}`;
+        const path = `users/${user.id}`;
         try {
-          await updateDoc(doc(db, 'users', user.uid), {
+          await updateDoc(doc(db, 'users', user.id), {
             displayName: next.displayName.slice(0, 120),
             companyName: next.companyName.slice(0, 160),
             economicCode: (next.economicCode || '').slice(0, 32),
