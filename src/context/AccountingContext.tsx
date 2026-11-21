@@ -1,29 +1,12 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
-import { onAuthStateChanged, User } from 'firebase/auth';
+import type { User } from '@supabase/supabase-js';
 import {
-  collection,
-  deleteDoc,
-  doc,
-  getDoc,
-  getDocs,
-  onSnapshot,
-  query,
-  serverTimestamp,
-  setDoc,
-  updateDoc,
-  where,
-  writeBatch,
-} from 'firebase/firestore';
-import {
-  auth,
-  db,
-  handleFirestoreError,
-  isFirestoreOfflineError,
-  OperationType,
-  signInWithGoogle,
-  signOutAccount,
-  testFirestoreConnection,
-} from '../lib/firebase';
+  auth, db, collection, deleteDoc, doc, getDoc, getDocs, onAuthStateChanged,
+  onSnapshot, query, serverTimestamp, setDoc, updateDoc, where, writeBatch,
+  handleSupabaseError, isSupabaseOfflineError, OperationType, signOutAccount,
+  testSupabaseConnection, setActiveCompanyId,
+} from '../lib/supabaseStore';
+import { ensurePasswordlessSession, getBillionMembership, acceptBillionInvite, bootstrapBillionCompany } from '../lib/supabaseEnrollment';
 import {
   Account,
   AuditActivityLog,
@@ -103,7 +86,8 @@ interface AccountingContextValue {
   auditReport: AuditReport;
   toast: string | null;
   showToast: (msg: string) => void;
-  loginWithGoogle: () => Promise<void>;
+  bootstrapCloud: (token: string) => Promise<void>;
+  joinCloud: (token: string) => Promise<void>;
   logout: () => Promise<void>;
   updateCompanyProfile: (patch: Partial<CompanyProfile>) => Promise<void>;
   setCurrencyUnit: (unit: CurrencyUnit) => Promise<void>;
@@ -347,10 +331,29 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       .finally(() => {
         if (cancelled) return;
         setLocalDataReady(true);
-        testFirestoreConnection();
-        unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
-          setUser(firebaseUser);
-          setAuthReady(true);
+        void testSupabaseConnection();
+        unsubscribe = onAuthStateChanged(auth, (supabaseUser) => {
+          if (!supabaseUser) {
+            setActiveCompanyId(null);
+            setUser(null);
+            setAuthReady(true);
+            return;
+          }
+          void getBillionMembership().then((membership) => {
+            if (membership) {
+              setActiveCompanyId(membership.company_id);
+              setUser(supabaseUser);
+            } else {
+              setActiveCompanyId(null);
+              setUser(null);
+            }
+            setAuthReady(true);
+          }).catch((error) => {
+            console.error('Supabase membership check failed:', error);
+            setActiveCompanyId(null);
+            setUser(null);
+            setAuthReady(true);
+          });
         });
       });
 
@@ -376,79 +379,49 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   ]);
 
   const ensureCloudSeed = useCallback(
-    async (firebaseUser: User) => {
-      const uid = firebaseUser.uid;
+    async (supabaseUser: User) => {
       setIsSyncing(true);
       try {
-        if (deviceIdentity?.deviceId) {
-          const deviceRef = doc(db, 'companyDevices', `${uid}_${deviceIdentity.deviceId}`);
-          const deviceSnap = await getDoc(deviceRef);
-          const deviceLabel =
-            typeof navigator !== 'undefined' && /android/i.test(navigator.userAgent)
-              ? 'دستگاه Android'
-              : typeof navigator !== 'undefined' && /iphone|ipad/i.test(navigator.userAgent)
-                ? 'دستگاه iOS'
-                : 'دستگاه مرورگر';
-          if (deviceSnap.exists()) {
-            await updateDoc(deviceRef, {
-              lastSeenAt: serverTimestamp(),
-              updatedAt: serverTimestamp(),
-            });
-          } else {
-            await setDoc(deviceRef, {
-              ownerId: uid,
-              deviceId: deviceIdentity.deviceId,
-              label: deviceLabel,
-              platform:
-                typeof navigator !== 'undefined' && /android/i.test(navigator.userAgent)
-                  ? 'android'
-                  : typeof navigator !== 'undefined' && /iphone|ipad/i.test(navigator.userAgent)
-                    ? 'ios'
-                    : 'web',
-              createdAt: serverTimestamp(),
-              lastSeenAt: serverTimestamp(),
-              updatedAt: serverTimestamp(),
-            });
-          }
+        const membership = await getBillionMembership();
+        if (!membership) {
+          setActiveCompanyId(null);
+          showToast('این دستگاه هنوز عضو شرکت نیست؛ با کلید راه‌اندازی یا کد دعوت به شرکت متصل شوید.');
+          return;
         }
-
+        setActiveCompanyId(membership.company_id);
+        const uid = supabaseUser.id;
         const profileRef = doc(db, 'users', uid);
         const profileSnap = await getDoc(profileRef);
         if (!profileSnap.exists()) {
           await setDoc(profileRef, {
             uid,
-            displayName: (firebaseUser.displayName || 'مدیر مالی').slice(0, 120),
-            email: (firebaseUser.email || '').slice(0, 200),
+            displayName: String(supabaseUser.user_metadata?.full_name || 'مدیر مالی').slice(0, 120),
+            email: (supabaseUser.email || '').slice(0, 200),
             companyName: DEFAULT_PROFILE.companyName,
             economicCode: DEFAULT_PROFILE.economicCode,
             nationalId: DEFAULT_PROFILE.nationalId,
             fiscalYear: DEFAULT_PROFILE.fiscalYear,
             currencyUnit: DEFAULT_PROFILE.currencyUnit,
-            role: 'accountant',
+            role: membership.role,
             createdAt: serverTimestamp(),
             updatedAt: serverTimestamp(),
           });
         }
-
-        const accQuery = query(collection(db, 'accounts'), where('ownerId', '==', uid));
-        const existingAccs = await getDocs(accQuery);
+        const existingAccs = await getDocs(query(collection(db, 'accounts'), where('ownerId', '==', uid)));
         if (existingAccs.empty) {
           const seed = createHolooSeedData(uid);
           const batch = writeBatch(db);
-          const now = serverTimestamp();
-
           const putAll = <T extends { id: string }>(colName: string, items: T[]) => {
             items.forEach((item) => {
               const { id, ...rest } = item;
-              const docId = `${uid.slice(0, 10)}_${id}`;
-              batch.set(doc(db, colName, docId), {
+              batch.set(doc(db, colName, id), {
                 ...rest,
-                createdAt: now,
-                updatedAt: now,
+                ownerId: uid,
+                createdAt: serverTimestamp(),
+                updatedAt: serverTimestamp(),
               });
             });
           };
-
           putAll('accounts', seed.accounts);
           putAll('parties', seed.parties);
           putAll('products', seed.products);
@@ -460,49 +433,33 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           putAll('assets', seed.assets);
           putAll('currencies', seed.currencies);
           putAll('exchangeRates', seed.exchangeRates);
-
           await batch.commit();
-          showToast('فضای کاری شرکتی هلو Apex در فضای ابری با موفقیت ایجاد و همگام‌سازی شد.');
+          showToast('فضای کاری اولیه در Supabase ایجاد شد.');
         } else {
-          // Ensure multi-currency collections are bootstrapped for existing cloud workspaces
-          const curQuery = query(collection(db, 'currencies'), where('ownerId', '==', uid));
-          const existingCurs = await getDocs(curQuery);
-          if (existingCurs.empty) {
+          const existingCurrencies = await getDocs(query(collection(db, 'currencies'), where('ownerId', '==', uid)));
+          if (existingCurrencies.empty) {
             const seed = createHolooSeedData(uid);
             const batch = writeBatch(db);
-            const now = serverTimestamp();
-            seed.currencies.forEach((item) => {
-              const { id, ...rest } = item;
-              batch.set(doc(db, 'currencies', `${uid.slice(0, 10)}_${id}`), {
-                ...rest,
-                createdAt: now,
-                updatedAt: now,
-              });
-            });
-            seed.exchangeRates.forEach((item) => {
-              const { id, ...rest } = item;
-              batch.set(doc(db, 'exchangeRates', `${uid.slice(0, 10)}_${id}`), {
-                ...rest,
-                createdAt: now,
-                updatedAt: now,
-              });
-            });
+            seed.currencies.forEach((item) => batch.set(doc(db, 'currencies', item.id), {
+              ...item, ownerId: uid, createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
+            }));
+            seed.exchangeRates.forEach((item) => batch.set(doc(db, 'exchangeRates', item.id), {
+              ...item, ownerId: uid, createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
+            }));
             await batch.commit();
           }
         }
       } catch (error) {
-        if (isFirestoreOfflineError(error)) {
-          showToast(
-            'ارتباط موقت با سرور ابری برقرار نشد؛ برنامه در حالت آفلاین فعال است و پس از اتصال همگام‌سازی می‌شود.'
-          );
+        if (isSupabaseOfflineError(error)) {
+          showToast('ارتباط با Supabase برقرار نیست؛ داده‌های محلی در دسترس می‌مانند.');
           return;
         }
-        handleFirestoreError(error, OperationType.WRITE, `users/${uid}`);
+        handleSupabaseError(error, OperationType.WRITE, 'billion_records');
       } finally {
         setIsSyncing(false);
       }
     },
-    [showToast, deviceIdentity]
+    [showToast]
   );
 
   useEffect(() => {
@@ -537,8 +494,8 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
               }
             },
             (err) => {
-              if (isFirestoreOfflineError(err)) return;
-              handleFirestoreError(err, OperationType.GET, `users/${uid}`);
+              if (isSupabaseOfflineError(err)) return;
+              handleSupabaseError(err, OperationType.GET, `users/${uid}`);
             }
           )
         );
@@ -556,8 +513,8 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
                 setter(list);
               },
               (err) => {
-                if (isFirestoreOfflineError(err)) return;
-                handleFirestoreError(err, OperationType.LIST, colName);
+                if (isSupabaseOfflineError(err)) return;
+                handleSupabaseError(err, OperationType.LIST, colName);
               }
             )
           );
@@ -608,15 +565,36 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     [accounts, vouchers, invoices, parties, products, cheques, trialBalance, balanceSheet, partyBalances]
   );
 
-  const loginWithGoogle = useCallback(async () => {
-    try {
-      await signInWithGoogle();
-      showToast('ورود با حساب گوگل انجام شد. همگام‌سازی ابری فعال است.');
-    } catch (err) {
-      console.error(err);
-      showToast('ورود با حساب گوگل لغو شد یا با خطا مواجه گردید.');
+  const completeEnrollment = useCallback(async (mode: 'bootstrap' | 'invite', token: string) => {
+    const session = await ensurePasswordlessSession();
+    const deviceId = deviceIdentity?.deviceId;
+    if (!deviceId) throw new Error('شناسه این دستگاه آماده نیست.');
+    const platform = typeof navigator !== 'undefined' && /android/i.test(navigator.userAgent)
+      ? 'android'
+      : typeof navigator !== 'undefined' && /iphone|ipad/i.test(navigator.userAgent) ? 'ios' : 'web';
+    const deviceLabel = platform === 'android' ? 'دستگاه Android' : platform === 'ios' ? 'دستگاه iOS' : 'دستگاه مرورگر';
+    if (mode === 'bootstrap') {
+      await bootstrapBillionCompany({
+        bootstrapToken: token,
+        companyName: DEFAULT_PROFILE.companyName,
+        deviceId,
+        deviceLabel,
+        platform,
+      });
+    } else {
+      await acceptBillionInvite({ token, deviceId, deviceLabel, platform });
     }
-  }, [showToast]);
+    const membership = await getBillionMembership();
+    if (!membership) throw new Error('عضویت شرکت پس از ثبت دعوت‌نامه تأیید نشد.');
+    setActiveCompanyId(membership.company_id);
+    setUser(session.user);
+    setAuthReady(true);
+    await ensureCloudSeed(session.user);
+    showToast(mode === 'bootstrap' ? 'شرکت در Supabase راه‌اندازی شد.' : 'این دستگاه به شرکت متصل شد.');
+  }, [deviceIdentity, ensureCloudSeed, showToast]);
+
+  const bootstrapCloud = useCallback((token: string) => completeEnrollment('bootstrap', token), [completeEnrollment]);
+  const joinCloud = useCallback((token: string) => completeEnrollment('invite', token), [completeEnrollment]);
 
   const logout = useCallback(async () => {
     await signOutAccount();
@@ -640,7 +618,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             updatedAt: serverTimestamp(),
           });
         } catch (err) {
-          handleFirestoreError(err, OperationType.UPDATE, path);
+          handleSupabaseError(err, OperationType.UPDATE, path);
         }
       }
       showToast('مشخصات شرکتی و سال مالی ذخیره شد.');
@@ -675,7 +653,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             updatedAt: serverTimestamp(),
           });
         } catch (err) {
-          handleFirestoreError(err, OperationType.CREATE, `accounts/${id}`);
+          handleSupabaseError(err, OperationType.CREATE, `accounts/${id}`);
         }
       } else {
         setAccounts((prev) => [...prev, full]);
@@ -702,7 +680,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         try {
           await updateDoc(doc(db, 'accounts', accountId), updatePayload);
         } catch (err) {
-          handleFirestoreError(err, OperationType.UPDATE, `accounts/${accountId}`);
+          handleSupabaseError(err, OperationType.UPDATE, `accounts/${accountId}`);
         }
       } else {
         setAccounts((prev) =>
@@ -731,7 +709,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         try {
           await deleteDoc(doc(db, 'accounts', accountId));
         } catch (err) {
-          handleFirestoreError(err, OperationType.DELETE, `accounts/${accountId}`);
+          handleSupabaseError(err, OperationType.DELETE, `accounts/${accountId}`);
         }
       } else {
         setAccounts((prev) => prev.filter((a) => a.id !== accountId));
@@ -772,7 +750,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             updatedAt: serverTimestamp(),
           });
         } catch (err) {
-          handleFirestoreError(err, OperationType.CREATE, `parties/${id}`);
+          handleSupabaseError(err, OperationType.CREATE, `parties/${id}`);
         }
       } else {
         setParties((prev) => [full, ...prev]);
@@ -807,7 +785,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           }
           await updateDoc(doc(db, 'parties', partyId), payload);
         } catch (err) {
-          handleFirestoreError(err, OperationType.UPDATE, `parties/${partyId}`);
+          handleSupabaseError(err, OperationType.UPDATE, `parties/${partyId}`);
         }
       } else {
         setParties((prev) => prev.map((p) => (p.id === partyId ? { ...p, ...patch } : p)));
@@ -831,7 +809,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         try {
           await deleteDoc(doc(db, 'parties', partyId));
         } catch (err) {
-          handleFirestoreError(err, OperationType.DELETE, `parties/${partyId}`);
+          handleSupabaseError(err, OperationType.DELETE, `parties/${partyId}`);
         }
       } else {
         setParties((prev) => prev.filter((p) => p.id !== partyId));
@@ -927,7 +905,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             updatedAt: serverTimestamp(),
           });
         } catch (err) {
-          handleFirestoreError(err, OperationType.CREATE, `vouchers/${id}`);
+          handleSupabaseError(err, OperationType.CREATE, `vouchers/${id}`);
         }
       } else {
         setVouchers((prev) => [...prev, full]);
@@ -1002,7 +980,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             updatedAt: serverTimestamp(),
           });
         } catch (err) {
-          handleFirestoreError(err, OperationType.UPDATE, `vouchers/${voucherId}`);
+          handleSupabaseError(err, OperationType.UPDATE, `vouchers/${voucherId}`);
         }
       } else {
         setVouchers((prev) =>
@@ -1043,7 +1021,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         try {
           await deleteDoc(doc(db, 'vouchers', voucherId));
         } catch (err) {
-          handleFirestoreError(err, OperationType.DELETE, `vouchers/${voucherId}`);
+          handleSupabaseError(err, OperationType.DELETE, `vouchers/${voucherId}`);
         }
       } else {
         setVouchers((prev) => prev.filter((v) => v.id !== voucherId));
@@ -1063,7 +1041,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             updatedAt: serverTimestamp(),
           });
         } catch (err) {
-          handleFirestoreError(err, OperationType.UPDATE, `vouchers/${voucherId}`);
+          handleSupabaseError(err, OperationType.UPDATE, `vouchers/${voucherId}`);
         }
       } else {
         setVouchers((prev) =>
@@ -1126,7 +1104,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         });
         await batch.commit();
       } catch (err) {
-        handleFirestoreError(err, OperationType.UPDATE, 'vouchers');
+        handleSupabaseError(err, OperationType.UPDATE, 'vouchers');
       }
     } else {
       const numMap = new Map<string, number>();
@@ -1172,7 +1150,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             updatedAt: serverTimestamp(),
           });
         } catch (err) {
-          handleFirestoreError(err, OperationType.CREATE, `products/${id}`);
+          handleSupabaseError(err, OperationType.CREATE, `products/${id}`);
         }
       } else {
         setProducts((prev) => [full, ...prev]);
@@ -1211,7 +1189,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           if (patch.vatExempt !== undefined) payload.vatExempt = Boolean(patch.vatExempt);
           await updateDoc(doc(db, 'products', productId), payload);
         } catch (err) {
-          handleFirestoreError(err, OperationType.UPDATE, `products/${productId}`);
+          handleSupabaseError(err, OperationType.UPDATE, `products/${productId}`);
         }
       } else {
         setProducts((prev) => prev.map((p) => (p.id === productId ? { ...p, ...patch } : p)));
@@ -1234,7 +1212,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         try {
           await deleteDoc(doc(db, 'products', productId));
         } catch (err) {
-          handleFirestoreError(err, OperationType.DELETE, `products/${productId}`);
+          handleSupabaseError(err, OperationType.DELETE, `products/${productId}`);
         }
       } else {
         setProducts((prev) => prev.filter((p) => p.id !== productId));
@@ -1254,7 +1232,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             updatedAt: serverTimestamp(),
           });
         } catch (err) {
-          handleFirestoreError(err, OperationType.UPDATE, `products/${productId}`);
+          handleSupabaseError(err, OperationType.UPDATE, `products/${productId}`);
         }
       } else {
         setProducts((prev) =>
@@ -1454,7 +1432,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             updatedAt: serverTimestamp(),
           });
         } catch (err) {
-          handleFirestoreError(err, OperationType.UPDATE, `products/${productId}`);
+          handleSupabaseError(err, OperationType.UPDATE, `products/${productId}`);
         }
       } else {
         setProducts((prev) =>
@@ -1492,7 +1470,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             updatedAt: serverTimestamp(),
           });
         } catch (err) {
-          handleFirestoreError(err, OperationType.CREATE, `cheques/${id}`);
+          handleSupabaseError(err, OperationType.CREATE, `cheques/${id}`);
         }
       } else {
         setCheques((prev) => [full, ...prev]);
@@ -1569,7 +1547,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           if (patch.notes !== undefined) payload.notes = patch.notes.slice(0, 300);
           await updateDoc(doc(db, 'cheques', chequeId), payload);
         } catch (err) {
-          handleFirestoreError(err, OperationType.UPDATE, `cheques/${chequeId}`);
+          handleSupabaseError(err, OperationType.UPDATE, `cheques/${chequeId}`);
         }
       } else {
         setCheques((prev) => prev.map((c) => (c.id === chequeId ? { ...c, ...patch } : c)));
@@ -1822,7 +1800,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             updatedAt: serverTimestamp(),
           });
         } catch (err) {
-          handleFirestoreError(err, OperationType.UPDATE, `cheques/${chequeId}`);
+          handleSupabaseError(err, OperationType.UPDATE, `cheques/${chequeId}`);
         }
       } else {
         setCheques((prev) =>
@@ -2073,7 +2051,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             updatedAt: serverTimestamp(),
           });
         } catch (err) {
-          handleFirestoreError(err, OperationType.CREATE, `invoices/${id}`);
+          handleSupabaseError(err, OperationType.CREATE, `invoices/${id}`);
         }
       } else {
         setInvoices((prev) => [full, ...prev]);
@@ -2138,7 +2116,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             updatedAt: serverTimestamp(),
           });
         } catch (err) {
-          handleFirestoreError(err, OperationType.UPDATE, `invoices/${invoiceId}`);
+          handleSupabaseError(err, OperationType.UPDATE, `invoices/${invoiceId}`);
         }
       } else {
         setInvoices((prev) =>
@@ -2200,7 +2178,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             updatedAt: serverTimestamp(),
           });
         } catch (err) {
-          handleFirestoreError(err, OperationType.UPDATE, `invoices/${invoiceId}`);
+          handleSupabaseError(err, OperationType.UPDATE, `invoices/${invoiceId}`);
         }
       } else {
         setInvoices((prev) =>
@@ -2245,7 +2223,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             updatedAt: serverTimestamp(),
           });
         } catch (err) {
-          handleFirestoreError(err, OperationType.CREATE, `employees/${id}`);
+          handleSupabaseError(err, OperationType.CREATE, `employees/${id}`);
         }
       } else {
         setEmployees((prev) => [...prev, full]);
@@ -2271,7 +2249,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           if (patch.active !== undefined) payload.active = Boolean(patch.active);
           await updateDoc(doc(db, 'employees', empId), payload);
         } catch (err) {
-          handleFirestoreError(err, OperationType.UPDATE, `employees/${empId}`);
+          handleSupabaseError(err, OperationType.UPDATE, `employees/${empId}`);
         }
       } else {
         setEmployees((prev) => prev.map((e) => (e.id === empId ? { ...e, ...patch } : e)));
@@ -2287,7 +2265,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         try {
           await deleteDoc(doc(db, 'employees', empId));
         } catch (err) {
-          handleFirestoreError(err, OperationType.DELETE, `employees/${empId}`);
+          handleSupabaseError(err, OperationType.DELETE, `employees/${empId}`);
         }
       } else {
         setEmployees((prev) => prev.filter((e) => e.id !== empId));
@@ -2406,7 +2384,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             updatedAt: serverTimestamp(),
           });
         } catch (err) {
-          handleFirestoreError(err, OperationType.CREATE, `assets/${id}`);
+          handleSupabaseError(err, OperationType.CREATE, `assets/${id}`);
         }
       } else {
         setAssets((prev) => [...prev, full]);
@@ -2430,7 +2408,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           if (patch.costCenterId !== undefined) payload.costCenterId = patch.costCenterId.slice(0, 128);
           await updateDoc(doc(db, 'assets', assetId), payload);
         } catch (err) {
-          handleFirestoreError(err, OperationType.UPDATE, `assets/${assetId}`);
+          handleSupabaseError(err, OperationType.UPDATE, `assets/${assetId}`);
         }
       } else {
         setAssets((prev) => prev.map((a) => (a.id === assetId ? { ...a, ...patch } : a)));
@@ -2446,7 +2424,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         try {
           await deleteDoc(doc(db, 'assets', assetId));
         } catch (err) {
-          handleFirestoreError(err, OperationType.DELETE, `assets/${assetId}`);
+          handleSupabaseError(err, OperationType.DELETE, `assets/${assetId}`);
         }
       } else {
         setAssets((prev) => prev.filter((a) => a.id !== assetId));
@@ -2471,7 +2449,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
                 updatedAt: serverTimestamp(),
               });
             } catch (err) {
-              handleFirestoreError(err, OperationType.UPDATE, `assets/${a.id}`);
+              handleSupabaseError(err, OperationType.UPDATE, `assets/${a.id}`);
             }
           } else {
             setAssets((prev) =>
@@ -2530,7 +2508,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             updatedAt: serverTimestamp(),
           });
         } catch (err) {
-          handleFirestoreError(err, OperationType.CREATE, `costCenters/${id}`);
+          handleSupabaseError(err, OperationType.CREATE, `costCenters/${id}`);
         }
       } else {
         setCostCenters((prev) => [...prev, full]);
@@ -2551,7 +2529,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           if (patch.active !== undefined) payload.active = Boolean(patch.active);
           await updateDoc(doc(db, 'costCenters', ccId), payload);
         } catch (err) {
-          handleFirestoreError(err, OperationType.UPDATE, `costCenters/${ccId}`);
+          handleSupabaseError(err, OperationType.UPDATE, `costCenters/${ccId}`);
         }
       } else {
         setCostCenters((prev) => prev.map((c) => (c.id === ccId ? { ...c, ...patch } : c)));
@@ -2567,7 +2545,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         try {
           await deleteDoc(doc(db, 'costCenters', ccId));
         } catch (err) {
-          handleFirestoreError(err, OperationType.DELETE, `costCenters/${ccId}`);
+          handleSupabaseError(err, OperationType.DELETE, `costCenters/${ccId}`);
         }
       } else {
         setCostCenters((prev) => prev.filter((c) => c.id !== ccId));
@@ -2680,7 +2658,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             updatedAt: serverTimestamp(),
           });
         } catch (err) {
-          handleFirestoreError(err, OperationType.CREATE, `currencies/${id}`);
+          handleSupabaseError(err, OperationType.CREATE, `currencies/${id}`);
           return false;
         }
       } else {
@@ -2712,7 +2690,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             updatedAt: serverTimestamp(),
           });
         } catch (err) {
-          handleFirestoreError(err, OperationType.CREATE, `exchangeRates/${rateId}`);
+          handleSupabaseError(err, OperationType.CREATE, `exchangeRates/${rateId}`);
         }
       } else {
         setExchangeRates((prev) => [rateEntry, ...prev]);
@@ -2755,7 +2733,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             updatedAt: serverTimestamp(),
           });
         } catch (err) {
-          handleFirestoreError(err, OperationType.UPDATE, `currencies/${currencyId}`);
+          handleSupabaseError(err, OperationType.UPDATE, `currencies/${currencyId}`);
         }
       } else {
         setCurrencies((prev) =>
@@ -2786,7 +2764,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         try {
           await deleteDoc(doc(db, 'currencies', currencyId));
         } catch (err) {
-          handleFirestoreError(err, OperationType.DELETE, `currencies/${currencyId}`);
+          handleSupabaseError(err, OperationType.DELETE, `currencies/${currencyId}`);
           return false;
         }
       } else {
@@ -2825,7 +2803,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
               updatedAt: serverTimestamp(),
             });
           } catch (err) {
-            handleFirestoreError(err, OperationType.UPDATE, `exchangeRates/${existing.id}`);
+            handleSupabaseError(err, OperationType.UPDATE, `exchangeRates/${existing.id}`);
           }
         } else {
           setExchangeRates((prev) =>
@@ -2866,7 +2844,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
               updatedAt: serverTimestamp(),
             });
           } catch (err) {
-            handleFirestoreError(err, OperationType.CREATE, `exchangeRates/${id}`);
+            handleSupabaseError(err, OperationType.CREATE, `exchangeRates/${id}`);
           }
         } else {
           setExchangeRates((prev) => [full, ...prev]);
@@ -2908,7 +2886,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         try {
           await deleteDoc(doc(db, 'exchangeRates', rateId));
         } catch (err) {
-          handleFirestoreError(err, OperationType.DELETE, `exchangeRates/${rateId}`);
+          handleSupabaseError(err, OperationType.DELETE, `exchangeRates/${rateId}`);
         }
       } else {
         setExchangeRates((prev) => prev.filter((r) => r.id !== rateId));
@@ -3579,7 +3557,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         auditReport,
         toast,
         showToast,
-        loginWithGoogle,
+        bootstrapCloud, joinCloud,
         logout,
         updateCompanyProfile,
         setCurrencyUnit,
