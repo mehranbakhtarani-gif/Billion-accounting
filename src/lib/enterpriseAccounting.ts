@@ -306,10 +306,10 @@ export function computeReceivablesAging(
     const balance = partyBalances.get(p.id) ?? 0;
     if (balance <= 0) continue; // Only positive debtors (مطالبات)
 
-    // Match open receivable balance against most recent credit sales invoices (FIFO settlement)
+    // Apply open receivable balance to the oldest open sales invoices first (FIFO approximation).
     const salesInvs = invoices
       .filter((inv) => inv.partyId === p.id && inv.invoiceType === 'sale' && inv.status !== 'cancelled')
-      .sort((a, b) => b.date.localeCompare(a.date));
+      .sort((a, b) => a.date.localeCompare(b.date));
 
     let remaining = balance;
     let b0 = 0;
@@ -377,7 +377,7 @@ export function computePayablesAging(
     if (totalPayable <= 0) continue;
     const purchases = invoices
       .filter((invoice) => invoice.partyId === party.id && invoice.invoiceType === 'purchase' && invoice.status !== 'cancelled')
-      .sort((a, b) => b.date.localeCompare(a.date));
+      .sort((a, b) => a.date.localeCompare(b.date));
     let remaining = totalPayable, bucket0to30 = 0, bucket31to60 = 0, bucket61to90 = 0, bucketOver90 = 0;
     let maxOverdueDays = 0; let oldestInvoiceDate: string | undefined;
     for (const invoice of purchases) {
