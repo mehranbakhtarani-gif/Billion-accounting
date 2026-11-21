@@ -22,10 +22,8 @@ jobs:
           ref: main
           fetch-depth: 0
       - name: Fetch Tehran market rates from NerkhAra
-        env:
         run: |
           node <<'NODE'
-          const fs = require('node:fs');
           const fs = require('node:fs');
           const specs = [
             { code: 'USD', key: 'usd', name: 'دلار آمریکا', symbol: '$' },
