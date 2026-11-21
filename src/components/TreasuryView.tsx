@@ -345,6 +345,7 @@ export const TreasuryView: React.FC<TreasuryViewProps> = ({ initialIntent, clear
     const balances = new Map<string, { currencyCode: string; accountCode: string; accountTitle: string; foreignBalance: number; baseBalance: number }>();
     vouchers.filter((voucher) => voucher.status === 'permanent' && voucher.currencyCode && voucher.currencyCode !== 'IRR').forEach((voucher) => {
       voucher.lines.forEach((line) => {
+        if (!['101', '102', '103', '104', '301', '302'].some((prefix) => line.accountCode.startsWith(prefix))) return;
         const key = `${voucher.currencyCode}:${line.accountCode}`;
         const current = balances.get(key) || { currencyCode: voucher.currencyCode!, accountCode: line.accountCode, accountTitle: line.accountTitle, foreignBalance: 0, baseBalance: 0 };
         current.foreignBalance += (line.foreignDebit || 0) - (line.foreignCredit || 0);
