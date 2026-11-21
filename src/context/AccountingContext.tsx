@@ -2510,59 +2510,55 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
   const postDepreciationVoucher = useCallback(
     async (periodLabel: string) => {
-      let totalDep = 0;
-      for (const a of assets) {
-        const dep = calculateMonthlyDepreciation(a);
-        if (dep > 0) {
-          totalDep += dep;
-          const nextAccum = a.accumulatedDepreciation + dep;
-          if (user) {
-            try {
-              await updateDoc(doc(db, 'assets', a.id), {
-                accumulatedDepreciation: nextAccum,
-                updatedAt: serverTimestamp(),
-              });
-            } catch (err) {
-              handleSupabaseError(err, OperationType.UPDATE, `assets/${a.id}`);
-            }
-          } else {
-            setAssets((prev) =>
-              prev.map((x) =>
-                x.id === a.id ? { ...x, accumulatedDepreciation: nextAccum } : x
-              )
-            );
-          }
-        }
+      const normalizedPeriod = periodLabel.trim();
+      if (!normalizedPeriod) throw new Error('دوره استهلاک را مشخص کنید.');
+      const referenceId = `depreciation:${normalizedPeriod}`;
+      if (vouchers.some((voucher) => voucher.voucherType === 'depreciation' && (voucher.referenceId === referenceId || voucher.description === `سند اتوماتیک استهلاک دارایی‌های ثابت — ${normalizedPeriod}`))) {
+        throw new Error(`برای دوره «${normalizedPeriod}» قبلاً سند استهلاک ثبت شده است.`);
       }
+      const allocations = assets.map((asset) => {
+        if (!Number.isFinite(asset.purchaseCost) || asset.purchaseCost <= 0 || !Number.isFinite(asset.salvageValue) || asset.salvageValue < 0 || asset.salvageValue > asset.purchaseCost || !Number.isFinite(asset.usefulLifeYears) || asset.usefulLifeYears <= 0 || !Number.isFinite(asset.accumulatedDepreciation) || asset.accumulatedDepreciation < 0) {
+          throw new Error(`اطلاعات بهای تمام‌شده، ارزش اسقاط، عمر مفید یا استهلاک انباشته دارایی «${asset.title}» معتبر نیست.`);
+        }
+        const amount = calculateMonthlyDepreciation(asset);
+        return { asset, amount, nextAccumulated: asset.accumulatedDepreciation + amount };
+      }).filter((row) => row.amount > 0);
+      const totalDep = allocations.reduce((sum, row) => sum + row.amount, 0);
       if (totalDep <= 0) {
         showToast('دارایی قابل استهلاک برای این دوره وجود ندارد.');
         return;
       }
-      await createVoucher({
-        date: getTodayShamsi(),
-        description: `سند اتوماتیک استهلاک دارایی‌های ثابت — ${periodLabel}`,
-        voucherType: 'depreciation',
-        status: 'permanent',
-        lines: [
-          {
-            accountCode: '80301',
-            accountTitle: 'هزینه استهلاک اموال و تجهیزات',
-            costCenterId: 'cc_hq',
-            description: `هزینه استهلاک ${periodLabel}`,
-            debit: totalDep,
-            credit: 0,
-          },
-          {
-            accountCode: '20201',
-            accountTitle: 'استهلاک انباشته تجهیزات اداری',
-            description: `افزایش استهلاک انباشته ${periodLabel}`,
-            debit: 0,
-            credit: totalDep,
-          },
-        ],
+      const expenseByCostCenter = new Map<string, number>();
+      for (const row of allocations) {
+        const key = row.asset.costCenterId || 'cc_hq';
+        expenseByCostCenter.set(key, (expenseByCostCenter.get(key) || 0) + row.amount);
+      }
+      const expenseLines: VoucherLine[] = [...expenseByCostCenter.entries()].map(([costCenterId, debit]) => ({
+        accountCode: '80301', accountTitle: 'هزینه استهلاک اموال و تجهیزات', costCenterId,
+        description: `هزینه استهلاک ${normalizedPeriod}`, debit, credit: 0,
+      }));
+      expenseLines.push({
+        accountCode: '20201', accountTitle: 'استهلاک انباشته تجهیزات اداری',
+        description: `افزایش استهلاک انباشته ${normalizedPeriod}`, debit: 0, credit: totalDep,
       });
+      const voucher = await createVoucher({
+        date: getTodayShamsi(),
+        description: `سند اتوماتیک استهلاک دارایی‌های ثابت — ${normalizedPeriod}`,
+        voucherType: 'depreciation', status: 'permanent', referenceId, lines: expenseLines,
+      });
+      // Update asset subledger only after the depreciation voucher has been created.
+      for (const row of allocations) {
+        if (user) {
+          await updateDoc(doc(db, 'assets', row.asset.id), { accumulatedDepreciation: row.nextAccumulated, updatedAt: serverTimestamp() });
+        }
+      }
+      if (!user) {
+        const nextById = new Map(allocations.map((row) => [row.asset.id, row.nextAccumulated]));
+        setAssets((prev) => prev.map((asset) => nextById.has(asset.id) ? { ...asset, accumulatedDepreciation: nextById.get(asset.id)! } : asset));
+      }
+      showToast(`سند استهلاک دوره «${normalizedPeriod}» با شماره ${voucher.voucherNumber} صادر شد.`);
     },
-    [assets, user, createVoucher, showToast]
+    [assets, vouchers, user, createVoucher, showToast]
   );
 
   const addCostCenter = useCallback(
