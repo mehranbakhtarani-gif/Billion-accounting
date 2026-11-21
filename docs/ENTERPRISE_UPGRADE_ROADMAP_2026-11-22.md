@@ -133,3 +133,20 @@ Each stage is delivered as a separate commit/PR on this feature branch. After ea
 6. only then proceed.
 
 Do not merge or deploy unfinished enterprise controls to the production Pages branch. A successful compile is not proof of multi-device concurrency correctness or accounting correctness.
+
+
+## Implementation progress — 2026-11-22
+
+### Completed in the feature branch
+
+- Added pure domain primitives for fiscal-period validation, operation-envelope validation and conflict classification, FIFO lot allocation, open-item aging, atomic-plan validation, bank-line reconciliation suggestions, and treasury-voucher link auditing.
+- Upgraded IndexedDB from version 1 to 2 with additive creation of a durable sync outbox and a stable installation identity. Existing snapshot storage is retained.
+- The AccountingContext now initializes the local device identity before auth readiness and registers/updates a device heartbeat under the authenticated Firebase UID.
+- Added owner-scoped Firestore rules for the device registry. Device IDs are explicitly metadata and are not treated as credentials.
+- Added automated tests and a GitHub Actions workflow. The base foundation commit `4abaf84` passed type-check, domain tests, and Vite build. Subsequent context/rules integration commits are awaiting their own workflow completion.
+
+### Still outstanding in Stage 1
+
+- A device registry scoped to one Firebase UID does not yet allow separate Mehran/Ehsan identities to share one company. That requires a secure company-membership and device-enrollment mechanism, preferably a trusted backend or callable function issuing one-time enrollment grants.
+- The outbox is durable locally but is not yet connected to every CRUD write or a cloud replay worker. No claim of live three-device synchronization is made at this point.
+- Conflict review, server-side idempotent application, membership revocation, and multi-device concurrency tests remain outstanding.
