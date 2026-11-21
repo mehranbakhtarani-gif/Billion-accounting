@@ -136,6 +136,7 @@ test('straight-line depreciation never exceeds depreciable base or salvage value
   assert.equal(calculateMonthlyDepreciation(asset as any), 10);
   assert.equal(calculateMonthlyDepreciation({ ...asset, accumulatedDepreciation: 1080 } as any), 0);
   assert.equal(calculateMonthlyDepreciation({ ...asset, salvageValue: 1300 } as any), 0);
+  assert.equal(calculateMonthlyDepreciation({ ...asset, usefulLifeYears: 0 } as any), 0);
 });
 test('payables aging uses supplier balances, purchase invoices and due dates', () => {
   const supplier = { id: 's1', ownerId: 'o1', code: 'S1', name: 'تأمین‌کننده نمونه', partyType: 'supplier', creditLimit: 0, openingBalance: 0, accountCode: '2101' };
