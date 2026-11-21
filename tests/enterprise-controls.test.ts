@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   allocateStockFIFO,
+  assertSufficientStock,
   assertFiscalPeriodOpen,
   auditTreasuryVoucherLinks,
   classifySyncOperation,
@@ -61,6 +62,23 @@ test('FIFO allocates oldest eligible lots and excludes expired lots', () => {
   assert.throws(() => allocateStockFIFO([{ ...lots[0], unitCost: Number.NaN }], 1, {
     productId: 'p1', warehouse: 'w1', asOfDate: '2026-11-22',
   }), /بهای واحد/);
+});
+
+test('stock issue preflight aggregates repeated product lines and rejects overselling', () => {
+  assert.doesNotThrow(() => assertSufficientStock(
+    new Map([['p1', 10], ['p2', 4]]),
+    [{ productId: 'p1', quantity: 3 }, { productId: 'p1', quantity: 7 }, { productId: 'p2', quantity: 4 }],
+  ));
+  assert.throws(() => assertSufficientStock(
+    new Map([['p1', 9]]),
+    [{ productId: 'p1', quantity: 5 }, { productId: 'p1', quantity: 5 }],
+  ), /موجودی کالا/);
+  assert.throws(() => assertSufficientStock(new Map([['p1', 10]]), [
+    { productId: 'p1', quantity: 0 },
+  ]), /مقدار نامعتبر/);
+  assert.throws(() => assertSufficientStock(new Map(), [
+    { productId: 'missing', quantity: 1 },
+  ]), /موجودی کالا/);
 });
 
 test('open-item aging uses invoice outstanding amounts and due dates', () => {
