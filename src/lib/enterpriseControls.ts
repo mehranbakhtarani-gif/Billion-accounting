@@ -123,6 +123,31 @@ export function allocateStockFIFO(
   if (!Number.isFinite(requestedQuantity) || requestedQuantity <= 0) {
     throw new Error('مقدار خروج کالا باید عددی مثبت باشد.');
   }
+  if (!options.productId.trim() || !options.warehouse.trim() || !/^\\d{4}-\\d{2}-\\d{2}$/.test(options.asOfDate)) {
+    throw new Error('مشخصات کالا، انبار یا تاریخ تخصیص FIFO معتبر نیست.');
+  }
+  const lotIds = new Set<string>();
+  for (const lot of lots) {
+    if (!lot.id.trim() || lotIds.has(lot.id)) {
+      throw new Error('شناسه بچ انبار خالی یا تکراری است.');
+    }
+    lotIds.add(lot.id);
+    if (!lot.productId.trim() || !lot.warehouse.trim() || !lot.lotNumber.trim()) {
+      throw new Error('مشخصات بچ انبار ناقص است.');
+    }
+    if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(lot.receivedDate) ||
+        (lot.expiryDate !== undefined && !/^\\d{4}-\\d{2}-\\d{2}$/.test(lot.expiryDate))) {
+      throw new Error('تاریخ دریافت یا انقضای بچ معتبر نیست.');
+    }
+    if (!Number.isFinite(lot.quantityReceived) || !Number.isFinite(lot.quantityRemaining) ||
+        lot.quantityReceived < 0 || lot.quantityRemaining < 0 ||
+        lot.quantityRemaining - lot.quantityReceived > 1e-9) {
+      throw new Error('مقدار دریافتی یا مانده بچ انبار معتبر نیست.');
+    }
+    if (!Number.isFinite(lot.unitCost) || lot.unitCost < 0) {
+      throw new Error('بهای واحد بچ انبار معتبر نیست.');
+    }
+  }
   const candidates = lots
     .filter((lot) =>
       lot.productId === options.productId &&
