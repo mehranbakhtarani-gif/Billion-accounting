@@ -94,7 +94,7 @@ export const InventoryView: React.FC<{ initialIntent?: string; clearIntent?: () 
   const [panelTab, setPanelTab] = useState<'kardex' | 'stocktake' | 'transfer'>('stocktake');
   const stockInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Bulk Stocktaking & Bulk Price Update states (Holoo Sherkati Apex)
+  // Bulk Stocktaking & Bulk Price Update states (Billion)
   const [bulkMode, setBulkMode] = useState(false);
   const [bulkCounts, setBulkCounts] = useState<Record<string, number>>({});
   const [bulkReason, setBulkReason] = useState('انبارگردانی گروهی باسکول انبارهای نخ');
@@ -1393,7 +1393,7 @@ export const InventoryView: React.FC<{ initialIntent?: string; clearIntent?: () 
         </div>
       )}
 
-      {/* Authentic Holoo 4-Section Weighted-Average Kardex Modal */}
+      {/* Billion 4-Section Weighted-Average Kardex Modal */}
       {showFullKardexModal && selectedProduct && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/65 p-4">
           <div className="w-full max-w-6xl rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl overflow-hidden text-xs print-container">
