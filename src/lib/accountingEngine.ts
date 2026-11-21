@@ -736,7 +736,13 @@ export function calculateEmployeePayroll(emp: Employee): PayrollCalculation {
 }
 
 export function calculateMonthlyDepreciation(asset: FixedAsset): number {
-  const depreciable = Math.max(0, asset.purchaseCost - asset.salvageValue);
+  if (
+    !Number.isFinite(asset.purchaseCost) || asset.purchaseCost <= 0 ||
+    !Number.isFinite(asset.salvageValue) || asset.salvageValue < 0 || asset.salvageValue > asset.purchaseCost ||
+    !Number.isFinite(asset.usefulLifeYears) || asset.usefulLifeYears <= 0 ||
+    !Number.isFinite(asset.accumulatedDepreciation) || asset.accumulatedDepreciation < 0
+  ) return 0;
+  const depreciable = asset.purchaseCost - asset.salvageValue;
   const remaining = Math.max(0, depreciable - asset.accumulatedDepreciation);
   if (remaining <= 0) return 0;
   const monthly = Math.round(depreciable / (asset.usefulLifeYears * 12));
