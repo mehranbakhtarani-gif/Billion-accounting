@@ -3250,102 +3250,48 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   );
 
   const completeSubcontractJob = useCallback(
-    async (
-      jobId: string,
-      payload: { returnedWeightKg: number; completionDate: string; finishedLotNumber: string }
-    ) => {
-      const job = subcontractJobs.find((j) => j.id === jobId);
+    async (jobId: string, payload: { returnedWeightKg: number; completionDate: string; finishedLotNumber: string }) => {
+      const job = subcontractJobs.find((item) => item.id === jobId);
       if (!job || job.status === 'completed') return;
-
-      const rawProd = products.find((p) => p.id === job.rawProductId);
+      if (vouchers.some((voucher) => voucher.referenceId === job.id)) throw new Error('برای این عملیات پیمانکاری قبلاً سند ثبت شده است.');
+      const rawProduct = products.find((product) => product.id === job.rawProductId);
+      if (!rawProduct) throw new Error(`کالای خام ${job.rawProductName} در انبار یافت نشد.`);
+      if (!Number.isFinite(job.sentWeightKg) || job.sentWeightKg <= 0 || !Number.isFinite(rawProduct.stock) || rawProduct.stock < job.sentWeightKg) throw new Error('موجودی نخ خام برای تکمیل پیمانکاری کافی نیست.');
+      if (!Number.isFinite(payload.returnedWeightKg) || payload.returnedWeightKg <= 0 || !payload.finishedLotNumber.trim()) throw new Error('وزن برگشتی یا شماره لات محصول تکمیل‌شده معتبر نیست.');
+      if (!Number.isFinite(job.rawUnitCostIrr) || job.rawUnitCostIrr < 0 || !Number.isFinite(job.serviceFeePerKgIrr) || job.serviceFeePerKgIrr < 0) throw new Error('بهای مواد اولیه یا اجرت پیمانکاری نامعتبر است.');
       const rawTotalCost = Math.round(job.sentWeightKg * job.rawUnitCostIrr);
       const serviceFeeTotal = Math.round(payload.returnedWeightKg * job.serviceFeePerKgIrr);
       const finishedTotalCost = rawTotalCost + serviceFeeTotal;
-      const finishedUnitCost =
-        payload.returnedWeightKg > 0
-          ? Math.round(finishedTotalCost / payload.returnedWeightKg)
-          : job.rawUnitCostIrr;
-
-      // Update inventory: deduct raw yarn weight and add finished dyed/woven yarn product or stock
-      if (rawProd) {
-        const nextRawStock = Math.max(0, Number((rawProd.stock - job.sentWeightKg).toFixed(2)));
-        await updateProduct(rawProd.id, { stock: nextRawStock });
+      const finishedUnitCost = Math.round(finishedTotalCost / payload.returnedWeightKg);
+      const lines: VoucherLine[] = [
+        { accountCode: '10501', accountTitle: 'موجودی انبار نخ و کالای وارداتی', description: `ورود ${payload.returnedWeightKg} کیلوگرم محصول تکمیل‌شده ${job.jobNumber}`, debit: finishedTotalCost, credit: 0 },
+        { accountCode: '10501', accountTitle: 'موجودی انبار نخ و کالای وارداتی', description: `مصرف ${job.sentWeightKg} کیلوگرم نخ خام (${job.rawProductName})`, debit: 0, credit: rawTotalCost },
+        { accountCode: '30101', accountTitle: 'بستانکاران و تأمین‌کنندگان واردات نخ', partyId: job.contractorPartyId, partyName: job.contractorName, description: `اجرت پیمانکاری رنگرزی/تبدیل ${job.jobNumber}`, debit: 0, credit: serviceFeeTotal },
+      ];
+      const voucher = await createVoucher({ date: payload.completionDate, description: `تکمیل عملیات پیمانکاری ${job.jobNumber} (${job.finishedProductName} — لات ${payload.finishedLotNumber})`, voucherType: 'general', status: 'permanent', lines, referenceId: job.id });
+      let rawStockUpdated = false;
+      try {
+        const nextRawStock = Number((rawProduct.stock - job.sentWeightKg).toFixed(2));
+        await updateProduct(rawProduct.id, { stock: nextRawStock });
+        rawStockUpdated = true;
+        await addProduct({ sku: `FIN-${job.jobNumber}`, name: job.finishedProductName, category: job.processType === 'dyeing' ? 'نخ رنگ‌شده (پیمانکاری)' : 'محصول تبدیل‌شده پیمانکاری',
+          warehouse: rawProduct.warehouse || 'انبار مرکزی شادآباد', unit: 'کیلوگرم', secondaryUnit: rawProduct.secondaryUnit || 'کارتن',
+          kgPerCarton: rawProduct.kgPerCarton || 25, lotNumber: payload.finishedLotNumber, originCountry: 'تکمیل داخلی',
+          buyPrice: finishedUnitCost, sellPrice: Math.round(finishedUnitCost * 1.18), stock: payload.returnedWeightKg, reorderPoint: 100, vatExempt: false });
+      } catch (error) {
+        if (rawStockUpdated) {
+          try { await updateProduct(rawProduct.id, { stock: rawProduct.stock }); }
+          catch (rollbackError) { console.error('Subcontract raw stock rollback failed', rawProduct.id, rollbackError); }
+        }
+        try { await createVoucher({ date: getTodayShamsi(), description: `سند معکوس خودکار تکمیل ناموفق پیمانکاری ${job.jobNumber}`, voucherType: 'general', status: 'permanent', referenceId: `subcontract-reversal:${job.id}`, lines: voucher.lines.map((line) => ({ ...line, description: `برگشت سند پیمانکاری #${voucher.voucherNumber}: ${line.description}`, debit: line.credit, credit: line.debit, foreignDebit: line.foreignCredit, foreignCredit: line.foreignDebit })) }); }
+        catch (reversalError) { console.error('Subcontract voucher compensation failed', voucher.id, reversalError); }
+        throw new Error(`تکمیل پیمانکاری کامل نشد؛ تلاش برای برگشت سند و موجودی انجام شد. علت: ${error instanceof Error ? error.message : String(error)}`);
       }
-      await addProduct({
-        sku: `FIN-${job.jobNumber}`,
-        name: job.finishedProductName,
-        category: job.processType === 'dyeing' ? 'نخ رنگ‌شده (پیمانکاری)' : 'محصول تبدیل‌شده پیمانکاری',
-        warehouse: rawProd?.warehouse || 'انبار مرکزی شادآباد',
-        unit: 'کیلوگرم',
-        secondaryUnit: rawProd?.secondaryUnit || 'کارتن',
-        kgPerCarton: rawProd?.kgPerCarton || 25,
-        lotNumber: payload.finishedLotNumber,
-        originCountry: 'تکمیل داخلی',
-        buyPrice: finishedUnitCost,
-        sellPrice: Math.round(finishedUnitCost * 1.18),
-        stock: payload.returnedWeightKg,
-        reorderPoint: 100,
-        vatExempt: false,
-      });
-
-      // Post balanced voucher for subcontracting conversion & contractor fee
-      const v = await createVoucher({
-        date: payload.completionDate,
-        description: `تکمیل عملیات پیمانکاری ${job.jobNumber} (${job.finishedProductName} — لات ${payload.finishedLotNumber})`,
-        voucherType: 'general',
-        status: 'permanent',
-        lines: [
-          {
-            accountCode: '10501',
-            accountTitle: 'موجودی انبار نخ و کالای وارداتی',
-            description: `ورود ${payload.returnedWeightKg} کیلوگرم محصول تکمیل‌شده ${job.jobNumber}`,
-            debit: finishedTotalCost,
-            credit: 0,
-          },
-          {
-            accountCode: '10501',
-            accountTitle: 'موجودی انبار نخ و کالای وارداتی',
-            description: `مصرف ${job.sentWeightKg} کیلوگرم نخ خام (${job.rawProductName})`,
-            debit: 0,
-            credit: rawTotalCost,
-          },
-          {
-            accountCode: '30101',
-            accountTitle: 'بستانکاران و تأمین‌کنندگان واردات نخ',
-            partyId: job.contractorPartyId,
-            partyName: job.contractorName,
-            description: `اجرت پیمانکاری رنگرزی/تبدیل ${job.jobNumber}`,
-            debit: 0,
-            credit: serviceFeeTotal,
-          },
-        ],
-        referenceId: job.id,
-      });
-
-      setSubcontractJobs((prev) =>
-        prev.map((j) =>
-          j.id === jobId
-            ? {
-                ...j,
-                status: 'completed',
-                completionDate: payload.completionDate,
-                returnedWeightKg: payload.returnedWeightKg,
-                finishedLotNumber: payload.finishedLotNumber,
-                totalServiceFeeIrr: serviceFeeTotal,
-                finishedUnitCostIrr: finishedUnitCost,
-                voucherId: v.id,
-              }
-            : j
-        )
-      );
-      logActivity(
-        'پیمانکاری رنگرزی/بافندگی',
-        `اتمام و ورود محصول ${job.jobNumber}`,
-        `بازگشت ${payload.returnedWeightKg} کیلوگرم با لات ${payload.finishedLotNumber} و ثبت سند #${v.voucherNumber}`
-      );
-      showToast(`عملیات پیمانکاری ${job.jobNumber} تکمیل و سند #${v.voucherNumber} ثبت شد.`);
+      setSubcontractJobs((prev) => prev.map((item) => item.id === jobId ? { ...item, status: 'completed', completionDate: payload.completionDate, returnedWeightKg: payload.returnedWeightKg, finishedLotNumber: payload.finishedLotNumber, totalServiceFeeIrr: serviceFeeTotal, finishedUnitCostIrr: finishedUnitCost, voucherId: voucher.id } : item));
+      logActivity('پیمانکاری رنگرزی/بافندگی', `اتمام و ورود محصول ${job.jobNumber}`, `بازگشت ${payload.returnedWeightKg} کیلوگرم با لات ${payload.finishedLotNumber} و ثبت سند #${voucher.voucherNumber}`);
+      showToast(`عملیات پیمانکاری ${job.jobNumber} تکمیل و سند #${voucher.voucherNumber} ثبت شد.`);
     },
-    [subcontractJobs, products, updateProduct, addProduct, createVoucher, logActivity, showToast]
+    [subcontractJobs, vouchers, products, updateProduct, addProduct, createVoucher, logActivity, showToast]
   );
 
   // ---------------- FX REVALUATION & BROKER COMMISSION VOUCHERS ----------------
