@@ -1958,17 +1958,31 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
       let cogsTotal = 0;
       if (payload.invoiceType !== 'proforma') {
+        const stockDeltas = new Map<string, number>();
         for (const item of payload.items) {
           const prod = products.find((p) => p.id === item.productId);
-          if (prod) {
-            cogsTotal += Math.round(prod.buyPrice * item.quantity);
-            const isOut =
-              payload.invoiceType === 'sale' ||
-              payload.invoiceType === 'purchase_return' ||
-              payload.invoiceType === 'waste';
-            const delta = isOut ? -item.quantity : item.quantity;
-            await adjustProductStock(prod.id, Math.max(0, Number((prod.stock + delta).toFixed(2))));
+          if (!prod) {
+            throw new Error(`کالای ردیف فاکتور یافت نشد: ${item.productName || item.productId}`);
           }
+          if (!Number.isFinite(item.quantity) || item.quantity <= 0) {
+            throw new Error(`مقدار کالا در فاکتور معتبر نیست: ${item.productName || item.productId}`);
+          }
+          cogsTotal += Math.round(prod.buyPrice * item.quantity);
+          const isOut =
+            payload.invoiceType === 'sale' ||
+            payload.invoiceType === 'purchase_return' ||
+            payload.invoiceType === 'waste';
+          const delta = isOut ? -item.quantity : item.quantity;
+          stockDeltas.set(prod.id, (stockDeltas.get(prod.id) ?? 0) + delta);
+        }
+        for (const [productId, delta] of stockDeltas) {
+          const prod = products.find((p) => p.id === productId);
+          if (!prod) throw new Error(`کالای فاکتور یافت نشد: ${productId}`);
+          const nextStock = Number((prod.stock + delta).toFixed(2));
+          if (!Number.isFinite(nextStock) || nextStock < -1e-9) {
+            throw new Error(`موجودی کالا برای ثبت فاکتور کافی نیست: ${prod.name}`);
+          }
+          await adjustProductStock(prod.id, Math.max(0, nextStock));
         }
 
         const rawLines = buildInvoiceVoucherLines(payload, cogsTotal);
