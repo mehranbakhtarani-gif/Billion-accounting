@@ -22,6 +22,7 @@ import {
 import { addDaysToShamsi, diffShamsiDays, useChequeAlertPreferences } from '../lib/chequeAlerts';
 import { fuzzyFilterAndRank } from '../lib/fuzzySearch';
 import { numberToPersianWords } from '../lib/enterpriseAccounting';
+import { reconcileBankLines } from '../lib/enterpriseControls';
 import { SmartSearchCombobox, SmartSearchOption } from './SmartSearchCombobox';
 import { FuzzyTableOption, FuzzyTableSearch } from './FuzzyTableSearch';
 
@@ -235,46 +236,37 @@ export const TreasuryView: React.FC<TreasuryViewProps> = ({ initialIntent, clear
     [rasItems, baseDate]
   );
 
-  // Bank Reconciliation matching against ledger lines of selected bank account
+  // Match statement lines one-to-one by signed amount and date; ambiguous matches require review.
+  // CSV: date,description,deposit,withdrawal,reference (reference is optional).
   const reconResult = useMemo(() => {
-    const ledgerTx: { voucherNumber: number; date: string; desc: string; debit: number; credit: number }[] = [];
-    vouchers.forEach((v) => {
-      v.lines.forEach((l) => {
-        if (l.accountCode === reconBankCode) {
-          ledgerTx.push({
-            voucherNumber: v.voucherNumber,
-            date: v.date,
-            desc: l.description || v.description,
-            debit: l.debit || 0,
-            credit: l.credit || 0,
-          });
-        }
+    const ledgerTx: { id: string; voucherNumber: number; date: string; desc: string; debit: number; credit: number; amount: number; reference?: string }[] = [];
+    vouchers.forEach((v) => v.lines.forEach((l, index) => {
+      if (l.accountCode === reconBankCode) ledgerTx.push({
+        id: `${v.id}:${index}`, voucherNumber: v.voucherNumber, date: v.date,
+        desc: l.description || v.description, debit: l.debit || 0, credit: l.credit || 0,
+        amount: (l.debit || 0) - (l.credit || 0), reference: v.referenceId || v.id,
       });
+    }));
+    const parsedBankRows = bankCsvText.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).map((line, idx) => {
+      const parts = line.split(',').map((p) => p.trim());
+      const date = parts[0] || getTodayShamsi();
+      const desc = parts[1] || `تراکنش بانکی ${idx + 1}`;
+      const deposit = Number((parts[2] || '0').replace(/[^\d.-]/g, '')) || 0;
+      const withdrawal = Number((parts[3] || '0').replace(/[^\d.-]/g, '')) || 0;
+      return { id: `bk_${idx}`, date, desc, deposit, withdrawal, reference: parts[4] || undefined, amount: deposit - withdrawal };
     });
-
-    const parsedBankRows = bankCsvText
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter(Boolean)
-      .map((line, idx) => {
-        const parts = line.split(',').map((p) => p.trim());
-        const date = parts[0] || getTodayShamsi();
-        const desc = parts[1] || `تراکنش بانکی ${idx + 1}`;
-        const deposit = Number((parts[2] || '0').replace(/[^\d.-]/g, '')) || 0;
-        const withdrawal = Number((parts[3] || '0').replace(/[^\d.-]/g, '')) || 0;
-        const matched = ledgerTx.find(
-          (tx) =>
-            (deposit > 0 && Math.abs(tx.debit - deposit) < 1) ||
-            (withdrawal > 0 && Math.abs(tx.credit - withdrawal) < 1)
-        );
-        return { id: `bk_${idx}`, date, desc, deposit, withdrawal, matched };
-      });
-
+    const matching = reconcileBankLines(
+      parsedBankRows.map((row) => ({ id: row.id, accountId: reconBankCode, date: row.date, amount: row.amount, reference: row.reference })),
+      ledgerTx.map((tx) => ({ id: tx.id, accountId: reconBankCode, date: tx.date, amount: tx.amount, reference: tx.reference })),
+      2, (from, to) => diffShamsiDays(from, to),
+    );
+    const matchByStatement = new Map(matching.matches.map((match) => [match.statementLineId, match.ledgerLineId]));
+    const ambiguousIds = new Set(matching.ambiguousStatementIds);
+    const bankRows = parsedBankRows.map((row) => ({ ...row, matched: ledgerTx.find((tx) => tx.id === matchByStatement.get(row.id)), ambiguous: ambiguousIds.has(row.id) }));
     return {
-      ledgerTx,
-      bankRows: parsedBankRows,
-      matchedCount: parsedBankRows.filter((r) => !!r.matched).length,
-      unmatchedRows: parsedBankRows.filter((r) => !r.matched),
+      ledgerTx, bankRows, matchedCount: matching.matches.length,
+      unmatchedRows: bankRows.filter((row) => !row.matched && !row.ambiguous),
+      ambiguousCount: matching.ambiguousStatementIds.length, unmatchedLedgerCount: matching.unmatchedLedgerIds.length,
     };
   }, [bankCsvText, reconBankCode, vouchers]);
 
@@ -1241,10 +1233,10 @@ export const TreasuryView: React.FC<TreasuryViewProps> = ({ initialIntent, clear
               value={bankCsvText}
               onChange={(e) => setBankCsvText(e.target.value)}
               className="w-full p-3 font-code text-xs rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 text-left"
-              placeholder="1405/08/22,کارمزد حواله ساتنا,0,18500000"
+              placeholder="1405/08/22,کارمزد حواله ساتنا,0,18500000,شناسه تراکنش (اختیاری)"
             />
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 p-3 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800">
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 p-3 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800">
               <div>
                 <span className="text-slate-500">تعداد ردیف صورت‌حساب بانک:</span>{' '}
                 <strong className="font-code">{toPersianDigits(reconResult.bankRows.length)}</strong>
@@ -1260,6 +1252,14 @@ export const TreasuryView: React.FC<TreasuryViewProps> = ({ initialIntent, clear
                 <strong className="font-code text-rose-700 dark:text-rose-400">
                   {toPersianDigits(reconResult.unmatchedRows.length)}
                 </strong>
+              <div>
+                <span className="text-amber-700 dark:text-amber-400">تطبیق‌های مبهم (نیازمند بررسی):</span>{' '}
+                <strong className="font-code text-amber-700 dark:text-amber-400">{toPersianDigits(reconResult.ambiguousCount)}</strong>
+              </div>
+              <div>
+                <span className="text-slate-500">ردیف‌های باز دفتر بانک:</span>{' '}
+                <strong className="font-code">{toPersianDigits(reconResult.unmatchedLedgerCount)}</strong>
+              </div>
               </div>
             </div>
 
@@ -1289,16 +1289,16 @@ export const TreasuryView: React.FC<TreasuryViewProps> = ({ initialIntent, clear
                       <td className="py-2.5 px-3">
                         {row.matched ? (
                           <span className="text-emerald-700 dark:text-emerald-400 font-semibold">
-                            تطبیق با سند #{toPersianDigits(row.matched.voucherNumber)}
+                            تطبیق یکتای سند #{toPersianDigits(row.matched.voucherNumber)}
                           </span>
+                        ) : row.ambiguous ? (
+                          <span className="text-amber-700 dark:text-amber-400 font-semibold">چند گزینه هم‌مبلغ؛ بررسی دستی الزامی</span>
                         ) : (
-                          <span className="text-amber-700 dark:text-amber-400 font-semibold">
-                            مغایر (ثبت‌نشده در دفتر)
-                          </span>
+                          <span className="text-rose-700 dark:text-rose-400 font-semibold">بدون تطبیق در دفتر</span>
                         )}
                       </td>
                       <td className="py-2.5 px-3 text-left">
-                        {!row.matched ? (
+                        {!row.matched && !row.ambiguous ? (
                           <button
                             type="button"
                             onClick={() => handlePostBankAdjustment(row)}
