@@ -12,6 +12,7 @@ import {
   validateSyncOperation,
 } from '../src/lib/enterpriseControls.ts';
 import { computeReceivablesAging, computePayablesAging } from '../src/lib/enterpriseAccounting.ts';
+import { calculateMonthlyDepreciation } from '../src/lib/accountingEngine.ts';
 
 test('fiscal period rejects closed periods and overlapping ranges', () => {
   assert.throws(() => assertFiscalPeriodOpen('2026-03-20', [
@@ -113,6 +114,12 @@ test('receivables aging uses due dates and actual outstanding invoice balances',
   assert.equal(rows[0].bucket0to30, 100);
   assert.equal(rows[0].bucket31to60, 200);
   assert.equal(rows[0].bucketOver90, 0);
+});
+test('straight-line depreciation never exceeds depreciable base or salvage value', () => {
+  const asset = { id: 'a1', ownerId: 'o1', assetCode: 'FA-1', title: 'تجهیزات', purchaseDate: '2026/01/01', purchaseCost: 1200, salvageValue: 120, usefulLifeYears: 5, accumulatedDepreciation: 1070 };
+  assert.equal(calculateMonthlyDepreciation(asset as any), 10);
+  assert.equal(calculateMonthlyDepreciation({ ...asset, accumulatedDepreciation: 1080 } as any), 0);
+  assert.equal(calculateMonthlyDepreciation({ ...asset, salvageValue: 1300 } as any), 0);
 });
 test('payables aging uses supplier balances, purchase invoices and due dates', () => {
   const supplier = { id: 's1', ownerId: 'o1', code: 'S1', name: 'تأمین‌کننده نمونه', partyType: 'supplier', creditLimit: 0, openingBalance: 0, accountCode: '2101' };
