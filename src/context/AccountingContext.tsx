@@ -2440,6 +2440,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
   const addFixedAsset = useCallback(
     async (asset: Omit<FixedAsset, 'id' | 'ownerId'>) => {
+      if (!asset.title.trim() || !Number.isFinite(asset.purchaseCost) || asset.purchaseCost <= 0 || !Number.isFinite(asset.salvageValue) || asset.salvageValue < 0 || asset.salvageValue > asset.purchaseCost || !Number.isFinite(asset.usefulLifeYears) || asset.usefulLifeYears <= 0 || !Number.isFinite(asset.accumulatedDepreciation) || asset.accumulatedDepreciation < 0 || asset.accumulatedDepreciation > asset.purchaseCost - asset.salvageValue) throw new Error('مشخصات مالی دارایی ثابت معتبر نیست.');
       const id = generateSafeId('ast');
       const full: FixedAsset = { ...asset, id, ownerId };
       if (user) {
@@ -2470,6 +2471,13 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
   const updateFixedAsset = useCallback(
     async (assetId: string, patch: Partial<Omit<FixedAsset, 'id' | 'ownerId' | 'assetCode'>>) => {
+      const existing = assets.find((asset) => asset.id === assetId);
+      if (!existing) return;
+      const nextCost = patch.purchaseCost ?? existing.purchaseCost;
+      const nextSalvage = patch.salvageValue ?? existing.salvageValue;
+      const nextAccumulated = patch.accumulatedDepreciation ?? existing.accumulatedDepreciation;
+      const nextLife = patch.usefulLifeYears ?? existing.usefulLifeYears;
+      if (!Number.isFinite(nextCost) || nextCost <= 0 || !Number.isFinite(nextSalvage) || nextSalvage < 0 || nextSalvage > nextCost || !Number.isFinite(nextAccumulated) || nextAccumulated < 0 || nextAccumulated > nextCost - nextSalvage || !Number.isFinite(nextLife) || nextLife <= 0) throw new Error('ویرایش بهای خرید، ارزش اسقاط، عمر مفید یا استهلاک انباشته دارایی معتبر نیست.');
       if (user) {
         try {
           const payload: Record<string, unknown> = { updatedAt: serverTimestamp() };
@@ -2489,7 +2497,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       }
       showToast('مشخصات دارایی ثابت ویرایش شد.');
     },
-    [user, showToast]
+    [assets, user, showToast]
   );
 
   const deleteFixedAsset = useCallback(
