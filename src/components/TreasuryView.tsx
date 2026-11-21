@@ -663,7 +663,7 @@ export const TreasuryView: React.FC<TreasuryViewProps> = ({ initialIntent, clear
 
       {tab === 'cheques' && (
         <div className="space-y-4">
-          {/* Holoo Smart Cheque Search Bar */}
+          {/* Smart Cheque Search Bar */}
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4 flex flex-col lg:flex-row lg:items-end justify-between gap-3">
             <div className="flex-1 min-w-[260px]">
               <label className="block text-[11px] font-medium text-slate-500 mb-1">
@@ -1152,7 +1152,7 @@ export const TreasuryView: React.FC<TreasuryViewProps> = ({ initialIntent, clear
             <div className="flex flex-wrap items-center justify-between gap-2">
               <h2 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
                 <Calculator className="w-4 h-4 text-teal-700 dark:text-teal-400" />
-                <span>محاسبه‌گر راس‌گیری چک‌های هلو</span>
+                <span>محاسبه‌گر راس‌گیری چک</span>
               </h2>
               <div className="flex items-center gap-2">
                 <span className="text-slate-500">تاریخ مبنا:</span>
