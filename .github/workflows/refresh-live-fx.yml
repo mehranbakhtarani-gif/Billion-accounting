@@ -21,14 +21,12 @@ jobs:
         with:
           ref: main
           fetch-depth: 0
-      - name: Fetch Tehran market rates from AlanChand
+      - name: Fetch Tehran market rates from NerkhAra
         env:
-          ALANCHAND_TOKEN: ${{ secrets.ALANCHAND_TOKEN }}
         run: |
           node <<'NODE'
           const fs = require('node:fs');
-          const token = process.env.ALANCHAND_TOKEN;
-          if (!token) throw new Error('Missing ALANCHAND_TOKEN GitHub Actions secret. Add the free test token in repository Settings > Secrets and variables > Actions.');
+          const fs = require('node:fs');
           const specs = [
             { code: 'USD', key: 'usd', name: 'دلار آمریکا', symbol: '$' },
             { code: 'CNY', key: 'cny', name: 'یوان چین', symbol: '¥' },
@@ -36,52 +34,54 @@ jobs:
             { code: 'EUR', key: 'eur', name: 'یورو اروپا', symbol: '€' }
           ];
           const number = value => {
-            const n = Number(String(value ?? '').replace(/,/g, '').trim());
+            const n = Number(value);
             return Number.isFinite(n) ? n : 0;
           };
           (async () => {
-            const url = 'https://api.alanchand.com/?type=currencies&symbols=usd,cny,aed,eur';
-            const response = await fetch(url, {
-              headers: { Authorization: 'Bearer ' + token, Accept: 'application/json' },
+            const response = await fetch('https://nerkhara.com/api/v1/latest.json', {
+              headers: { Accept: 'application/json' },
               signal: AbortSignal.timeout(20000)
             });
             const body = await response.text();
-            if (!response.ok) throw new Error('AlanChand API HTTP ' + response.status + ': ' + body.slice(0, 500));
+            if (!response.ok) throw new Error('NerkhAra API HTTP ' + response.status + ': ' + body.slice(0, 500));
             const payload = JSON.parse(body);
+            if (!Array.isArray(payload?.items)) throw new Error('NerkhAra response does not contain an items array.');
             const items = specs.flatMap(spec => {
-              const row = payload?.[spec.key];
-              // AlanChand currency values are published in toman; the ERP stores IRR.
-              const sellToman = number(row?.sell);
-              if (!row || sellToman <= 0) return [];
-              const changePercent = number(row.dayChange);
+              const row = payload.items.find(entry => entry?.id === spec.key);
+              // NerkhAra currency prices are in IRT (toman); the ERP stores IRR.
+              const priceToman = number(row?.price);
+              if (!row || row.stale === true || priceToman <= 0) return [];
+              const changePercent = number(row.change_pct);
+              const updatedUtc = String(row.updated_utc || '');
               return [{
                 code: spec.code,
                 name: spec.name,
                 symbol: spec.symbol,
-                priceIrr: Math.round(sellToman * 10),
-                highIrr: Math.round(number(row.high) * 10) || undefined,
-                lowIrr: Math.round(number(row.low) * 10) || undefined,
+                priceIrr: Math.round(priceToman * 10),
+                highIrr: Math.round(number(row.high_24h) * 10) || undefined,
+                lowIrr: Math.round(number(row.low_24h) * 10) || undefined,
                 changeIrr: 0,
                 changePercent,
                 direction: changePercent > 0 ? 'up' : changePercent < 0 ? 'down' : 'flat',
-                updatedTime: String(row.updated_at || '')
+                updatedTime: updatedUtc.includes('T') ? updatedUtc.slice(11, 16) : updatedUtc
               }];
             });
             if (items.length !== specs.length) {
-              throw new Error('AlanChand returned incomplete currency data. Received: ' + items.map(x => x.code).join(', '));
+              throw new Error('NerkhAra returned incomplete or stale currency data. Received: ' + items.map(x => x.code).join(', '));
             }
+            const generated = Date.parse(String(payload.generated_utc || '') + 'Z');
             fs.mkdirSync('public', { recursive: true });
             fs.writeFileSync('public/live-fx.json', JSON.stringify({
-              fetchedAt: Date.now(),
-              source: 'بازار آزاد تهران (الان‌چند)',
-              sourceUrl: 'https://alanchand.com/',
+              fetchedAt: Number.isFinite(generated) ? generated : Date.now(),
+              source: 'بازار آزاد تهران (نرخ‌آرا)',
+              sourceUrl: 'https://nerkhara.com/',
               items
             }, null, 2) + '\n');
-            console.log('Published AlanChand rates:', items.map(x => x.code + '=' + x.priceIrr).join(', '));
+            console.log('Published NerkhAra rates:', items.map(x => x.code + '=' + x.priceIrr).join(', '));
           })().catch(err => { console.error(err); process.exit(1); });
           NODE
       - name: Commit updated rates
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: "chore: refresh live FX rates from AlanChand"
+          commit_message: "chore: refresh live FX rates from NerkhAra"
           file_pattern: public/live-fx.json
