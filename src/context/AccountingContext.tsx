@@ -3027,100 +3027,66 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const clearImportDossier = useCallback(
     async (dossierId: string) => {
       if (!activeOperator.permissions.canCreateVoucher || !activeOperator.permissions.canEditInventory) {
-        showToast('نقش فعال مجوز همزمان ترخیص انبار و صدور سند بهای تمام‌شده را ندارد.');
-        return;
+        showToast('نقش فعال مجوز همزمان ترخیص انبار و صدور سند بهای تمام‌شده را ندارد.'); return;
       }
-      const dossier = importDossiers.find((d) => d.id === dossierId);
+      const dossier = importDossiers.find((item) => item.id === dossierId);
       if (!dossier || dossier.status === 'cleared') return;
-
-      // Update yarn inventory stock & weighted-average buy price for each cleared item
-      for (const item of dossier.items) {
-        const prod = products.find((p) => p.id === item.productId);
-        if (!prod) continue;
-        const prevQty = Math.max(0, prod.stock);
-        const newQty = Number((prevQty + item.weightKg).toFixed(2));
-        const weightedBuy =
-          newQty > 0
-            ? Math.round(
-                (prevQty * prod.buyPrice + item.weightKg * item.finalUnitCostIrr) / newQty
-              )
-            : item.finalUnitCostIrr;
-        await updateProduct(prod.id, {
-          stock: newQty,
-          buyPrice: weightedBuy,
-          lotNumber: item.lotNumber || prod.lotNumber,
-        });
+      if (vouchers.some((voucher) => voucher.referenceId === dossier.id)) throw new Error('برای این پرونده قبلاً سند ترخیص صادر شده است.');
+      if (!dossier.items.length || dossier.items.some((item) => !Number.isFinite(item.weightKg) || item.weightKg <= 0 || !Number.isFinite(item.finalUnitCostIrr) || item.finalUnitCostIrr < 0)) {
+        throw new Error('اقلام پرونده واردات دارای وزن یا بهای تمام‌شده نامعتبر هستند.');
       }
-
-      // Build 100%-balanced double-entry Landed Cost clearance voucher
-      const lines: VoucherLine[] = [
-        {
-          accountCode: '10501',
-          accountTitle: 'موجودی انبار نخ و کالای وارداتی',
-          description: `ورود محموله ترخیص‌شده پرونده ${dossier.dossierNumber} (کوتاژ ${dossier.cotageNumber || '—'}) با سرشکن هزینه‌ها`,
-          debit: dossier.grandTotalLandedIrr,
-          credit: 0,
-        },
-        {
-          accountCode: '30101',
-          accountTitle: 'بستانکاران و تأمین‌کنندگان واردات نخ',
-          partyId: dossier.supplierId,
-          partyName: dossier.supplierName,
-          description: `بهای ارزی پروفرما ${dossier.proformaNumber} (${dossier.totalForeignAmount} ${dossier.currencyCode})`,
-          debit: 0,
-          credit: dossier.totalFobIrr,
-        },
-      ];
-
-      // Group landed costs by settlement account
-      const costByAccount = new Map<string, { title: string; total: number }>();
-      for (const c of dossier.costs) {
-        if (c.amountIrr <= 0) continue;
-        const acc = accounts.find((a) => a.code === c.accountCode);
-        const cur = costByAccount.get(c.accountCode) || {
-          title: acc?.title || 'بانک ملت — حساب جاری شرکتی',
-          total: 0,
-        };
-        cur.total += Math.round(c.amountIrr);
-        costByAccount.set(c.accountCode, cur);
-      }
-      for (const [accCode, info] of costByAccount.entries()) {
-        lines.push({
-          accountCode: accCode,
-          accountTitle: info.title,
-          ...(accCode === '30101'
-            ? { partyId: dossier.supplierId, partyName: dossier.supplierName }
-            : {}),
-          description: `هزینه‌های جانبی، حمل، بیمه و گمرک پرونده ${dossier.dossierNumber}`,
-          debit: 0,
-          credit: info.total,
-        });
-      }
-
-      const v = await createVoucher({
-        date: dossier.date || getTodayShamsi(),
-        description: `ترخیص گمرکی و ورود به انبار پرونده واردات ${dossier.dossierNumber} (${dossier.originCountry})`,
-        voucherType: 'purchase',
-        status: 'permanent',
-        lines,
-        referenceId: dossier.id,
-        currencyCode: dossier.currencyCode,
-        exchangeRate: dossier.exchangeRate,
+      const productSnapshots = dossier.items.map((item) => {
+        const product = products.find((candidate) => candidate.id === item.productId);
+        if (!product) throw new Error(`کالای ${item.productName} در انبار یافت نشد.`);
+        return { item, product };
       });
-
-      setImportDossiers((prev) =>
-        prev.map((d) =>
-          d.id === dossierId ? { ...d, status: 'cleared', voucherId: v.id } : d
-        )
-      );
-      logActivity(
-        'واردات و ترخیص',
-        `ترخیص و قطعی‌سازی پرونده ${dossier.dossierNumber}`,
-        `سند #${v.voucherNumber} ثبت شد و موجودی و بهای میانگین موزون کالاها به‌روزرسانی گردید.`
-      );
-      showToast(`پرونده ${dossier.dossierNumber} ترخیص، وارد انبار و سند #${v.voucherNumber} صادر شد.`);
+      const costTotal = dossier.costs.reduce((sum, cost) => {
+        if (!Number.isFinite(cost.amountIrr) || cost.amountIrr < 0) throw new Error('هزینه جانبی پرونده واردات نامعتبر است.');
+        return sum + Math.round(cost.amountIrr);
+      }, 0);
+      const expectedLanded = Math.round(dossier.totalFobIrr + costTotal);
+      if (!Number.isFinite(dossier.grandTotalLandedIrr) || Math.abs(expectedLanded - dossier.grandTotalLandedIrr) > 1) {
+        throw new Error('جمع بهای تمام‌شده پرونده با بهای ارزی و هزینه‌های جانبی هم‌خوانی ندارد.');
+      }
+      const lines: VoucherLine[] = [
+        { accountCode: '10501', accountTitle: 'موجودی انبار نخ و کالای وارداتی', description: `ورود محموله ترخیص‌شده پرونده ${dossier.dossierNumber} با سرشکن هزینه‌ها`, debit: dossier.grandTotalLandedIrr, credit: 0 },
+        { accountCode: '30101', accountTitle: 'بستانکاران و تأمین‌کنندگان واردات نخ', partyId: dossier.supplierId, partyName: dossier.supplierName, description: `بهای ارزی پروفرما ${dossier.proformaNumber} (${dossier.totalForeignAmount} ${dossier.currencyCode})`, debit: 0, credit: dossier.totalFobIrr },
+      ];
+      const costByAccount = new Map<string, { title: string; total: number }>();
+      for (const cost of dossier.costs) {
+        if (cost.amountIrr <= 0) continue;
+        const account = accounts.find((candidate) => candidate.code === cost.accountCode);
+        const current = costByAccount.get(cost.accountCode) || { title: account?.title || 'بانک ملت — حساب جاری شرکتی', total: 0 };
+        current.total += Math.round(cost.amountIrr); costByAccount.set(cost.accountCode, current);
+      }
+      for (const [accountCode, info] of costByAccount) lines.push({
+        accountCode, accountTitle: info.title, ...(accountCode === '30101' ? { partyId: dossier.supplierId, partyName: dossier.supplierName } : {}),
+        description: `هزینه‌های جانبی، حمل، بیمه و گمرک پرونده ${dossier.dossierNumber}`, debit: 0, credit: info.total,
+      });
+      const voucher = await createVoucher({ date: dossier.date || getTodayShamsi(), description: `ترخیص گمرکی و ورود به انبار پرونده واردات ${dossier.dossierNumber} (${dossier.originCountry})`, voucherType: 'purchase', status: 'permanent', lines, referenceId: dossier.id, currencyCode: dossier.currencyCode, exchangeRate: dossier.exchangeRate });
+      const updated: typeof productSnapshots = [];
+      try {
+        for (const { item, product } of productSnapshots) {
+          const previousQuantity = Math.max(0, product.stock);
+          const nextQuantity = Number((previousQuantity + item.weightKg).toFixed(2));
+          const weightedBuy = nextQuantity > 0 ? Math.round((previousQuantity * product.buyPrice + item.weightKg * item.finalUnitCostIrr) / nextQuantity) : item.finalUnitCostIrr;
+          await updateProduct(product.id, { stock: nextQuantity, buyPrice: weightedBuy, lotNumber: item.lotNumber || product.lotNumber });
+          updated.push({ item, product });
+        }
+      } catch (error) {
+        for (const { product } of updated) {
+          try { await updateProduct(product.id, { stock: product.stock, buyPrice: product.buyPrice, lotNumber: product.lotNumber }); }
+          catch (rollbackError) { console.error('Import stock rollback failed', product.id, rollbackError); }
+        }
+        try { await createVoucher({ date: getTodayShamsi(), description: `سند معکوس خودکار ترخیص ناموفق پرونده ${dossier.dossierNumber}`, voucherType: 'general', status: 'permanent', referenceId: `import-reversal:${dossier.id}`, lines: voucher.lines.map((line) => ({ ...line, description: `برگشت سند ترخیص #${voucher.voucherNumber}: ${line.description}`, debit: line.credit, credit: line.debit, foreignDebit: line.foreignCredit, foreignCredit: line.foreignDebit })) }); }
+        catch (reversalError) { console.error('Import clearance voucher compensation failed', voucher.id, reversalError); }
+        throw new Error(`ترخیص پرونده کامل نشد؛ تلاش برای برگشت سند و موجودی انجام شد. علت: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      setImportDossiers((prev) => prev.map((item) => item.id === dossierId ? { ...item, status: 'cleared', voucherId: voucher.id } : item));
+      logActivity('واردات و ترخیص', `ترخیص و قطعی‌سازی پرونده ${dossier.dossierNumber}`, `سند #${voucher.voucherNumber} ثبت شد و موجودی و بهای میانگین موزون کالاها به‌روزرسانی گردید.`);
+      showToast(`پرونده ${dossier.dossierNumber} ترخیص، وارد انبار و سند #${voucher.voucherNumber} صادر شد.`);
     },
-    [activeOperator, importDossiers, products, accounts, updateProduct, createVoucher, logActivity, showToast]
+    [activeOperator, importDossiers, vouchers, products, accounts, updateProduct, createVoucher, logActivity, showToast]
   );
 
   // ---------------- SALES ORDERS & WEIGHBRIDGE DISPATCH ----------------
