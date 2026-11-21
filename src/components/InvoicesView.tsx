@@ -742,7 +742,7 @@ export const InvoicesView: React.FC<{ initialIntent?: string; clearIntent?: () =
   const showCartonCol = printSettings.unitDisplayMode !== '1_unit';
   const showBobbinCol = printSettings.unitDisplayMode === '3_units';
 
-  // Compute Holoo signature "Previous Balance" vs "Current Balance" for the printed invoice
+  // Compute Billion signature "Previous Balance" vs "Current Balance" for the printed invoice
   const printPartyNewBalance = printParty ? (partyBalances.get(printParty.id) ?? 0) : 0;
   const printInvoiceCreditEffect =
     printInvoice && printInvoice.status !== 'cancelled' && printInvoice.invoiceType !== 'proforma'
@@ -980,7 +980,7 @@ export const InvoicesView: React.FC<{ initialIntent?: string; clearIntent?: () =
             </div>
           </div>
 
-          {/* Holoo Live Customer Credit, Balance, Pricing Tier & Broker Strip */}
+          {/* Billion Live Customer Credit, Balance, Pricing Tier & Broker Strip */}
           {invoiceType !== 'waste' && selectedComposerParty && (
             (() => {
               const curBal = partyBalances.get(selectedComposerParty.id) ?? 0;
@@ -2114,7 +2114,7 @@ export const InvoicesView: React.FC<{ initialIntent?: string; clearIntent?: () =
                 </table>
               </div>
 
-              {/* Amount in Words + Financial Summary + Holoo Customer Balance Box */}
+              {/* Amount in Words + Financial Summary + Billion Customer Balance Box */}
               <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-start">
                 <div className="md:col-span-7 space-y-2.5 text-xs">
                   {printSettings.showAmountInWords && (
