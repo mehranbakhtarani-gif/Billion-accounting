@@ -6,7 +6,7 @@ import {
   handleSupabaseError, isSupabaseOfflineError, OperationType, signOutAccount,
   testSupabaseConnection, setActiveCompanyId,
 } from '../lib/supabaseStore';
-import { ensurePasswordlessSession, getBillionMembership, acceptBillionInvite, bootstrapBillionCompany } from '../lib/supabaseEnrollment';
+import { ensurePasswordlessSession, getBillionMembership, acceptBillionInvite, bootstrapBillionCompany, createBillionInvite } from '../lib/supabaseEnrollment';
 import {
   Account,
   AuditActivityLog,
@@ -88,6 +88,7 @@ interface AccountingContextValue {
   showToast: (msg: string) => void;
   bootstrapCloud: (token: string) => Promise<void>;
   joinCloud: (token: string) => Promise<void>;
+  createDeviceInvite: () => Promise<string>;
   logout: () => Promise<void>;
   updateCompanyProfile: (patch: Partial<CompanyProfile>) => Promise<void>;
   setCurrencyUnit: (unit: CurrencyUnit) => Promise<void>;
@@ -594,6 +595,13 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
   const bootstrapCloud = useCallback((token: string) => completeEnrollment('bootstrap', token), [completeEnrollment]);
   const joinCloud = useCallback((token: string) => completeEnrollment('invite', token), [completeEnrollment]);
+
+  const createDeviceInvite = useCallback(async () => {
+    const result = await createBillionInvite('member');
+    const token = String(result.invite_token ?? '');
+    if (!token) throw new Error('کد دعوت از Supabase دریافت نشد.');
+    return token;
+  }, []);
 
   const logout = useCallback(async () => {
     await signOutAccount();
@@ -3556,7 +3564,9 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         auditReport,
         toast,
         showToast,
-        bootstrapCloud, joinCloud,
+        bootstrapCloud,
+        joinCloud,
+        createDeviceInvite,
         logout,
         updateCompanyProfile,
         setCurrencyUnit,
