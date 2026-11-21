@@ -106,9 +106,9 @@ test('receivables aging uses due dates and actual outstanding invoice balances',
   });
   const rows = computeReceivablesAging(
     [party] as any,
-    [invoice('old', '2026/10/01', '2026/10/01', 200, 1000), invoice('new', '2026/11/20', '2026/11/30', 100, 1000)] as any,
+    [invoice('old', '1405/07/15', '1405/07/15', 200, 1000), invoice('new', '1405/08/30', '1405/08/30', 100, 1000)] as any,
     new Map([['p1', 300]]),
-    '2026/11/22',
+    '1405/09/01',
   );
   assert.equal(rows[0].totalReceivable, 300);
   assert.equal(rows[0].bucket0to30, 100);
@@ -123,10 +123,10 @@ test('straight-line depreciation never exceeds depreciable base or salvage value
 });
 test('payables aging uses supplier balances, purchase invoices and due dates', () => {
   const supplier = { id: 's1', ownerId: 'o1', code: 'S1', name: 'تأمین‌کننده نمونه', partyType: 'supplier', creditLimit: 0, openingBalance: 0, accountCode: '2101' };
-  const purchase = { id: 'buy1', ownerId: 'o1', invoiceNumber: 'P-1', invoiceType: 'purchase', date: '2026/09/01', dueDate: '2026/10/01',
+  const purchase = { id: 'buy1', ownerId: 'o1', invoiceNumber: 'P-1', invoiceType: 'purchase', date: '1405/07/15', dueDate: '1405/07/15',
     partyId: 's1', partyName: 'تأمین‌کننده نمونه', warehouse: 'انبار', subtotal: 900, discount: 0, vatAmount: 0, grandTotal: 900,
     paidCash: 700, paidBank: 0, paidCheque: 0, creditAmount: 200, status: 'issued', items: [] };
-  const rows = computePayablesAging([supplier] as any, [purchase] as any, new Map([['s1', -200]]), '2026/11/22');
+  const rows = computePayablesAging([supplier] as any, [purchase] as any, new Map([['s1', -200]]), '1405/09/01');
   assert.equal(rows[0].totalPayable, 200);
   assert.equal(rows[0].bucket31to60, 200);
   assert.equal(rows[0].bucketOver90, 0);
