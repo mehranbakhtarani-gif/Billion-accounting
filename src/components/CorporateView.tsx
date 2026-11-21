@@ -20,7 +20,7 @@ import {
   computeCostCenterPnL,
 } from '../lib/accountingEngine';
 import { CostCenter, Employee, FixedAsset } from '../types/accounting';
-import { formatMoney, toPersianDigits } from '../lib/format';
+import { formatMoney, getTodayShamsi, toPersianDigits } from '../lib/format';
 
 interface CorporateViewProps {
   initialIntent?: string;
@@ -82,6 +82,9 @@ export const CorporateView: React.FC<CorporateViewProps> = ({ initialIntent, cle
   // New asset form
   const [assetTitle, setAssetTitle] = useState('');
   const [assetCost, setAssetCost] = useState(4_000_000_000);
+  const [assetSalvage, setAssetSalvage] = useState(400_000_000);
+  const [assetPurchaseDate, setAssetPurchaseDate] = useState(getTodayShamsi());
+  const [assetCostCenterId, setAssetCostCenterId] = useState(costCenters[0]?.id ?? '');
   const [assetLife, setAssetLife] = useState(5);
 
   // Edit asset modal
@@ -474,16 +477,16 @@ export const CorporateView: React.FC<CorporateViewProps> = ({ initialIntent, cle
           <form
             onSubmit={async (e) => {
               e.preventDefault();
-              if (!assetTitle.trim()) return;
+              if (!assetTitle.trim() || !Number.isFinite(assetCost) || assetCost <= 0 || !Number.isFinite(assetSalvage) || assetSalvage < 0 || assetSalvage > assetCost || !Number.isInteger(assetLife) || assetLife < 1) return;
               await addFixedAsset({
                 assetCode: `FA-${profile.fiscalYear}-0${assets.length + 1}`,
                 title: assetTitle.trim(),
-                purchaseDate: `${profile.fiscalYear}/08/01`,
+                purchaseDate: assetPurchaseDate,
                 purchaseCost: assetCost,
-                salvageValue: Math.round(assetCost * 0.1),
+                salvageValue: assetSalvage,
                 usefulLifeYears: assetLife,
                 accumulatedDepreciation: 0,
-                costCenterId: costCenters[0]?.id,
+                costCenterId: assetCostCenterId || undefined,
               });
               setAssetTitle('');
             }}
@@ -506,6 +509,24 @@ export const CorporateView: React.FC<CorporateViewProps> = ({ initialIntent, cle
                 onChange={(e) => setAssetCost(Number(e.target.value))}
                 className="w-full px-3 py-2 font-code rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950"
               />
+            </div>
+            <div className="w-40">
+              <label className="block text-slate-500 mb-1">ارزش اسقاط (ریال)</label>
+              <input type="number" min={0} max={assetCost} value={assetSalvage} onChange={(e) => setAssetSalvage(Number(e.target.value))}
+                className="w-full px-3 py-2 font-code rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950" />
+            </div>
+            <div className="w-36">
+              <label className="block text-slate-500 mb-1">تاریخ خرید</label>
+              <input value={assetPurchaseDate} onChange={(e) => setAssetPurchaseDate(e.target.value)} placeholder="۱۴۰۵/۰۹/۰۱"
+                className="w-full px-3 py-2 font-code rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950" />
+            </div>
+            <div className="w-44">
+              <label className="block text-slate-500 mb-1">مرکز هزینه</label>
+              <select value={assetCostCenterId} onChange={(e) => setAssetCostCenterId(e.target.value)}
+                className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950">
+                <option value="">بدون مرکز هزینه</option>
+                {costCenters.filter((cc) => cc.active).map((cc) => <option key={cc.id} value={cc.id}>{cc.name}</option>)}
+              </select>
             </div>
             <div className="w-28">
               <label className="block text-slate-500 mb-1">عمر مفید (سال)</label>
