@@ -3127,41 +3127,35 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   );
 
   const dispatchSalesOrder = useCallback(
-    async (
-      orderId: string,
-      payload: {
-        dispatchDate: string;
-        driverName: string;
-        plateNumber: string;
-        items: SalesOrder['items'];
+    async (orderId: string, payload: { dispatchDate: string; driverName: string; plateNumber: string; items: SalesOrder['items'] }) => {
+      const order = salesOrders.find((item) => item.id === orderId);
+      if (!order || order.status === 'invoiced') return;
+      if (order.status === 'dispatched') throw new Error('این سفارش قبلاً حواله خروج دریافت کرده است.');
+      if (!payload.dispatchDate.trim() || !payload.driverName.trim() || !payload.plateNumber.trim()) throw new Error('تاریخ حواله، نام راننده و شماره پلاک الزامی است.');
+      if (!payload.items.length) throw new Error('برای صدور حواله، حداقل یک ردیف کالا لازم است.');
+      const requestedLines = payload.items.map((item) => {
+        const orderLine = order.items.find((candidate) => candidate.productId === item.productId);
+        if (!orderLine) throw new Error(`کالای ${item.productName} در سفارش اصلی وجود ندارد.`);
+        const quantity = item.actualWeighedKg > 0 ? item.actualWeighedKg : item.orderedWeightKg;
+        if (!Number.isFinite(quantity) || quantity <= 0) throw new Error(`وزن حواله کالای ${item.productName} معتبر نیست.`);
+        return { productId: item.productId, quantity };
+      });
+      const reservedByOtherOrders = new Map<string, number>();
+      for (const other of salesOrders) {
+        if (other.id === orderId || other.status !== 'dispatched') continue;
+        for (const item of other.items) {
+          const quantity = item.actualWeighedKg > 0 ? item.actualWeighedKg : item.orderedWeightKg;
+          reservedByOtherOrders.set(item.productId, (reservedByOtherOrders.get(item.productId) || 0) + Math.max(0, quantity));
+        }
       }
-    ) => {
-      const order = salesOrders.find((o) => o.id === orderId);
-      if (!order) return;
-      const dispatchNumber = order.dispatchNumber || `DSP-${profile.fiscalYear}-${Math.floor(100 + Math.random() * 899)}`;
-      setSalesOrders((prev) =>
-        prev.map((o) =>
-          o.id === orderId
-            ? {
-                ...o,
-                dispatchNumber,
-                dispatchDate: payload.dispatchDate,
-                driverName: payload.driverName,
-                plateNumber: payload.plateNumber,
-                items: payload.items,
-                status: 'dispatched',
-              }
-            : o
-        )
-      );
-      logActivity(
-        'انبار و باسکول',
-        `صدور حواله خروج ${dispatchNumber}`,
-        `توزین نهایی سفارش ${order.orderNumber} (${order.partyName})`
-      );
+      const available = new Map(products.map((product) => [product.id, Math.max(0, product.stock - (reservedByOtherOrders.get(product.id) || 0))]));
+      assertSufficientStock(available, requestedLines);
+      const dispatchNumber = order.dispatchNumber || `DSP-${profile.fiscalYear}-${String(salesOrders.filter((item) => item.dispatchNumber).length + 1).padStart(4, '0')}`;
+      setSalesOrders((prev) => prev.map((item) => item.id === orderId ? { ...item, dispatchNumber, dispatchDate: payload.dispatchDate, driverName: payload.driverName.trim(), plateNumber: payload.plateNumber.trim(), items: payload.items, status: 'dispatched' } : item));
+      logActivity('انبار و باسکول', `صدور حواله خروج ${dispatchNumber}`, `توزین نهایی سفارش ${order.orderNumber} (${order.partyName})`);
       showToast(`حواله خروج باسکول ${dispatchNumber} ثبت شد.`);
     },
-    [salesOrders, profile.fiscalYear, logActivity, showToast]
+    [salesOrders, products, profile.fiscalYear, logActivity, showToast]
   );
 
   const invoiceSalesOrder = useCallback(
