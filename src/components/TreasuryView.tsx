@@ -60,7 +60,7 @@ export const TreasuryView: React.FC<TreasuryViewProps> = ({ initialIntent, clear
   const { prefs: alertPrefs } = useChequeAlertPreferences();
 
   const [tab, setTab] = useState<
-    'cheques' | 'quick' | 'transfer' | 'rasgiri' | 'reconciliation' | 'cheque-print'
+    'cheques' | 'quick' | 'transfer' | 'rasgiri' | 'reconciliation' | 'cheque-print' | 'fx'
   >('cheques');
   const [showAddCheque, setShowAddCheque] = useState(false);
 
@@ -221,6 +221,8 @@ export const TreasuryView: React.FC<TreasuryViewProps> = ({ initialIntent, clear
       setTab('reconciliation');
     } else if (initialIntent === 'cheque-print') {
       setTab('cheque-print');
+    } else if (initialIntent === 'fx') {
+      setTab('fx');
     }
     clearIntent?.();
   }, [initialIntent, clearIntent]);
@@ -327,6 +329,19 @@ export const TreasuryView: React.FC<TreasuryViewProps> = ({ initialIntent, clear
     }
   };
 
+  const foreignBalances = useMemo(() => {
+    const balances = new Map<string, { currencyCode: string; accountCode: string; accountTitle: string; foreignBalance: number; baseBalance: number }>();
+    vouchers.filter((voucher) => voucher.status === 'permanent' && voucher.currencyCode && voucher.currencyCode !== 'IRR').forEach((voucher) => {
+      voucher.lines.forEach((line) => {
+        const key = `${voucher.currencyCode}:${line.accountCode}`;
+        const current = balances.get(key) || { currencyCode: voucher.currencyCode!, accountCode: line.accountCode, accountTitle: line.accountTitle, foreignBalance: 0, baseBalance: 0 };
+        current.foreignBalance += (line.foreignDebit || 0) - (line.foreignCredit || 0);
+        current.baseBalance += (line.debit || 0) - (line.credit || 0);
+        balances.set(key, current);
+      });
+    });
+    return [...balances.values()].filter((row) => Math.abs(row.foreignBalance) > 0.000001 || Math.abs(row.baseBalance) > 0.5).sort((a, b) => a.currencyCode.localeCompare(b.currencyCode) || a.accountCode.localeCompare(b.accountCode));
+  }, [vouchers]);
   const selectedPrintCheque = useMemo(() => {
     const target = cheques.find((c) => c.id === printChequeId);
     return target || cheques.find((c) => c.direction === 'payable') || cheques[0] || null;
@@ -522,6 +537,7 @@ export const TreasuryView: React.FC<TreasuryViewProps> = ({ initialIntent, clear
             { id: 'rasgiri', label: 'راس‌گیری چک' },
             { id: 'reconciliation', label: 'مغایرت‌گیری بانکی' },
             { id: 'cheque-print', label: 'چاپ چک صیادی' },
+            { id: 'fx', label: 'مانده حساب‌های ارزی' },
           ].map((t) => (
             <button
               key={t.id}
@@ -564,6 +580,34 @@ export const TreasuryView: React.FC<TreasuryViewProps> = ({ initialIntent, clear
           );
         })}
       </div>
+
+      {tab === 'fx' && (
+        <div className="space-y-4">
+          <div className="rounded-xl border border-sky-200 bg-sky-50 dark:border-sky-900/60 dark:bg-sky-950/20 p-4 text-xs text-sky-900 dark:text-sky-200">
+            مانده ارزی بر اساس اسناد دائم دارای ارز و مبالغ ارزی ثبت‌شده در ردیف‌های سند محاسبه می‌شود. این گزارش جایگزین دفتر تفصیلی بانک ارزی یا تطبیق صورت‌حساب ارزی نیست.
+          </div>
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden">
+            <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
+              <h2 className="font-bold text-sm text-slate-900 dark:text-white">دفتر مانده حساب‌های ارزی</h2>
+              <span className="text-[11px] text-slate-500">{toPersianDigits(foreignBalances.length)} ردیف حساب / ارز</span>
+            </div>
+            <div className="overflow-x-auto"><table className="w-full text-right text-xs">
+              <thead><tr className="bg-slate-50 dark:bg-slate-950 text-slate-500 border-b border-slate-200 dark:border-slate-800">
+                <th className="px-4 py-3">ارز</th><th className="px-4 py-3">کد حساب</th><th className="px-4 py-3">عنوان حساب</th>
+                <th className="px-4 py-3 text-left">مانده ارزی</th><th className="px-4 py-3 text-left">معادل ریالی ثبت‌شده</th>
+              </tr></thead><tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                {foreignBalances.length === 0 ? <tr><td colSpan={5} className="px-4 py-10 text-center text-slate-500">سند دائم ارزی برای نمایش مانده ثبت نشده است.</td></tr> : foreignBalances.map((row) => (
+                  <tr key={`${row.currencyCode}:${row.accountCode}`} className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
+                    <td className="px-4 py-3 font-bold text-sky-700 dark:text-sky-300">{row.currencyCode}</td>
+                    <td className="px-4 py-3 font-code">{row.accountCode}</td><td className="px-4 py-3">{row.accountTitle}</td>
+                    <td className="px-4 py-3 text-left font-code font-bold">{toPersianDigits(row.foreignBalance.toLocaleString('en-US', { maximumFractionDigits: 4 }))}</td>
+                    <td className="px-4 py-3 text-left font-code">{formatMoney(row.baseBalance, unit, false)}</td>
+                  </tr>
+                ))}
+              </tbody></table></div>
+          </div>
+        </div>
+      )}
 
       {tab === 'cheques' && (
         <div className="space-y-4">
