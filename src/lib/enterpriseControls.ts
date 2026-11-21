@@ -148,7 +148,7 @@ export function allocateStockFIFO(
   if (!Number.isFinite(requestedQuantity) || requestedQuantity <= 0) {
     throw new Error('مقدار خروج کالا باید عددی مثبت باشد.');
   }
-  if (!options.productId.trim() || !options.warehouse.trim() || !/^\\d{4}-\\d{2}-\\d{2}$/.test(options.asOfDate)) {
+  if (!options.productId.trim() || !options.warehouse.trim() || !/^\d{4}-\d{2}-\d{2}$/.test(options.asOfDate)) {
     throw new Error('مشخصات کالا، انبار یا تاریخ تخصیص FIFO معتبر نیست.');
   }
   const lotIds = new Set<string>();
@@ -160,8 +160,8 @@ export function allocateStockFIFO(
     if (!lot.productId.trim() || !lot.warehouse.trim() || !lot.lotNumber.trim()) {
       throw new Error('مشخصات بچ انبار ناقص است.');
     }
-    if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(lot.receivedDate) ||
-        (lot.expiryDate !== undefined && !/^\\d{4}-\\d{2}-\\d{2}$/.test(lot.expiryDate))) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(lot.receivedDate) ||
+        (lot.expiryDate !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(lot.expiryDate))) {
       throw new Error('تاریخ دریافت یا انقضای بچ معتبر نیست.');
     }
     if (!Number.isFinite(lot.quantityReceived) || !Number.isFinite(lot.quantityRemaining) ||
