@@ -5,7 +5,6 @@ import {
   CloudOff,
   Download,
   HardDrive,
-  LogIn,
   LogOut,
   Palette,
   RotateCcw,
@@ -60,7 +59,9 @@ export const SettingsView: React.FC<{ initialIntent?: string; clearIntent?: () =
     updateRbacOperator,
     deleteRbacOperator,
     auditLogs,
-    loginWithGoogle,
+    bootstrapCloud,
+    joinCloud,
+    createDeviceInvite,
     logout,
     updateCompanyProfile,
     exportBackupJson,
@@ -73,6 +74,27 @@ export const SettingsView: React.FC<{ initialIntent?: string; clearIntent?: () =
     updateSettings: updateInvSettings,
     reset: resetInvSettings,
   } = useInvoiceSettings();
+
+  const connectSupabase = async () => {
+    const firstDevice = window.confirm('آیا این اولین دستگاه و مدیر اصلی شرکت است؟\nتأیید: کلید راه‌اندازی اولیه\nلغو: کد دعوت');
+    const token = window.prompt(firstDevice ? 'کلید راه‌اندازی اولیه Supabase:' : 'کد دعوت یک‌بارمصرف:');
+    if (!token?.trim()) return;
+    try {
+      if (firstDevice) await bootstrapCloud(token.trim());
+      else await joinCloud(token.trim());
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'اتصال Supabase ناموفق بود.');
+    }
+  };
+
+  const inviteSupabaseDevice = async () => {
+    try {
+      const token = await createDeviceInvite();
+      window.prompt('کد دعوت یک‌بارمصرف با اعتبار ۲۴ ساعت:', token);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'ساخت دعوت‌نامه ناموفق بود.');
+    }
+  };
 
   const [companyName, setCompanyName] = useState(profile.companyName);
   const [displayName, setDisplayName] = useState(profile.displayName);
@@ -187,7 +209,7 @@ export const SettingsView: React.FC<{ initialIntent?: string; clearIntent?: () =
           تنظیمات شرکتی، طراحی قالب فاکتور، پشتیبان‌گیری و نصب اپلیکیشن
         </h1>
         <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-          مدیریت اطلاعات رسمی مودیان، سفارشی‌سازی کامل فاکتورهای چندواحدی نخ، پشتیبان‌گیری JSON و همگام‌سازی ابری Firebase
+          مدیریت اطلاعات رسمی مودیان، سفارشی‌سازی کامل فاکتورهای چندواحدی نخ، پشتیبان‌گیری JSON و همگام‌سازی ابری Supabase
         </p>
       </div>
 
@@ -202,32 +224,32 @@ export const SettingsView: React.FC<{ initialIntent?: string; clearIntent?: () =
           <div>
             <div className="text-sm font-bold text-slate-900 dark:text-white">
               {isCloudMode
-                ? `متصل به پایگاه‌داده ابری (${user?.email})`
+                ? `متصل به شرکت در Supabase (${user?.email || 'حساب بدون رمز عبور'})`
                 : 'حالت محلی فعال — اطلاعات روی همین دستگاه ذخیره می‌شود'}
             </div>
             <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 leading-5">
               {isCloudMode
-                ? 'تمامی اسناد، فاکتورها، انبار و چک‌ها به‌صورت آنی در Firestore ذخیره و بین دسکتاپ و موبایل همگام می‌شوند.'
-                : 'بدون ورود هم اطلاعات روی همین دستگاه ذخیره می‌شود. برای همگام‌سازی بین چند دستگاه، اتصال ابری و ورود گوگل به‌صورت اختیاری لازم است.'}
+                ? 'تمامی اسناد، فاکتورها، انبار و چک‌ها به‌صورت آنی در Supabase ذخیره و بین دسکتاپ و موبایل همگام می‌شوند.'
+                : 'بدون ورود هم اطلاعات روی همین دستگاه ذخیره می‌شود. برای همگام‌سازی بین چند دستگاه، اتصال ابری و ثبت‌نام بدون رمز عبور و کد دعوت لازم است.'}
             </p>
           </div>
         </div>
         <div className="shrink-0">
           {isCloudMode ? (
-            <button
-              onClick={logout}
-              className="inline-flex items-center gap-2 px-4 py-2 text-xs font-medium rounded-lg border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800"
-            >
-              <LogOut className="w-4 h-4" />
-              <span>خروج از حساب</span>
-            </button>
+            <div className="flex flex-wrap gap-2">
+              <button onClick={inviteSupabaseDevice} className="inline-flex items-center gap-2 px-4 py-2 text-xs font-semibold text-teal-700 border border-teal-700 rounded-lg hover:bg-teal-50">
+                <UserPlus className="w-4 h-4" />
+                <span>دعوت دستگاه</span>
+              </button>
+              <button onClick={logout} className="inline-flex items-center gap-2 px-4 py-2 text-xs font-medium rounded-lg border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800">
+                <LogOut className="w-4 h-4" />
+                <span>خروج از شرکت</span>
+              </button>
+            </div>
           ) : (
-            <button
-              onClick={loginWithGoogle}
-              className="inline-flex items-center gap-2 px-4 py-2 text-xs font-semibold text-white bg-teal-700 hover:bg-teal-800 rounded-lg"
-            >
-              <LogIn className="w-4 h-4" />
-              <span>ورود با حساب گوگل</span>
+            <button onClick={connectSupabase} className="inline-flex items-center gap-2 px-4 py-2 text-xs font-semibold text-white bg-teal-700 hover:bg-teal-800 rounded-lg">
+              <Cloud className="w-4 h-4" />
+              <span>اتصال به Supabase</span>
             </button>
           )}
         </div>
