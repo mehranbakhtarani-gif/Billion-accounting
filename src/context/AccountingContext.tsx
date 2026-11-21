@@ -2547,14 +2547,31 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         voucherType: 'depreciation', status: 'permanent', referenceId, lines: expenseLines,
       });
       // Update asset subledger only after the depreciation voucher has been created.
-      for (const row of allocations) {
+      const updatedRows: typeof allocations = [];
+      try {
         if (user) {
-          await updateDoc(doc(db, 'assets', row.asset.id), { accumulatedDepreciation: row.nextAccumulated, updatedAt: serverTimestamp() });
+          for (const row of allocations) {
+            await updateDoc(doc(db, 'assets', row.asset.id), { accumulatedDepreciation: row.nextAccumulated, updatedAt: serverTimestamp() });
+            updatedRows.push(row);
+          }
+        } else {
+          const nextById = new Map(allocations.map((row) => [row.asset.id, row.nextAccumulated]));
+          setAssets((prev) => prev.map((asset) => nextById.has(asset.id) ? { ...asset, accumulatedDepreciation: nextById.get(asset.id)! } : asset));
+          updatedRows.push(...allocations);
         }
-      }
-      if (!user) {
-        const nextById = new Map(allocations.map((row) => [row.asset.id, row.nextAccumulated]));
-        setAssets((prev) => prev.map((asset) => nextById.has(asset.id) ? { ...asset, accumulatedDepreciation: nextById.get(asset.id)! } : asset));
+      } catch (error) {
+        for (const row of updatedRows) {
+          if (user) {
+            try { await updateDoc(doc(db, 'assets', row.asset.id), { accumulatedDepreciation: row.asset.accumulatedDepreciation, updatedAt: serverTimestamp() }); }
+            catch (rollbackError) { console.error('Depreciation asset rollback failed', row.asset.id, rollbackError); }
+          }
+        }
+        if (!user) setAssets((prev) => prev.map((asset) => { const original = updatedRows.find((row) => row.asset.id === asset.id); return original ? { ...asset, accumulatedDepreciation: original.asset.accumulatedDepreciation } : asset; }));
+        try {
+          await createVoucher({ date: getTodayShamsi(), description: `سند معکوس خودکار بابت عدم تکمیل دفتر اموال — ${normalizedPeriod}`, voucherType: 'general', status: 'permanent', referenceId: voucher.id,
+            lines: voucher.lines.map((line) => ({ ...line, description: `برگشت سند استهلاک #${voucher.voucherNumber}: ${line.description}`, debit: line.credit, credit: line.debit, foreignDebit: line.foreignCredit, foreignCredit: line.foreignDebit })) });
+        } catch (reversalError) { console.error('Depreciation voucher compensation failed', voucher.id, reversalError); }
+        throw new Error(`سند استهلاک صادر شد اما به‌روزرسانی دفتر اموال کامل نشد؛ تلاش برای سند معکوس انجام شد. علت: ${error instanceof Error ? error.message : String(error)}`);
       }
       showToast(`سند استهلاک دوره «${normalizedPeriod}» با شماره ${voucher.voucherNumber} صادر شد.`);
     },
