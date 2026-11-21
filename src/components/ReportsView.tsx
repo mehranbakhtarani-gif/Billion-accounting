@@ -25,6 +25,7 @@ import {
   buildTtmsSalaryCsv,
   computeBrokerCommissions,
   computeReceivablesAging,
+  computePayablesAging,
 } from '../lib/enterpriseAccounting';
 import { exportToCsv, formatMoney, getTodayShamsi, toPersianDigits } from '../lib/format';
 import { SmartSearchCombobox, SmartSearchOption } from './SmartSearchCombobox';
@@ -204,6 +205,11 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ initialIntent, clearIn
 
   const agingRows = useMemo(
     () => computeReceivablesAging(parties, invoices, partyBalances, getTodayShamsi()),
+    [parties, invoices, partyBalances]
+  );
+
+  const payablesAgingRows = useMemo(
+    () => computePayablesAging(parties, invoices, partyBalances, getTodayShamsi()),
     [parties, invoices, partyBalances]
   );
 
@@ -1636,10 +1642,10 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ initialIntent, clearIn
         <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden print-container">
           <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-800">
             <h2 className="text-sm font-bold text-slate-900 dark:text-white">
-              گزارش سنی مطالبات مشتریان (Aging Report) — مبنای تاریخ {toPersianDigits(getTodayShamsi())}
+              گزارش سنی مطالبات مشتریان و بدهی تأمین‌کنندگان (Aging Report) — مبنای تاریخ {toPersianDigits(getTodayShamsi())}
             </h2>
             <p className="text-xs text-slate-500 mt-0.5">
-              تفکیک مانده بدهی مشتریان به بازه‌های ۰ تا ۳۰ روز، ۳۱ تا ۶۰ روز، ۶۱ تا ۹۰ روز و معوقات بالای ۹۰ روز همراه با یادآوری مستقیم واتس‌اپ و تلگرام
+              تفکیک مانده باز مشتریان و تأمین‌کنندگان به بازه‌های ۰ تا ۳۰ روز، ۳۱ تا ۶۰ روز، ۶۱ تا ۹۰ روز و معوقات بالای ۹۰ روز همراه با یادآوری مستقیم واتس‌اپ و تلگرام
             </p>
           </div>
           <div className="overflow-x-auto">
@@ -1747,6 +1753,42 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ initialIntent, clearIn
             </table>
           </div>
         </div>
+          <div className="mt-5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden print-container">
+            <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-800">
+              <h2 className="text-sm font-bold text-slate-900 dark:text-white">گزارش سنی بدهی به تأمین‌کنندگان</h2>
+              <p className="text-xs text-slate-500 mt-0.5">مانده باز فاکتورهای خرید بر اساس سررسید؛ مبالغ بدون فاکتور متناظر به‌صورت محافظه‌کارانه در بازه بیش از ۹۰ روز نمایش داده می‌شوند.</p>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-right text-xs border-collapse">
+                <thead><tr className="border-b border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/60 text-slate-500">
+                  <th className="py-3 px-4">تأمین‌کننده</th><th className="py-3 px-3 text-left">۰ تا ۳۰ روز</th>
+                  <th className="py-3 px-3 text-left">۳۱ تا ۶۰ روز</th><th className="py-3 px-3 text-left">۶۱ تا ۹۰ روز</th>
+                  <th className="py-3 px-3 text-left">بالای ۹۰ روز</th><th className="py-3 px-4 text-left">جمع بدهی باز</th>
+                </tr></thead>
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                  {payablesAgingRows.length === 0 ? <tr><td colSpan={6} className="py-8 text-center text-slate-500">بدهی باز ثبت‌شده‌ای برای تأمین‌کنندگان وجود ندارد.</td></tr> :
+                    payablesAgingRows.map((r) => <tr key={r.partyId} className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
+                      <td className="py-2.5 px-4"><div className="font-semibold text-slate-900 dark:text-white">{r.partyName}</div>
+                        <div className="text-[11px] text-slate-500 font-code">کد {toPersianDigits(r.partyCode)} · قدیمی‌ترین سررسید: {r.oldestInvoiceDate ? toPersianDigits(r.oldestInvoiceDate) : 'مانده اول دوره'}</div></td>
+                      <td className="py-2.5 px-3 text-left font-code">{r.bucket0to30 > 0 ? formatMoney(r.bucket0to30, unit, false) : '—'}</td>
+                      <td className="py-2.5 px-3 text-left font-code text-amber-700">{r.bucket31to60 > 0 ? formatMoney(r.bucket31to60, unit, false) : '—'}</td>
+                      <td className="py-2.5 px-3 text-left font-code text-orange-700">{r.bucket61to90 > 0 ? formatMoney(r.bucket61to90, unit, false) : '—'}</td>
+                      <td className="py-2.5 px-3 text-left font-code font-bold text-rose-700">{r.bucketOver90 > 0 ? formatMoney(r.bucketOver90, unit, false) : '—'}</td>
+                      <td className="py-2.5 px-4 text-left font-code font-bold">{formatMoney(r.totalPayable, unit, false)}</td>
+                    </tr>)
+                  }
+                </tbody>
+                {payablesAgingRows.length > 0 && <tfoot><tr className="border-t-2 border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 font-bold">
+                  <td className="py-3 px-4">جمع کل بدهی‌ها</td>
+                  <td className="py-3 px-3 text-left font-code">{formatMoney(payablesAgingRows.reduce((s, r) => s + r.bucket0to30, 0), unit, false)}</td>
+                  <td className="py-3 px-3 text-left font-code">{formatMoney(payablesAgingRows.reduce((s, r) => s + r.bucket31to60, 0), unit, false)}</td>
+                  <td className="py-3 px-3 text-left font-code">{formatMoney(payablesAgingRows.reduce((s, r) => s + r.bucket61to90, 0), unit, false)}</td>
+                  <td className="py-3 px-3 text-left font-code text-rose-700">{formatMoney(payablesAgingRows.reduce((s, r) => s + r.bucketOver90, 0), unit, false)}</td>
+                  <td className="py-3 px-4 text-left font-code">{formatMoney(payablesAgingRows.reduce((s, r) => s + r.totalPayable, 0), unit, false)}</td>
+                </tr></tfoot>}
+              </table>
+            </div>
+          </div>
       )}
 
       {/* Broker / Intermediary Commissions Report */}
