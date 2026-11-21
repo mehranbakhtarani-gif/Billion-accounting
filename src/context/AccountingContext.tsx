@@ -1989,82 +1989,51 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       if (payload.invoiceType !== 'proforma') {
         const stockDeltas = new Map<string, number>();
         for (const item of payload.items) {
-          const prod = products.find((p) => p.id === item.productId);
-          if (!prod) {
-            throw new Error(`کالای ردیف فاکتور یافت نشد: ${item.productName || item.productId}`);
-          }
-          if (!Number.isFinite(item.quantity) || item.quantity <= 0) {
-            throw new Error(`مقدار کالا در فاکتور معتبر نیست: ${item.productName || item.productId}`);
-          }
-          cogsTotal += Math.round(prod.buyPrice * item.quantity);
-          const isOut =
-            payload.invoiceType === 'sale' ||
-            payload.invoiceType === 'purchase_return' ||
-            payload.invoiceType === 'waste';
-          const delta = isOut ? -item.quantity : item.quantity;
-          stockDeltas.set(prod.id, (stockDeltas.get(prod.id) ?? 0) + delta);
+          const product = products.find((candidate) => candidate.id === item.productId);
+          if (!product) throw new Error(`کالای ردیف فاکتور یافت نشد: ${item.productName || item.productId}`);
+          if (!Number.isFinite(item.quantity) || item.quantity <= 0) throw new Error(`مقدار کالا در فاکتور معتبر نیست: ${item.productName || item.productId}`);
+          cogsTotal += Math.round(product.buyPrice * item.quantity);
+          const outgoing = ['sale', 'purchase_return', 'waste'].includes(payload.invoiceType);
+          stockDeltas.set(product.id, (stockDeltas.get(product.id) ?? 0) + (outgoing ? -item.quantity : item.quantity));
         }
-        for (const [productId, delta] of stockDeltas) {
-          const prod = products.find((p) => p.id === productId);
-          if (!prod) throw new Error(`کالای فاکتور یافت نشد: ${productId}`);
-          const nextStock = Number((prod.stock + delta).toFixed(2));
-          if (!Number.isFinite(nextStock) || nextStock < -1e-9) {
-            throw new Error(`موجودی کالا برای ثبت فاکتور کافی نیست: ${prod.name}`);
+        const appliedStock: Array<{ productId: string; previousStock: number }> = [];
+        let createdVoucher: Voucher | undefined;
+        try {
+          for (const [productId, delta] of stockDeltas) {
+            const product = products.find((candidate) => candidate.id === productId);
+            if (!product) throw new Error(`کالای فاکتور یافت نشد: ${productId}`);
+            const nextStock = Number((product.stock + delta).toFixed(2));
+            if (!Number.isFinite(nextStock) || nextStock < -1e-9) throw new Error(`موجودی کالا برای ثبت فاکتور کافی نیست: ${product.name}`);
+            await adjustProductStock(product.id, Math.max(0, nextStock));
+            appliedStock.push({ productId, previousStock: product.stock });
           }
-          await adjustProductStock(prod.id, Math.max(0, nextStock));
-        }
-
-        const rawLines = buildInvoiceVoucherLines(payload, cogsTotal);
-        const isFx = isForeignCurrency(payload.currencyCode) && Number(payload.exchangeRate) > 0;
-        const fxCode = isFx ? normalizeCurrencyCode(payload.currencyCode) : undefined;
-        const fxRate = isFx ? Number(payload.exchangeRate) : undefined;
-        const fxCurDef = fxCode
-          ? currencies.find((c) => normalizeCurrencyCode(c.code) === fxCode)
-          : undefined;
-        const lines =
-          isFx && fxRate
-            ? annotateVoucherLinesWithCurrency(rawLines, fxRate, fxCurDef?.decimalPlaces ?? 2)
-            : rawLines;
-
-        if (lines.length >= 2) {
-          const vType: VoucherType =
-            payload.invoiceType === 'purchase' || payload.invoiceType === 'purchase_return'
-              ? 'purchase'
-              : payload.invoiceType === 'waste'
-                ? 'general'
-                : 'sales';
-          const fxSuffix = isFx && fxCode && fxRate ? ` (ارزی ${fxCode} @ نرخ ${fxRate.toLocaleString('en-US')})` : '';
-          const createdVoucher = await createVoucher({
-            date: payload.date,
-            description: `سند اتوماتیک فاکتور ${payload.invoiceNumber} — ${payload.partyName}${fxSuffix}`,
-            voucherType: vType,
-            status: 'permanent',
-            lines,
-            referenceId: id,
-            ...(isFx && fxCode && fxRate ? { currencyCode: fxCode, exchangeRate: fxRate } : {}),
-          });
-          voucherId = createdVoucher.id;
-        }
-
-        // Auto-register Sayadi cheque record in Treasury if paidCheque > 0 (without double-posting GL)
-        if (payload.paidCheque > 0 && (payload.invoiceType === 'sale' || payload.invoiceType === 'purchase')) {
-          await addCheque(
-            {
-              sayadiId: `SYD${Math.floor(1000000000000 + Math.random() * 8999999999999)}`,
-              serial: `INV-${payload.invoiceNumber.slice(-3)}`,
-              direction: payload.invoiceType === 'sale' ? 'receivable' : 'payable',
-              partyId: payload.partyId,
-              partyName: payload.partyName,
-              bankName: 'بانک ملت',
-              branch: 'ثبت خودکار از فاکتور',
-              amount: payload.paidCheque,
-              issueDate: payload.date,
-              dueDate: payload.date,
-              status: 'in_box',
-              notes: `ثبت خودکار بابت فاکتور ${payload.invoiceNumber}`,
-            },
-            true
-          );
+          const rawLines = buildInvoiceVoucherLines(payload, cogsTotal);
+          const isFx = isForeignCurrency(payload.currencyCode) && Number(payload.exchangeRate) > 0;
+          const fxCode = isFx ? normalizeCurrencyCode(payload.currencyCode) : undefined;
+          const fxRate = isFx ? Number(payload.exchangeRate) : undefined;
+          const fxCurDef = fxCode ? currencies.find((currency) => normalizeCurrencyCode(currency.code) === fxCode) : undefined;
+          const lines = isFx && fxRate ? annotateVoucherLinesWithCurrency(rawLines, fxRate, fxCurDef?.decimalPlaces ?? 2) : rawLines;
+          if (lines.length >= 2) {
+            const voucherType: VoucherType = payload.invoiceType === 'purchase' || payload.invoiceType === 'purchase_return' ? 'purchase' : payload.invoiceType === 'waste' ? 'general' : 'sales';
+            const fxSuffix = isFx && fxCode && fxRate ? ` (ارزی ${fxCode} @ نرخ ${fxRate.toLocaleString('en-US')})` : '';
+            createdVoucher = await createVoucher({ date: payload.date, description: `سند اتوماتیک فاکتور ${payload.invoiceNumber} — ${payload.partyName}${fxSuffix}`, voucherType, status: 'permanent', lines, referenceId: id, ...(isFx && fxCode && fxRate ? { currencyCode: fxCode, exchangeRate: fxRate } : {}) });
+            voucherId = createdVoucher.id;
+          }
+          if (payload.paidCheque > 0 && (payload.invoiceType === 'sale' || payload.invoiceType === 'purchase')) {
+            await addCheque({ sayadiId: `SYD${Math.floor(1000000000000 + Math.random() * 8999999999999)}`, serial: `INV-${payload.invoiceNumber.slice(-3)}`, direction: payload.invoiceType === 'sale' ? 'receivable' : 'payable', partyId: payload.partyId, partyName: payload.partyName, bankName: 'بانک ملت', branch: 'ثبت خودکار از فاکتور', amount: payload.paidCheque, issueDate: payload.date, dueDate: payload.date, status: 'in_box', notes: `ثبت خودکار بابت فاکتور ${payload.invoiceNumber}` }, true);
+          }
+        } catch (error) {
+          for (const snapshot of appliedStock.reverse()) {
+            const product = products.find((candidate) => candidate.id === snapshot.productId);
+            if (!product) continue;
+            try { await adjustProductStock(snapshot.productId, snapshot.previousStock); }
+            catch (rollbackError) { console.error('Invoice stock rollback failed', snapshot.productId, rollbackError); }
+          }
+          if (createdVoucher) {
+            try { await createVoucher({ date: getTodayShamsi(), description: `سند معکوس خودکار بابت عدم تکمیل فاکتور ${payload.invoiceNumber}`, voucherType: 'general', status: 'permanent', referenceId: `invoice-compensation:${id}`, lines: createdVoucher.lines.map((line) => ({ ...line, description: `برگشت سند فاکتور #${createdVoucher!.voucherNumber}: ${line.description}`, debit: line.credit, credit: line.debit, foreignDebit: line.foreignCredit, foreignCredit: line.foreignDebit })) }); }
+            catch (reversalError) { console.error('Invoice voucher compensation failed', createdVoucher.id, reversalError); }
+          }
+          throw new Error(`ثبت فاکتور کامل نشد؛ تلاش برای برگشت موجودی و سند انجام شد. علت: ${error instanceof Error ? error.message : String(error)}`);
         }
       }
 
