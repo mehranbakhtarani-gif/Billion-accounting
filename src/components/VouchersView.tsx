@@ -416,7 +416,7 @@ export const VouchersView: React.FC<{ initialIntent?: string; clearIntent?: () =
       });
     });
     exportToCsv(
-      `holoo-journal-${profile.fiscalYear}.csv`,
+      `billion-journal-${profile.fiscalYear}.csv`,
       [
         'شماره سند',
         'تاریخ',
