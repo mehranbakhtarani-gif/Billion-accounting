@@ -14,7 +14,7 @@ export function setActiveCompanyId(companyId: string | null) {
 type RecordRef = { kind: 'record'; collection: string; id: string };
 type CollectionRef = { kind: 'collection'; collection: string };
 type QueryRef = { kind: 'query'; collection: string; filters: Array<{ field: string; value: unknown }> };
-type Snapshot = { id: string; exists: () => boolean; data: () => Record<string, unknown> | undefined };
+type Snapshot = { id: string; exists: () => boolean; data: () => Record<string, any> };
 type QuerySnapshot = { docs: Snapshot[]; empty: boolean; size: number };
 type BatchChange = Record<string, unknown>;
 
@@ -51,11 +51,11 @@ function requireCompany() {
 function recordType(ref: { collection: string }) {
   return ref.collection;
 }
-function snapshot(row: { legacy_record_id: string; payload: Record<string, unknown> } | null): Snapshot {
+function snapshot(row: { legacy_record_id: string; payload: Record<string, any> } | null): Snapshot {
   return {
     id: row?.legacy_record_id ?? '',
     exists: () => !!row,
-    data: () => row?.payload,
+    data: () => row?.payload ?? {},
   };
 }
 function toSnapshot(row: { legacy_record_id: string; payload: Record<string, unknown> }): Snapshot {
@@ -106,7 +106,7 @@ export async function getDocs(ref: QueryRef) {
   const docs = await fetchMany(ref);
   return { docs, empty: docs.length === 0, size: docs.length } satisfies QuerySnapshot;
 }
-export async function setDoc(ref: RecordRef, payload: Record<string, unknown>) {
+export async function setDoc(ref: RecordRef, payload: any) {
   await applyChanges([{
     action: 'set',
     record_type: ref.collection,
@@ -115,7 +115,7 @@ export async function setDoc(ref: RecordRef, payload: Record<string, unknown>) {
     payload,
   }]);
 }
-export async function updateDoc(ref: RecordRef, patch: Record<string, unknown>) {
+export async function updateDoc(ref: RecordRef, patch: any) {
   await applyChanges([{
     action: 'patch',
     record_type: ref.collection,
@@ -134,7 +134,7 @@ export async function deleteDoc(ref: RecordRef) {
 export function writeBatch(_db: typeof db) {
   const changes: BatchChange[] = [];
   return {
-    set(ref: RecordRef, payload: Record<string, unknown>) {
+    set(ref: RecordRef, payload: any) {
       changes.push({
         action: 'set',
         record_type: ref.collection,
@@ -143,7 +143,7 @@ export function writeBatch(_db: typeof db) {
         payload,
       });
     },
-    update(ref: RecordRef, patch: Record<string, unknown>) {
+    update(ref: RecordRef, patch: any) {
       changes.push({
         action: 'patch',
         record_type: ref.collection,
@@ -165,25 +165,28 @@ export function writeBatch(_db: typeof db) {
 }
 
 export function onSnapshot(
+  ref: RecordRef,
+  onNext: (value: Snapshot) => void,
+  onError?: (error: unknown) => void,
+): () => void;
+export function onSnapshot(
+  ref: QueryRef,
+  onNext: (value: QuerySnapshot) => void,
+  onError?: (error: unknown) => void,
+): () => void;
+export function onSnapshot(
   ref: RecordRef | QueryRef,
   onNext: (value: Snapshot | QuerySnapshot) => void,
   onError?: (error: unknown) => void,
-) {
+): () => void {
   let closed = false;
   const companyId = requireCompany();
-  const channel = supabase
-    .channel(`billion-records-${companyId}-${Math.random().toString(36).slice(2)}`)
-    .on('postgres_changes', {
-      event: '*',
-      schema: 'public',
-      table: 'billion_records',
-      filter: `company_id=eq.${companyId}`,
-    }, () => { void refresh(); })
+  const channel = supabase.channel('billion-records-' + companyId + '-' + Math.random().toString(36).slice(2))
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'billion_records', filter: 'company_id=eq.' + companyId }, () => { void refresh(); })
     .subscribe((status, error) => {
       if (error && onError) onError(error);
       if (status === 'CHANNEL_ERROR' && onError) onError(new Error('Supabase Realtime connection failed.'));
     });
-
   const refresh = async () => {
     if (closed) return;
     try {
@@ -192,15 +195,10 @@ export function onSnapshot(
         const docs = await fetchMany(ref);
         onNext({ docs, empty: docs.length === 0, size: docs.length });
       }
-    } catch (error) {
-      onError?.(error);
-    }
+    } catch (error) { onError?.(error); }
   };
   void refresh();
-  return () => {
-    closed = true;
-    void supabase.removeChannel(channel);
-  };
+  return () => { closed = true; void supabase.removeChannel(channel); };
 }
 
 export function onAuthStateChanged(
