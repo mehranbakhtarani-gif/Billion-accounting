@@ -549,7 +549,7 @@ service cloud.firestore {
         && incoming().keys().hasAll(['ownerId', 'deviceId', 'label', 'platform', 'createdAt', 'lastSeenAt', 'updatedAt'])
         && incoming().keys().hasOnly(['ownerId', 'deviceId', 'label', 'platform', 'createdAt', 'lastSeenAt', 'updatedAt'])
         && incoming().ownerId == request.auth.uid
-        && incoming().deviceId == deviceId
+        && isValidId(incoming().deviceId)
         && isNonEmptyString(incoming().label, 80)
         && incoming().platform in ['android', 'ios', 'web']
         && incoming().createdAt == request.time
