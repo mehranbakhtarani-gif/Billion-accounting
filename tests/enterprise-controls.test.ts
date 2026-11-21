@@ -119,6 +119,23 @@ test('bank reconciliation leaves ambiguous matches for manual review', () => {
   assert.deepEqual(result.unmatchedLedgerIds, ['l1', 'l2']);
 });
 
+test('bank reconciliation never reuses a ledger line and prefers an exact reference', () => {
+  const daysBetween = (a: string, b: string) => Math.round((Date.parse(b) - Date.parse(a)) / 86400000);
+  const referenced = reconcileBankLines(
+    [{ id: 's-ref', accountId: 'bank', date: '2026-11-30', amount: 750, reference: 'trace-9' }],
+    [{ id: 'l-ref', accountId: 'bank', date: '2026-11-20', amount: 750, reference: 'trace-9' }],
+    1, daysBetween,
+  );
+  assert.deepEqual(referenced.matches, [{ statementLineId: 's-ref', ledgerLineId: 'l-ref', matchType: 'reference' }]);
+  const duplicateStatement = reconcileBankLines(
+    [{ id: 's1', accountId: 'bank', date: '2026-11-20', amount: 500 }, { id: 's2', accountId: 'bank', date: '2026-11-20', amount: 500 }],
+    [{ id: 'l1', accountId: 'bank', date: '2026-11-20', amount: 500 }],
+    0, daysBetween,
+  );
+  assert.equal(duplicateStatement.matches.length, 1);
+  assert.equal(duplicateStatement.unmatchedStatementIds.length, 1);
+  assert.deepEqual(duplicateStatement.unmatchedLedgerIds, []);
+});
 test('treasury audit detects missing, duplicate and mismatched vouchers', () => {
   const issues = auditTreasuryVoucherLinks(
     [{ id: 't1', amount: 100 }, { id: 't2', amount: 200 }, { id: 't3', amount: 300 }],
