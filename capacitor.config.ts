@@ -4,7 +4,6 @@ const config: CapacitorConfig = {
   appId: 'ir.atlasris.holooapex',
   appName: 'هلو شرکتی Apex',
   webDir: 'dist',
-  bundledWebRuntime: false,
   android: {
     allowMixedContent: false,
   },
