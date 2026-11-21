@@ -245,7 +245,7 @@ export const DashboardView: React.FC<{
 
   return (
     <div className="space-y-6">
-      {/* Header Row & Quick Holoo Actions */}
+      {/* Header Row & Quick Actions */}
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
         <div>
           <h1 className="text-xl font-bold text-slate-900 dark:text-white tracking-tight">
