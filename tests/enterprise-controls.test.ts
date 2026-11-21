@@ -8,6 +8,7 @@ import {
   classifySyncOperation,
   computeOpenItemAging,
   computeReceivablesAging,
+  computePayablesAging,
   reconcileBankLines,
   validateAtomicFinancialPlan,
   validateSyncOperation,
@@ -111,6 +112,16 @@ test('receivables aging uses due dates and actual outstanding invoice balances',
   );
   assert.equal(rows[0].totalReceivable, 300);
   assert.equal(rows[0].bucket0to30, 100);
+  assert.equal(rows[0].bucket31to60, 200);
+  assert.equal(rows[0].bucketOver90, 0);
+});
+test('payables aging uses supplier balances, purchase invoices and due dates', () => {
+  const supplier = { id: 's1', ownerId: 'o1', code: 'S1', name: 'تأمین‌کننده نمونه', partyType: 'supplier', creditLimit: 0, openingBalance: 0, accountCode: '2101' };
+  const purchase = { id: 'buy1', ownerId: 'o1', invoiceNumber: 'P-1', invoiceType: 'purchase', date: '2026/09/01', dueDate: '2026/10/01',
+    partyId: 's1', partyName: 'تأمین‌کننده نمونه', warehouse: 'انبار', subtotal: 900, discount: 0, vatAmount: 0, grandTotal: 900,
+    paidCash: 700, paidBank: 0, paidCheque: 0, creditAmount: 200, status: 'issued', items: [] };
+  const rows = computePayablesAging([supplier] as any, [purchase] as any, new Map([['s1', -200]]), '2026/11/22');
+  assert.equal(rows[0].totalPayable, 200);
   assert.equal(rows[0].bucket31to60, 200);
   assert.equal(rows[0].bucketOver90, 0);
 });
