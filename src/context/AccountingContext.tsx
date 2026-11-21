@@ -3076,7 +3076,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         return { item, product };
       });
       const costTotal = dossier.costs.reduce((sum, cost) => {
-        if (!Number.isFinite(cost.amountIrr) || cost.amountIrr < 0) throw new Error('هزینه جانبی پرونده واردات نامعتبر است.');
+        if (!Number.isFinite(cost.amountIrr) || cost.amountIrr < 0 || !cost.accountCode.trim() || !accounts.some((account) => account.code === cost.accountCode)) throw new Error('مبلغ یا حساب هزینه جانبی پرونده واردات نامعتبر است.');
         return sum + Math.round(cost.amountIrr);
       }, 0);
       const fobTotal = Math.round(dossier.totalFobIrr);
