@@ -3370,72 +3370,26 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   // ---------------- FX REVALUATION & BROKER COMMISSION VOUCHERS ----------------
   const postFxRevaluationVoucher = useCallback(
     async (rows: FxRevaluationRow[], date: string) => {
-      const nonZero = rows.filter((r) => Math.abs(r.revaluationDiffIrr) >= 1);
-      if (nonZero.length === 0) {
-        showToast('هیچ اختلاف تسعیر ارزی برای صدور سند وجود ندارد.');
-        return;
+      const referenceId = `fx-revaluation:${date}`;
+      if (vouchers.some((voucher) => voucher.referenceId === referenceId)) {
+        throw new Error(`برای تاریخ ${date} قبلاً سند تسعیر صادر شده است.`);
       }
-
-      const lines: VoucherLine[] = [];
-      let netDiff = 0;
-      for (const r of nonZero) {
-        netDiff += r.revaluationDiffIrr;
-        if (r.revaluationDiffIrr > 0) {
-          lines.push({
-            accountCode: r.accountCode,
-            accountTitle: r.accountTitle,
-            partyId: r.partyId,
-            partyName: r.partyName,
-            description: `تعدیل مثبت تسعیر ${r.currencyCode} به نرخ ${r.currentRateToIrr.toLocaleString('en-US')} ریال`,
-            debit: r.revaluationDiffIrr,
-            credit: 0,
-          });
-        } else {
-          lines.push({
-            accountCode: r.accountCode,
-            accountTitle: r.accountTitle,
-            partyId: r.partyId,
-            partyName: r.partyName,
-            description: `تعدیل منفی تسعیر ${r.currencyCode} به نرخ ${r.currentRateToIrr.toLocaleString('en-US')} ریال`,
-            debit: 0,
-            credit: Math.abs(r.revaluationDiffIrr),
-          });
-        }
-      }
-
-      if (netDiff > 0) {
-        lines.push({
-          accountCode: '60901',
-          accountTitle: 'سود ناشی از تسعیر دارایی‌ها و بدهی‌های ارزی',
-          description: `شناسایی سود خالص تسعیر ارز تا تاریخ ${date}`,
-          debit: 0,
-          credit: netDiff,
-        });
-      } else if (netDiff < 0) {
-        lines.push({
-          accountCode: '80901',
-          accountTitle: 'زیان تسعیر ارز و کارمزدهای بانکی',
-          description: `شناسایی زیان خالص تسعیر ارز تا تاریخ ${date}`,
-          debit: Math.abs(netDiff),
-          credit: 0,
-        });
-      }
-
-      const v = await createVoucher({
-        date,
-        description: `سند تسعیر ارز دارایی‌ها و بدهی‌های ارزی پایان دوره (${date})`,
-        voucherType: 'general',
-        status: 'permanent',
-        lines,
-      });
-      logActivity(
-        'ارز و تسعیر',
-        `صدور سند تسعیر ارز #${v.voucherNumber}`,
-        `${nonZero.length} ردیف ارزی تسعیر شد (خالص: ${netDiff >= 0 ? 'سود' : 'زیان'} ${Math.abs(netDiff).toLocaleString('en-US')} ریال)`
-      );
+      const nonZero = rows.filter((row) => Math.abs(row.revaluationDiffIrr) >= 1);
+      if (nonZero.length === 0) { showToast('هیچ اختلاف تسعیر ارزی برای صدور سند وجود ندارد.'); return; }
+      const totalGains = nonZero.reduce((sum, row) => sum + Math.max(0, row.revaluationDiffIrr), 0);
+      const totalLosses = nonZero.reduce((sum, row) => sum + Math.max(0, -row.revaluationDiffIrr), 0);
+      const lines: VoucherLine[] = nonZero.map((row) => ({
+        accountCode: row.accountCode, accountTitle: row.accountTitle, partyId: row.partyId, partyName: row.partyName,
+        description: `${row.revaluationDiffIrr > 0 ? 'تعدیل مثبت' : 'تعدیل منفی'} تسعیر ${row.currencyCode} به نرخ ${row.currentRateToIrr.toLocaleString('en-US')} ریال`,
+        debit: Math.max(0, row.revaluationDiffIrr), credit: Math.max(0, -row.revaluationDiffIrr),
+      }));
+      if (totalGains > 0) lines.push({ accountCode: '60901', accountTitle: 'سود ناشی از تسعیر دارایی‌ها و بدهی‌های ارزی', description: `شناسایی سود تسعیر ارز تا تاریخ ${date}`, debit: 0, credit: totalGains });
+      if (totalLosses > 0) lines.push({ accountCode: '80901', accountTitle: 'زیان تسعیر ارز و کارمزدهای بانکی', description: `شناسایی زیان تسعیر ارز تا تاریخ ${date}`, debit: totalLosses, credit: 0 });
+      const v = await createVoucher({ date, description: `سند تسعیر ارز دارایی‌ها و بدهی‌های ارزی پایان دوره (${date})`, voucherType: 'general', status: 'permanent', referenceId, lines });
+      logActivity('ارز و تسعیر', `صدور سند تسعیر ارز #${v.voucherNumber}`, `${nonZero.length} ردیف ارزی تسعیر شد (سود: ${totalGains.toLocaleString('en-US')}، زیان: ${totalLosses.toLocaleString('en-US')} ریال)`);
       showToast(`سند تسعیر ارز #${v.voucherNumber} با موفقیت صادر شد.`);
     },
-    [createVoucher, logActivity, showToast]
+    [vouchers, createVoucher, logActivity, showToast]
   );
 
   const postBrokerCommissionVoucher = useCallback(
