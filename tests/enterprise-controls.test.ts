@@ -52,6 +52,15 @@ test('FIFO allocates oldest eligible lots and excludes expired lots', () => {
   assert.equal(result.remainingLots.find((x) => x.id === 'old')?.quantityRemaining, 0);
   assert.equal(result.remainingLots.find((x) => x.id === 'expired')?.quantityRemaining, 7);
   assert.throws(() => allocateStockFIFO(lots, 30, { productId: 'p1', warehouse: 'w1', asOfDate: '2026-11-22' }), /کافی نیست/);
+  assert.throws(() => allocateStockFIFO([...lots, { ...lots[0] }], 1, {
+    productId: 'p1', warehouse: 'w1', asOfDate: '2026-11-22',
+  }), /تکراری/);
+  assert.throws(() => allocateStockFIFO([{ ...lots[0], quantityRemaining: 11 }], 1, {
+    productId: 'p1', warehouse: 'w1', asOfDate: '2026-11-22',
+  }), /مقدار دریافتی/);
+  assert.throws(() => allocateStockFIFO([{ ...lots[0], unitCost: Number.NaN }], 1, {
+    productId: 'p1', warehouse: 'w1', asOfDate: '2026-11-22',
+  }), /بهای واحد/);
 });
 
 test('open-item aging uses invoice outstanding amounts and due dates', () => {
