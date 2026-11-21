@@ -109,6 +109,7 @@ export const InvoicesView: React.FC<{ initialIntent?: string; clearIntent?: () =
   // Composer state
   const [invoiceType, setInvoiceType] = useState<InvoiceType>('sale');
   const [date, setDate] = useState(getTodayShamsi());
+  const [dueDate, setDueDate] = useState(getTodayShamsi());
   const [partyId, setPartyId] = useState(parties[0]?.id ?? '');
   const [warehouse, setWarehouse] = useState('انبار مرکزی نخ شادآباد');
   const [costCenterId, setCostCenterId] = useState(costCenters[1]?.id ?? '');
@@ -608,6 +609,7 @@ export const InvoicesView: React.FC<{ initialIntent?: string; clearIntent?: () =
       taxSerial,
       invoiceType,
       date,
+      dueDate: dueDate.trim() || date,
       partyId: party.id,
       partyName: invoiceType === 'waste' ? 'انبار ضایعات داخلی شرکت' : party.name,
       warehouse,
@@ -939,11 +941,23 @@ export const InvoicesView: React.FC<{ initialIntent?: string; clearIntent?: () =
                 onChange={(e) => {
                   const nextDate = e.target.value;
                   setDate(nextDate);
+                  setDueDate((current) => current === date ? nextDate : current);
                   if (isFxMode && /^\d{4}\/\d{2}\/\d{2}$/.test(nextDate)) {
                     const eff = getEffectiveExchangeRate(currencyCode, nextDate, exchangeRates, currencies);
                     if (eff.rateToIrr > 0) setExchangeRate(eff.rateToIrr);
                   }
                 }}
+                className="w-full px-3 py-2 text-xs font-code rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-white"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">
+                سررسید پرداخت
+              </label>
+              <input
+                value={dueDate}
+                onChange={(e) => setDueDate(e.target.value)}
+                placeholder="۱۴۰۵/۰۹/۱۵"
                 className="w-full px-3 py-2 text-xs font-code rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-white"
               />
             </div>
