@@ -123,8 +123,16 @@ test('FX revaluation uses permanent vouchers only and computes the current-rate 
   });
   const rows = computeFxRevaluationReport(
     [voucher('draft', 'draft', 5000000), voucher('posted', 'permanent', 5000000)] as any,
-    [], [{ id: 'usd', ownerId: 'o1', code: 'USD', name: 'دلار', symbol: '
-  const asset = { id: 'a1', ownerId: 'o1', assetCode: 'FA-1', title: 'تجهیزات', purchaseDate: '2026/01/01', purchaseCost: 1200, salvageValue: 120, usefulLifeYears: 5, accumulatedDepreciation: 1070 };
+    [], [{ id: 'usd', ownerId: 'o1', code: 'USD', name: 'دلار', symbol: '$', isBase: false, decimalPlaces: 2, defaultRateToIrr: 600000, active: true }] as any,
+    '1405/09/01',
+  );
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].netForeignBalance, 10);
+  assert.equal(rows[0].revaluationDiffIrr, 1000000);
+});
+
+test('straight-line depreciation never exceeds depreciable base or salvage value', () => {
+  const asset = { id: 'a1', ownerId: 'o1', assetCode: 'FA-1', title: 'تجهیزات', purchaseDate: '1405/01/01', purchaseCost: 1200, salvageValue: 120, usefulLifeYears: 5, accumulatedDepreciation: 1070 };
   assert.equal(calculateMonthlyDepreciation(asset as any), 10);
   assert.equal(calculateMonthlyDepreciation({ ...asset, accumulatedDepreciation: 1080 } as any), 0);
   assert.equal(calculateMonthlyDepreciation({ ...asset, salvageValue: 1300 } as any), 0);
