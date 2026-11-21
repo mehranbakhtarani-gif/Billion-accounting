@@ -7,6 +7,7 @@ import {
   auditTreasuryVoucherLinks,
   classifySyncOperation,
   computeOpenItemAging,
+  computeReceivablesAging,
   reconcileBankLines,
   validateAtomicFinancialPlan,
   validateSyncOperation,
@@ -95,6 +96,24 @@ test('open-item aging uses invoice outstanding amounts and due dates', () => {
   assert.equal(rows[0].over90, 300);
 });
 
+test('receivables aging uses due dates and actual outstanding invoice balances', () => {
+  const party = { id: 'p1', ownerId: 'o1', code: 'C1', name: 'مشتری نمونه', partyType: 'customer', creditLimit: 0, openingBalance: 0, accountCode: '1103', phone: '09120000000' };
+  const invoice = (id: string, date: string, dueDate: string, creditAmount: number, grandTotal: number) => ({
+    id, ownerId: 'o1', invoiceNumber: id, invoiceType: 'sale', date, dueDate, partyId: 'p1', partyName: 'مشتری نمونه',
+    warehouse: 'انبار', subtotal: grandTotal, discount: 0, vatAmount: 0, grandTotal, paidCash: grandTotal - creditAmount,
+    paidBank: 0, paidCheque: 0, creditAmount, status: 'issued', items: [],
+  });
+  const rows = computeReceivablesAging(
+    [party] as any,
+    [invoice('old', '2026/10/01', '2026/10/01', 200, 1000), invoice('new', '2026/11/20', '2026/11/30', 100, 1000)] as any,
+    new Map([['p1', 300]]),
+    '2026/11/22',
+  );
+  assert.equal(rows[0].totalReceivable, 300);
+  assert.equal(rows[0].bucket0to30, 100);
+  assert.equal(rows[0].bucket31to60, 200);
+  assert.equal(rows[0].bucketOver90, 0);
+});
 test('atomic financial plan rejects unbalanced and duplicate side effects', () => {
   const valid = { operationId: 'op', idempotencyKey: 'idem', debitTotal: 100, creditTotal: 100,
     stockMovements: [{ id: 'move-1', productId: 'p1', quantityDelta: -2 }], documentIds: ['invoice-1'] };
