@@ -83,7 +83,7 @@ export const LiveFxTickerCard: React.FC<{
           date: today,
           rateToIrr: item.priceIrr,
           rateType: 'market',
-          notes: 'همگام‌سازی خودکار از تابلوی زنده الان‌چند',
+          notes: 'همگام‌سازی خودکار از تابلوی زنده نرخ‌آرا',
         });
       }
       logActivity(
@@ -121,17 +121,17 @@ export const LiveFxTickerCard: React.FC<{
               ·
             </span>
             <a
-              href="https://alanchand.com/"
+              href="https://nerkhara.com/"
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center gap-1 text-xs font-medium text-teal-700 dark:text-teal-400 hover:underline"
             >
-              <span>منبع: الان‌چند</span>
+              <span>منبع: نرخ‌آرا</span>
               <ExternalLink className="w-3 h-3" />
             </a>
           </div>
           <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 flex flex-wrap items-center gap-2">
-            <span>{data?.source || 'بازار آزاد تهران (همگام با الان‌چند)'}</span>
+            <span>{data?.source || 'بازار آزاد تهران (همگام با نرخ‌آرا)'}</span>
             {fetchedTimeLabel && (
               <>
                 <span aria-hidden="true">·</span>
