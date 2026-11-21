@@ -7,12 +7,11 @@ import {
   auditTreasuryVoucherLinks,
   classifySyncOperation,
   computeOpenItemAging,
-  computeReceivablesAging,
-  computePayablesAging,
   reconcileBankLines,
   validateAtomicFinancialPlan,
   validateSyncOperation,
 } from '../src/lib/enterpriseControls.ts';
+import { computeReceivablesAging, computePayablesAging } from '../src/lib/enterpriseAccounting.ts';
 
 test('fiscal period rejects closed periods and overlapping ranges', () => {
   assert.throws(() => assertFiscalPeriodOpen('2026-03-20', [
