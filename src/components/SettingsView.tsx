@@ -249,7 +249,7 @@ export const SettingsView: React.FC<{ initialIntent?: string; clearIntent?: () =
         </div>
       </div>
 
-      {/* Holoo Invoice Designer & Customization Studio */}
+      {/* Billion Invoice Designer & Customization Studio */}
       <div
         ref={designerRef}
         className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 space-y-5 text-xs scroll-mt-20"
