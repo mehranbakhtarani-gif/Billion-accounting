@@ -589,7 +589,6 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     setActiveCompanyId(membership.company_id);
     setUser(session.user);
     setAuthReady(true);
-    await ensureCloudSeed(session.user);
     showToast(mode === 'bootstrap' ? 'شرکت در Supabase راه‌اندازی شد.' : 'این دستگاه به شرکت متصل شد.');
   }, [deviceIdentity, ensureCloudSeed, showToast]);
 
