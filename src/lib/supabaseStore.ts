@@ -84,10 +84,9 @@ async function fetchMany(ref: CollectionRef | QueryRef) {
   if (error) throw error;
   const rows = (data ?? []) as Array<{ legacy_record_id: string; payload: Record<string, unknown> }>;
   const filters = ref.kind === 'query' ? ref.filters : [];
-  const filtered = filters.length
-    ? rows.filter((row) => filters.every((filter) => row.payload?.[filter.field] === filter.value))
-    : rows;
-  return filtered.map(toSnapshot);
+  // The authenticated company membership is the security boundary. Legacy ownerId filters are ignored.
+  void filters;
+  return rows.map(toSnapshot);
 }
 
 async function applyChanges(changes: BatchChange[]) {
@@ -204,7 +203,7 @@ export function onSnapshot(
   };
 }
 
-export async function onAuthStateChanged(
+export function onAuthStateChanged(
   _auth: typeof auth,
   callback: (user: CloudUser | null) => void,
 ) {
@@ -213,14 +212,13 @@ export async function onAuthStateChanged(
     auth.currentUser = session?.user ?? null;
     if (alive) callback(auth.currentUser);
   });
-  try {
-    const session = await ensurePasswordlessSession();
+  void ensurePasswordlessSession().then((session) => {
     auth.currentUser = session.user;
     if (alive) callback(session.user);
-  } catch (error) {
+  }).catch((error) => {
     if (alive) callback(null);
     console.error('Supabase passwordless authentication is not ready:', error);
-  }
+  });
   return () => {
     alive = false;
     data.subscription.unsubscribe();
