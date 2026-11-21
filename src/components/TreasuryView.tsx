@@ -348,7 +348,10 @@ export const TreasuryView: React.FC<TreasuryViewProps> = ({ initialIntent, clear
         if (!['101', '102', '103', '104', '301', '302'].some((prefix) => line.accountCode.startsWith(prefix))) return;
         const key = `${voucher.currencyCode}:${line.accountCode}`;
         const current = balances.get(key) || { currencyCode: voucher.currencyCode!, accountCode: line.accountCode, accountTitle: line.accountTitle, foreignBalance: 0, baseBalance: 0 };
-        current.foreignBalance += (line.foreignDebit || 0) - (line.foreignCredit || 0);
+        const rate = voucher.exchangeRate && voucher.exchangeRate > 0 ? voucher.exchangeRate : 1;
+        const foreignDebit = line.foreignDebit ?? ((line.debit || 0) > 0 ? (line.debit || 0) / rate : 0);
+        const foreignCredit = line.foreignCredit ?? ((line.credit || 0) > 0 ? (line.credit || 0) / rate : 0);
+        current.foreignBalance += foreignDebit - foreignCredit;
         current.baseBalance += (line.debit || 0) - (line.credit || 0);
         balances.set(key, current);
       });
