@@ -179,7 +179,7 @@ export const SettingsView: React.FC<{ initialIntent?: string; clearIntent?: () =
     const link = document.createElement('a');
     const dateStamp = new Date().toISOString().slice(0, 10);
     link.href = url;
-    link.download = `holoo-apex-backup-${profile.fiscalYear}-${dateStamp}.json`;
+    link.download = `billion-backup-${profile.fiscalYear}-${dateStamp}.json`;
     link.click();
     URL.revokeObjectURL(url);
     showToast('فایل پشتیبان کامل حسابداری (JSON) با موفقیت دانلود شد.');
@@ -259,7 +259,7 @@ export const SettingsView: React.FC<{ initialIntent?: string; clearIntent?: () =
             <Palette className="w-4 h-4 text-teal-700 dark:text-teal-400" />
             <div>
               <h2 className="text-sm font-bold text-slate-900 dark:text-white">
-                طراحی و سفارشی‌سازی قالب فاکتور، تعداد واحد و تنظیمات چاپ هلو
+                طراحی و سفارشی‌سازی قالب فاکتور، تعداد واحد و تنظیمات چاپ بیلیون
               </h2>
               <p className="text-[11px] text-slate-500 mt-0.5">
                 تمامی تغییرات به‌صورت زنده در فرم صدور فاکتور، چاپ رسمی و متن ارسالی واتساپ و تلگرام اعمال می‌شوند.
@@ -313,7 +313,7 @@ export const SettingsView: React.FC<{ initialIntent?: string; clearIntent?: () =
         {/* Multi-Unit Mode Selector */}
         <div className="space-y-2">
           <label className="block font-semibold text-slate-700 dark:text-slate-300">
-            تعداد واحدهای فعال در فرم و چاپ فاکتور نخ (چندواحدی هلو)
+            تعداد واحدهای فعال در فرم و چاپ فاکتور نخ (چندواحدی بیلیون)
           </label>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             {(Object.keys(UNIT_MODE_LABELS) as InvoiceUnitMode[]).map((mode) => {
@@ -493,7 +493,7 @@ export const SettingsView: React.FC<{ initialIntent?: string; clearIntent?: () =
         className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 space-y-5 text-xs"
       >
         <h2 className="text-sm font-bold text-slate-900 dark:text-white border-b border-slate-200 dark:border-slate-800 pb-3">
-          مشخصات حقوقی شرکت و تنظیمات پایه هلو
+          مشخصات حقوقی شرکت و تنظیمات پایه بیلیون
         </h2>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
@@ -780,7 +780,7 @@ export const SettingsView: React.FC<{ initialIntent?: string; clearIntent?: () =
               type="button"
               onClick={() =>
                 exportToCsv(
-                  `holoo-audit-log-${profile.fiscalYear}.csv`,
+                  `billion-audit-log-${profile.fiscalYear}.csv`,
                   ['تاریخ و ساعت', 'اپراتور', 'نقش', 'بخش', 'عملیات', 'شرح جزئیات'],
                   filteredAuditLogs.map((l) => [
                     l.timestamp,
