@@ -34,6 +34,7 @@ import {
 import { createHolooSeedData } from '../data/holooSeed';
 import { getOrCreateLocalDeviceIdentity, loadLocalAccountingSnapshot, LocalDeviceIdentity, saveLocalAccountingSnapshot } from '../lib/localAccountingStore';
 import { FxRevaluationRow } from '../lib/enterpriseAccounting';
+import { assertSufficientStock } from '../lib/enterpriseControls';
 import {
   AuditReport,
   buildInvoiceVoucherLines,
@@ -1946,6 +1947,14 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     async (payload: Omit<Invoice, 'id' | 'ownerId' | 'voucherId'>): Promise<Invoice> => {
       const id = generateSafeId('inv');
       let voucherId: string | undefined;
+
+      const isStockOut = ['sale', 'purchase_return', 'waste'].includes(payload.invoiceType);
+      if (isStockOut) {
+        assertSufficientStock(
+          new Map(products.map((product) => [product.id, product.stock])),
+          payload.items.map((item) => ({ productId: item.productId, quantity: item.quantity })),
+        );
+      }
 
       let cogsTotal = 0;
       if (payload.invoiceType !== 'proforma') {
