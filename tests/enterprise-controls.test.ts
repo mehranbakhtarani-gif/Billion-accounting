@@ -11,7 +11,7 @@ import {
   validateAtomicFinancialPlan,
   validateSyncOperation,
 } from '../src/lib/enterpriseControls.ts';
-import { computeReceivablesAging, computePayablesAging } from '../src/lib/enterpriseAccounting.ts';
+import { computeReceivablesAging, computePayablesAging, computeFxRevaluationReport } from '../src/lib/enterpriseAccounting.ts';
 import { calculateMonthlyDepreciation } from '../src/lib/accountingEngine.ts';
 
 test('fiscal period rejects closed periods and overlapping ranges', () => {
@@ -114,6 +114,93 @@ test('receivables aging uses due dates and actual outstanding invoice balances',
   assert.equal(rows[0].bucket0to30, 100);
   assert.equal(rows[0].bucket31to60, 200);
   assert.equal(rows[0].bucketOver90, 0);
+});
+test('FX revaluation uses permanent vouchers only and computes the current-rate difference', () => {
+  const voucher = (id: string, status: 'draft' | 'permanent', debit: number) => ({
+    id, ownerId: 'o1', voucherNumber: 1, date: '1405/08/01', description: 'ارزی', voucherType: 'general', status,
+    totalDebit: debit, totalCredit: debit, currencyCode: 'USD', exchangeRate: 500000,
+    lines: [{ accountCode: '10201', accountTitle: 'بانک ارزی', description: 'واریز', debit, credit: 0, foreignDebit: 10, foreignCredit: 0 }],
+  });
+  const rows = computeFxRevaluationReport(
+    [voucher('draft', 'draft', 5000000), voucher('posted', 'permanent', 5000000)] as any,
+    [], [{ id: 'usd', ownerId: 'o1', code: 'USD', name: 'دلار', symbol: '
+  const asset = { id: 'a1', ownerId: 'o1', assetCode: 'FA-1', title: 'تجهیزات', purchaseDate: '2026/01/01', purchaseCost: 1200, salvageValue: 120, usefulLifeYears: 5, accumulatedDepreciation: 1070 };
+  assert.equal(calculateMonthlyDepreciation(asset as any), 10);
+  assert.equal(calculateMonthlyDepreciation({ ...asset, accumulatedDepreciation: 1080 } as any), 0);
+  assert.equal(calculateMonthlyDepreciation({ ...asset, salvageValue: 1300 } as any), 0);
+});
+test('payables aging uses supplier balances, purchase invoices and due dates', () => {
+  const supplier = { id: 's1', ownerId: 'o1', code: 'S1', name: 'تأمین‌کننده نمونه', partyType: 'supplier', creditLimit: 0, openingBalance: 0, accountCode: '2101' };
+  const purchase = { id: 'buy1', ownerId: 'o1', invoiceNumber: 'P-1', invoiceType: 'purchase', date: '1405/07/15', dueDate: '1405/07/15',
+    partyId: 's1', partyName: 'تأمین‌کننده نمونه', warehouse: 'انبار', subtotal: 900, discount: 0, vatAmount: 0, grandTotal: 900,
+    paidCash: 700, paidBank: 0, paidCheque: 0, creditAmount: 200, status: 'issued', items: [] };
+  const rows = computePayablesAging([supplier] as any, [purchase] as any, new Map([['s1', -200]]), '1405/09/01');
+  assert.equal(rows[0].totalPayable, 200);
+  assert.equal(rows[0].bucket31to60, 200);
+  assert.equal(rows[0].bucketOver90, 0);
+});
+test('atomic financial plan rejects unbalanced and duplicate side effects', () => {
+  const valid = { operationId: 'op', idempotencyKey: 'idem', debitTotal: 100, creditTotal: 100,
+    stockMovements: [{ id: 'move-1', productId: 'p1', quantityDelta: -2 }], documentIds: ['invoice-1'] };
+  assert.doesNotThrow(() => validateAtomicFinancialPlan(valid));
+  assert.throws(() => validateAtomicFinancialPlan({ ...valid, creditTotal: 99 }), /تراز نیست/);
+  assert.throws(() => validateAtomicFinancialPlan({ ...valid, documentIds: ['move-1'] }), /تکراری/);
+});
+
+test('bank reconciliation leaves ambiguous matches for manual review', () => {
+  const daysBetween = (a: string, b: string) =>
+    Math.round((Date.parse(b) - Date.parse(a)) / 86400000);
+  const result = reconcileBankLines(
+    [{ id: 's1', accountId: 'bank1', date: '2026-11-20', amount: 500 }],
+    [
+      { id: 'l1', accountId: 'bank1', date: '2026-11-20', amount: 500 },
+      { id: 'l2', accountId: 'bank1', date: '2026-11-21', amount: 500 },
+    ],
+    2, daysBetween,
+  );
+  assert.deepEqual(result.ambiguousStatementIds, ['s1']);
+  assert.equal(result.matches.length, 0);
+  assert.deepEqual(result.unmatchedLedgerIds, ['l1', 'l2']);
+});
+
+test('bank reconciliation never reuses a ledger line and prefers an exact reference', () => {
+  const daysBetween = (a: string, b: string) => Math.round((Date.parse(b) - Date.parse(a)) / 86400000);
+  const referenced = reconcileBankLines(
+    [{ id: 's-ref', accountId: 'bank', date: '2026-11-30', amount: 750, reference: 'trace-9' }],
+    [{ id: 'l-ref', accountId: 'bank', date: '2026-11-20', amount: 750, reference: 'trace-9' }],
+    1, daysBetween,
+  );
+  assert.deepEqual(referenced.matches, [{ statementLineId: 's-ref', ledgerLineId: 'l-ref', matchType: 'reference' }]);
+  const duplicateStatement = reconcileBankLines(
+    [{ id: 's1', accountId: 'bank', date: '2026-11-20', amount: 500 }, { id: 's2', accountId: 'bank', date: '2026-11-20', amount: 500 }],
+    [{ id: 'l1', accountId: 'bank', date: '2026-11-20', amount: 500 }],
+    0, daysBetween,
+  );
+  assert.equal(duplicateStatement.matches.length, 1);
+  assert.equal(duplicateStatement.unmatchedStatementIds.length, 1);
+  assert.deepEqual(duplicateStatement.unmatchedLedgerIds, []);
+});
+test('treasury audit detects missing, duplicate and mismatched vouchers', () => {
+  const issues = auditTreasuryVoucherLinks(
+    [{ id: 't1', amount: 100 }, { id: 't2', amount: 200 }, { id: 't3', amount: 300 }],
+    [
+      { id: 'v2a', referenceId: 't2', totalDebit: 200, totalCredit: 200 },
+      { id: 'v2b', referenceId: 't2', totalDebit: 200, totalCredit: 200 },
+      { id: 'v3', referenceId: 't3', totalDebit: 300, totalCredit: 299 },
+    ],
+  );
+  assert.deepEqual(issues, [
+    { transactionId: 't1', kind: 'missing-voucher' },
+    { transactionId: 't2', kind: 'duplicate-voucher' },
+    { transactionId: 't3', kind: 'amount-mismatch' },
+  ]);
+});
+, isBase: false, decimalPlaces: 2, defaultRateToIrr: 600000, active: true }] as any,
+    '1405/09/01',
+  );
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].netForeignBalance, 10);
+  assert.equal(rows[0].revaluationDiffIrr, 1000000);
 });
 test('straight-line depreciation never exceeds depreciable base or salvage value', () => {
   const asset = { id: 'a1', ownerId: 'o1', assetCode: 'FA-1', title: 'تجهیزات', purchaseDate: '2026/01/01', purchaseCost: 1200, salvageValue: 120, usefulLifeYears: 5, accumulatedDepreciation: 1070 };
