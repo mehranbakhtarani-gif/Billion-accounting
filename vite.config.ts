@@ -5,8 +5,11 @@ import path from 'path';
 import { defineConfig } from 'vite';
 import { VitePWA } from 'vite-plugin-pwa';
 
+const appBase = process.env.VITE_BASE_PATH || './';
+
 export default defineConfig(() => {
   return {
+    base: appBase,
     plugins: [
       react(),
       tailwindcss(),
@@ -14,7 +17,7 @@ export default defineConfig(() => {
         registerType: 'autoUpdate',
         includeAssets: ['icon.svg', 'apple-touch-icon.png', 'pwa-192x192.png', 'pwa-512x512.png', 'pwa-maskable-512x512.png'],
         manifest: {
-          id: '/',
+          id: appBase,
           name: 'هلو شرکتی Apex — سامانه جامع حسابداری',
           short_name: 'هلو Apex',
           description: 'سامانه جامع حسابداری شرکتی با هسته هلو Apex، داشبورد مدیریت مالی و گزارش‌گیری پیشرفته',
@@ -24,23 +27,23 @@ export default defineConfig(() => {
           orientation: 'any',
           dir: 'rtl',
           lang: 'fa',
-          start_url: '/',
-          scope: '/',
+          start_url: appBase,
+          scope: appBase,
           icons: [
             {
-              src: '/pwa-192x192.png',
+              src: `${appBase}pwa-192x192.png`,
               sizes: '192x192',
               type: 'image/png',
               purpose: 'any',
             },
             {
-              src: '/pwa-512x512.png',
+              src: `${appBase}pwa-512x512.png`,
               sizes: '512x512',
               type: 'image/png',
               purpose: 'any',
             },
             {
-              src: '/pwa-maskable-512x512.png',
+              src: `${appBase}pwa-maskable-512x512.png`,
               sizes: '512x512',
               type: 'image/png',
               purpose: 'maskable',
@@ -50,19 +53,19 @@ export default defineConfig(() => {
             {
               name: 'فاکتور فروش (F2)',
               short_name: 'فروش',
-              url: '/?view=invoices&action=new-sale',
+              url: `${appBase}?view=invoices&action=new-sale`,
               icons: [{ src: '/pwa-192x192.png', sizes: '192x192', type: 'image/png' }],
             },
             {
               name: 'ثبت سند حسابداری (F3)',
               short_name: 'سند جدید',
-              url: '/?view=vouchers&action=new',
+              url: `${appBase}?view=vouchers&action=new`,
               icons: [{ src: '/pwa-192x192.png', sizes: '192x192', type: 'image/png' }],
             },
             {
               name: 'خزانه‌داری و چک (F7)',
               short_name: 'چک‌ها',
-              url: '/?view=treasury',
+              url: `${appBase}?view=treasury`,
               icons: [{ src: '/pwa-192x192.png', sizes: '192x192', type: 'image/png' }],
             },
           ],

@@ -49,6 +49,7 @@ import {
   VoucherType,
 } from '../types/accounting';
 import { createHolooSeedData } from '../data/holooSeed';
+import { loadLocalAccountingSnapshot, saveLocalAccountingSnapshot } from '../lib/localAccountingStore';
 import { FxRevaluationRow } from '../lib/enterpriseAccounting';
 import {
   AuditReport,
@@ -270,6 +271,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
   const [user, setUser] = useState<User | null>(null);
   const [authReady, setAuthReady] = useState(false);
+  const [localDataReady, setLocalDataReady] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
 
@@ -308,13 +310,66 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   }, []);
 
   useEffect(() => {
-    testFirestoreConnection();
-    const unsub = onAuthStateChanged(auth, (firebaseUser) => {
-      setUser(firebaseUser);
-      setAuthReady(true);
-    });
-    return () => unsub();
+    let cancelled = false;
+    let unsubscribe: (() => void) | undefined;
+
+    loadLocalAccountingSnapshot()
+      .then((saved) => {
+        if (cancelled) return;
+        if (saved) {
+          if (saved.profile) setProfile(saved.profile as CompanyProfile);
+          if (Array.isArray(saved.accounts)) setAccounts(saved.accounts as Account[]);
+          if (Array.isArray(saved.parties)) setParties(saved.parties as Party[]);
+          if (Array.isArray(saved.products)) setProducts(saved.products as Product[]);
+          if (Array.isArray(saved.vouchers)) setVouchers(saved.vouchers as Voucher[]);
+          if (Array.isArray(saved.invoices)) setInvoices(saved.invoices as Invoice[]);
+          if (Array.isArray(saved.cheques)) setCheques(saved.cheques as Cheque[]);
+          if (Array.isArray(saved.employees)) setEmployees(saved.employees as Employee[]);
+          if (Array.isArray(saved.assets)) setAssets(saved.assets as FixedAsset[]);
+          if (Array.isArray(saved.costCenters)) setCostCenters(saved.costCenters as CostCenter[]);
+          if (Array.isArray(saved.currencies)) setCurrencies(saved.currencies as CurrencyDefinition[]);
+          if (Array.isArray(saved.exchangeRates)) setExchangeRates(saved.exchangeRates as ExchangeRateEntry[]);
+          if (Array.isArray(saved.importDossiers)) setImportDossiers(saved.importDossiers as ImportDossier[]);
+          if (Array.isArray(saved.salesOrders)) setSalesOrders(saved.salesOrders as SalesOrder[]);
+          if (Array.isArray(saved.subcontractJobs)) setSubcontractJobs(saved.subcontractJobs as SubcontractJob[]);
+          if (Array.isArray(saved.rbacOperators) && saved.rbacOperators.length) setRbacOperators(saved.rbacOperators as RbacOperator[]);
+          if (typeof saved.activeOperatorId === 'string') setActiveOperatorId(saved.activeOperatorId);
+          if (Array.isArray(saved.auditLogs)) setAuditLogs(saved.auditLogs as AuditActivityLog[]);
+        }
+      })
+      .catch((error) => {
+        console.error('Local accounting database could not be loaded:', error);
+      })
+      .finally(() => {
+        if (cancelled) return;
+        setLocalDataReady(true);
+        testFirestoreConnection();
+        unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
+          setUser(firebaseUser);
+          setAuthReady(true);
+        });
+      });
+
+    return () => {
+      cancelled = true;
+      unsubscribe?.();
+    };
   }, []);
+
+  useEffect(() => {
+    if (!localDataReady) return;
+    void saveLocalAccountingSnapshot({
+      profile, accounts, parties, products, vouchers, invoices, cheques, employees,
+      assets, costCenters, currencies, exchangeRates, importDossiers, salesOrders,
+      subcontractJobs, rbacOperators, activeOperatorId, auditLogs,
+    }).catch((error) => {
+      console.error('Local accounting database save failed:', error);
+    });
+  }, [
+    localDataReady, profile, accounts, parties, products, vouchers, invoices, cheques,
+    employees, assets, costCenters, currencies, exchangeRates, importDossiers,
+    salesOrders, subcontractJobs, rbacOperators, activeOperatorId, auditLogs,
+  ]);
 
   const ensureCloudSeed = useCallback(
     async (firebaseUser: User) => {
@@ -416,27 +471,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
   useEffect(() => {
     if (!authReady) return;
-    if (!user) {
-      const demo = createHolooSeedData(DEMO_OWNER);
-      setProfile(DEFAULT_PROFILE);
-      setAccounts(demo.accounts);
-      setParties(demo.parties);
-      setProducts(demo.products);
-      setVouchers(demo.vouchers);
-      setInvoices(demo.invoices);
-      setCheques(demo.cheques);
-      setEmployees(demo.employees);
-      setAssets(demo.assets);
-      setCostCenters(demo.costCenters);
-      setCurrencies(demo.currencies);
-      setExchangeRates(demo.exchangeRates);
-      setImportDossiers(demo.importDossiers);
-      setSalesOrders(demo.salesOrders);
-      setSubcontractJobs(demo.subcontractJobs);
-      setRbacOperators(demo.rbacOperators);
-      setAuditLogs(demo.auditLogs);
-      return;
-    }
+    if (!user) return;
 
     let cancelled = false;
     const unsubs: (() => void)[] = [];

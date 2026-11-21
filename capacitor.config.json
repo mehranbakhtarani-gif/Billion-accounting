@@ -1,0 +1,8 @@
+{
+  "appId": "ir.atlasris.holooapex",
+  "appName": "هلو شرکتی Apex",
+  "webDir": "dist",
+  "android": {
+    "allowMixedContent": false
+  }
+}

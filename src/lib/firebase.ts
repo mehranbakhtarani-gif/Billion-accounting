@@ -6,7 +6,7 @@ import {
   getDocFromServer,
   getFirestore,
   initializeFirestore,
-  memoryLocalCache,
+  persistentLocalCache,
   setLogLevel,
 } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
@@ -25,7 +25,7 @@ function createResilientFirestore(): Firestore {
       {
         experimentalAutoDetectLongPolling: true,
         ignoreUndefinedProperties: true,
-        localCache: memoryLocalCache(),
+        localCache: persistentLocalCache(),
       },
       dbId
     );
