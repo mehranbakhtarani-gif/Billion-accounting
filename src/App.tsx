@@ -535,7 +535,7 @@ export default function App() {
   const breadcrumbText = getBreadcrumbLabel(activeModule, activeSubKey);
 
   return (
-    <div className="min-h-screen flex bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100">
+    <div className="min-h-screen w-full max-w-full min-w-0 flex overflow-x-hidden bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100">
       {/* Desktop Right-Hand RTL Sidebar */}
       <aside className="hidden lg:flex lg:flex-col w-68 shrink-0 bg-white dark:bg-slate-900 border-l border-slate-200 dark:border-slate-800 sticky top-0 h-screen no-print">
         <div className="h-14 px-4 flex items-center justify-between border-b border-slate-200 dark:border-slate-800">
@@ -880,7 +880,7 @@ export default function App() {
         </header>
 
         {/* Active Module Viewport */}
-        <main className="flex-1 p-4 lg:p-6 max-w-[1440px] w-full mx-auto">
+        <main className="module-viewport flex-1 min-w-0 p-3 sm:p-4 lg:p-6 max-w-[1440px] w-full mx-auto">
           {activeModule === 'dashboard' && <DashboardView onNavigate={navigate} />}
           {activeModule === 'invoices' && (
             <InvoicesView

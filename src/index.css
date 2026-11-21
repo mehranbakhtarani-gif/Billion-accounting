@@ -61,3 +61,63 @@
     padding: 0 !important;
   }
 }
+
+
+/* Responsive accounting workspace: prevent wide reports/forms from stretching the app shell. */
+.module-viewport {
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+  overflow-x: clip;
+}
+
+.module-viewport > * {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.module-viewport .grid,
+.module-viewport .flex {
+  min-width: 0;
+}
+
+.module-viewport input,
+.module-viewport select,
+.module-viewport textarea {
+  max-width: 100%;
+  min-width: 0;
+}
+
+@media (max-width: 767px) {
+  .module-viewport {
+    padding-inline: 0.75rem;
+  }
+
+  .module-viewport table {
+    display: block;
+    width: 100%;
+    max-width: 100%;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .module-viewport table th,
+  .module-viewport table td {
+    white-space: nowrap;
+  }
+
+  .module-viewport .overflow-x-auto {
+    max-width: 100%;
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .module-viewport .grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .module-viewport [class*="min-w-"] {
+    min-width: 0;
+  }
+}

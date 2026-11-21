@@ -408,7 +408,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ initialIntent, clearIn
     Math.abs(auditReport.reconciliation.glPurchaseVat - auditReport.reconciliation.invPurchaseVat) < 1;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 min-w-0 w-full max-w-full">
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 no-print">
         <div>
           <h1 className="text-xl font-bold text-slate-900 dark:text-white">
