@@ -321,9 +321,10 @@ export function computeReceivablesAging(
 
     for (const inv of salesInvs) {
       if (remaining <= 0) break;
-      const portion = Math.min(remaining, Math.max(inv.creditAmount, inv.grandTotal));
+      // Use the actual outstanding balance, not the original invoice gross amount.
+      const portion = Math.min(remaining, Math.max(0, inv.creditAmount));
       if (portion <= 0) continue;
-      const age = Math.max(0, diffShamsiDays(inv.date, todayShamsi) ?? 0);
+      const age = Math.max(0, diffShamsiDays(inv.dueDate || inv.date, todayShamsi) ?? 0);
       if (age > maxDays) {
         maxDays = age;
         oldestDate = inv.date;
