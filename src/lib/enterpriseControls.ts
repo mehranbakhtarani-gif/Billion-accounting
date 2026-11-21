@@ -115,6 +115,31 @@ export interface FifoResult {
   weightedUnitCost: number;
 }
 
+export interface StockIssueLine {
+  productId: string;
+  quantity: number;
+}
+
+/** Rejects an entire stock issue before any side effect if aggregate stock is insufficient. */
+export function assertSufficientStock(
+  availableByProduct: ReadonlyMap<string, number>,
+  lines: StockIssueLine[],
+): void {
+  const requiredByProduct = new Map<string, number>();
+  for (const line of lines) {
+    if (!line.productId.trim() || !Number.isFinite(line.quantity) || line.quantity <= 0) {
+      throw new Error('ردیف خروج انبار دارای کالا یا مقدار نامعتبر است.');
+    }
+    requiredByProduct.set(line.productId, (requiredByProduct.get(line.productId) ?? 0) + line.quantity);
+  }
+  for (const [productId, required] of requiredByProduct) {
+    const available = availableByProduct.get(productId);
+    if (!Number.isFinite(available) || (available as number) + 1e-9 < required) {
+      throw new Error(`موجودی کالا برای خروج کافی نیست. کالا: ${productId}، موجود: ${Number(available) || 0}، موردنیاز: ${required}`);
+    }
+  }
+}
+
 export function allocateStockFIFO(
   lots: StockLot[],
   requestedQuantity: number,
