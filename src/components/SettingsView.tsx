@@ -5,7 +5,6 @@ import {
   CloudOff,
   Download,
   HardDrive,
-  LogOut,
   Palette,
   RotateCcw,
   Save,
@@ -62,7 +61,6 @@ export const SettingsView: React.FC<{ initialIntent?: string; clearIntent?: () =
     bootstrapCloud,
     joinCloud,
     createDeviceInvite,
-    logout,
     updateCompanyProfile,
     exportBackupJson,
     importBackupJson,
@@ -240,10 +238,6 @@ export const SettingsView: React.FC<{ initialIntent?: string; clearIntent?: () =
               <button onClick={inviteSupabaseDevice} className="inline-flex items-center gap-2 px-4 py-2 text-xs font-semibold text-teal-700 border border-teal-700 rounded-lg hover:bg-teal-50">
                 <UserPlus className="w-4 h-4" />
                 <span>دعوت دستگاه</span>
-              </button>
-              <button onClick={logout} className="inline-flex items-center gap-2 px-4 py-2 text-xs font-medium rounded-lg border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800">
-                <LogOut className="w-4 h-4" />
-                <span>خروج از شرکت</span>
               </button>
             </div>
           ) : (
