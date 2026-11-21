@@ -145,7 +145,7 @@ Do not merge or deploy unfinished enterprise controls to the production Pages br
 - Added owner-scoped Firestore rules for the device registry. Device IDs are explicitly metadata and are not treated as credentials.
 - Added automated tests and a GitHub Actions workflow. The base foundation commit `4abaf84` passed type-check, domain tests, and Vite build. Subsequent context/rules integration commits are awaiting their own workflow completion.
 
-### Still outstanding in Stage 1
+### Validation update — 2026-11-22\n\n- GitHub Actions completed successfully for the current PR head `8164ea668134e0b5b79a8b5ab0d2e88f426f566c` (type-check, enterprise domain tests, and production build).\n- This green CI validates compilation and the current pure domain tests; it does not validate Firestore Rules in an emulator, shared membership, real multi-device replay, or accounting concurrency.\n- A dedicated design gate for passwordless company membership and three-device enrollment is documented in `docs/SECURE_COMPANY_ENROLLMENT.md`. The repository currently has no Firebase Functions deployment scaffold, so trusted backend enrollment is not yet live.\n\n### Still outstanding in Stage 1
 
 - A device registry scoped to one Firebase UID does not yet allow separate Mehran/Ehsan identities to share one company. That requires a secure company-membership and device-enrollment mechanism, preferably a trusted backend or callable function issuing one-time enrollment grants.
 - The outbox is durable locally but is not yet connected to every CRUD write or a cloud replay worker. No claim of live three-device synchronization is made at this point.
