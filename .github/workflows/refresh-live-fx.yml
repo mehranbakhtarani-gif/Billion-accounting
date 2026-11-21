@@ -1,0 +1,80 @@
+name: Refresh live FX rates
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: refresh-live-fx
+  cancel-in-progress: true
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Fetch Tehran market rates
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const url = 'https://call1.tgju.org/ajax.json';
+          const normalize = (v) => {
+            const p = '۰۱۲۳۴۵۶۷۸۹', a = '٠١٢٣٤٥٦٧٨٩';
+            const s = String(v ?? '').replace(/[۰-۹٠-٩]/g, ch => {
+              const i = p.indexOf(ch); return String(i >= 0 ? i : a.indexOf(ch));
+            }).replace(/[^0-9.-]/g, '');
+            const n = Number(s); return Number.isFinite(n) ? n : 0;
+          };
+          (async () => {
+            const response = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0 HolooERP/1.0' }, signal: AbortSignal.timeout(15000) });
+            if (!response.ok) throw new Error('TGJU HTTP ' + response.status);
+            const payload = await response.json();
+            const current = payload?.current || {};
+            const specs = [
+              { code: 'USD', key: 'price_dollar_rl', name: 'دلار آمریکا', symbol: '$' },
+              { code: 'EUR', key: 'price_eur', name: 'یورو اروپا', symbol: '€' },
+              { code: 'AED', key: 'price_aed', name: 'درهم امارات', symbol: 'د.إ' },
+              { code: 'CNY', key: 'price_cny', name: 'یوان چین', symbol: '¥' }
+            ];
+            const items = specs.flatMap(s => {
+              const row = current[s.key];
+              const priceIrr = Math.round(normalize(row?.p));
+              if (!row || priceIrr <= 0) return [];
+              const dt = String(row.dt || '').toLowerCase();
+              const direction = dt === 'high' ? 'up' : dt === 'low' ? 'down' : 'flat';
+              const change = Math.round(normalize(row.d));
+              const percent = Math.abs(normalize(row.dp));
+              return [{
+                ...s, priceIrr,
+                highIrr: Math.round(normalize(row.h)) || undefined,
+                lowIrr: Math.round(normalize(row.l)) || undefined,
+                changeIrr: direction === 'down' ? -Math.abs(change) : Math.abs(change),
+                changePercent: direction === 'down' ? -percent : percent,
+                direction,
+                updatedTime: String(row.t || row.ts || '')
+              }];
+            });
+            if (!items.length) throw new Error('TGJU returned no valid FX rows; preserving last published data.');
+            fs.mkdirSync('public', { recursive: true });
+            fs.writeFileSync('public/live-fx.json', JSON.stringify({
+              fetchedAt: Date.now(),
+              source: 'بازار آزاد تهران (TGJU)',
+              sourceUrl: 'https://www.tgju.org/',
+              items
+            }, null, 2) + '\n');
+            console.log('Published rates:', items.map(x => x.code).join(', '));
+          })().catch(err => { console.error(err); process.exit(1); });
+          NODE
+      - name: Commit updated rates
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "chore: refresh live FX rates"
+          file_pattern: public/live-fx.json

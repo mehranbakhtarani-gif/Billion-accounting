@@ -43,7 +43,8 @@ export const LiveFxTickerCard: React.FC<{
       if (force) setRefreshing(true);
       else setLoading(true);
       setError(null);
-      const res = await fetch(force ? '/api/live-fx?refresh=1' : '/api/live-fx');
+      const ratesUrl = `${import.meta.env.BASE_URL}live-fx.json?_=${Date.now()}`;
+      const res = await fetch(ratesUrl, { cache: 'no-store' });
       if (!res.ok) throw new Error('دریافت نرخ زنده ناموفق بود.');
       const json = (await res.json()) as LiveFxResponse;
       if (Array.isArray(json.items) && json.items.length > 0) {
