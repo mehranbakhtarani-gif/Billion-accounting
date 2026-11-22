@@ -2,8 +2,9 @@ const DATABASE_NAME = 'holoo-accounting-local';
 const STORE_NAME = 'snapshots';
 const SNAPSHOT_KEY = 'primary-company';
 const OUTBOX_STORE = 'sync_outbox';
+const REVISION_STORE = 'record_revisions';
 const DEVICE_IDENTITY_KEY = 'local-device-identity';
-const DATABASE_VERSION = 2;
+const DATABASE_VERSION = 3;
 
 export type LocalAccountingSnapshot = Record<string, unknown>;
 
@@ -18,6 +19,9 @@ function openDatabase(): Promise<IDBDatabase> {
       const database = request.result;
       if (!database.objectStoreNames.contains(STORE_NAME)) {
         database.createObjectStore(STORE_NAME);
+      }
+      if (!database.objectStoreNames.contains(REVISION_STORE)) {
+        database.createObjectStore(REVISION_STORE, { keyPath: 'key' });
       }
       if (!database.objectStoreNames.contains(OUTBOX_STORE)) {
         const outbox = database.createObjectStore(OUTBOX_STORE, { keyPath: 'idempotencyKey' });
@@ -59,6 +63,55 @@ export async function saveLocalAccountingSnapshot(snapshot: LocalAccountingSnaps
   }
 }
 
+
+export interface LocalRecordRevision {
+  key: string;
+  recordType: string;
+  recordId: string;
+  revision: number;
+}
+
+export async function cacheLocalRecordRevisions(records: LocalRecordRevision[]): Promise<void> {
+  if (!records.length) return;
+  const database = await openDatabase();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const transaction = database.transaction(REVISION_STORE, 'readwrite');
+      const store = transaction.objectStore(REVISION_STORE);
+      records.forEach((record) => store.put(record));
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error ?? new Error('ذخیره نسخه رکوردهای محلی ناموفق بود.'));
+      transaction.onabort = () => reject(transaction.error ?? new Error('ذخیره نسخه رکوردهای محلی لغو شد.'));
+    });
+  } finally {
+    database.close();
+  }
+}
+
+export async function getLocalRecordRevisions(keys: string[]): Promise<Map<string, number>> {
+  if (!keys.length) return new Map();
+  const database = await openDatabase();
+  try {
+    return await new Promise((resolve, reject) => {
+      const transaction = database.transaction(REVISION_STORE, 'readonly');
+      const store = transaction.objectStore(REVISION_STORE);
+      const results = new Map<string, number>();
+      let remaining = keys.length;
+      keys.forEach((key) => {
+        const request = store.get(key);
+        request.onsuccess = () => {
+          const record = request.result as LocalRecordRevision | undefined;
+          if (record) results.set(key, record.revision);
+          remaining -= 1;
+          if (remaining === 0) resolve(results);
+        };
+        request.onerror = () => reject(request.error ?? new Error('خواندن نسخه رکورد محلی ناموفق بود.'));
+      });
+    });
+  } finally {
+    database.close();
+  }
+}
 
 export interface LocalDeviceIdentity {
   deviceId: string;
