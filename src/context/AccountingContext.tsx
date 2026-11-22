@@ -3966,10 +3966,11 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     async (op: Omit<RbacOperator, 'id' | 'ownerId'>) => {
       const fullName = op.fullName.trim();
       if (!fullName) throw new Error('نام اپراتور الزامی است.');
-      if (rbacOperators.some((existing) => existing.email.toLowerCase() === op.email.toLowerCase())) {
+      const email = op.email?.trim().toLowerCase() || undefined;
+      if (email && rbacOperators.some((existing) => (existing.email ?? '').toLowerCase() === email)) {
         throw new Error('این ایمیل قبلاً برای اپراتور دیگری ثبت شده است.');
       }
-      const full: RbacOperator = { ...op, fullName, id: generateSafeId('op'), ownerId };
+      const full: RbacOperator = { ...op, fullName, email, id: generateSafeId('op'), ownerId };
       if (user) {
         try {
           await setDoc(doc(db, 'rbacOperators', full.id), { ...full, createdAt: serverTimestamp(), updatedAt: serverTimestamp() });
@@ -3994,8 +3995,8 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       if (!existing) throw new Error('اپراتور موردنظر یافت نشد.');
       const nextName = patch.fullName === undefined ? existing.fullName : patch.fullName.trim();
       if (!nextName) throw new Error('نام اپراتور نمی‌تواند خالی باشد.');
-      const nextEmail = patch.email === undefined ? existing.email : patch.email.trim().toLowerCase();
-      if (rbacOperators.some((operator) => operator.id !== opId && operator.email.toLowerCase() === nextEmail)) {
+      const nextEmail = patch.email === undefined ? (existing.email ?? '') : patch.email.trim().toLowerCase();
+      if (nextEmail && rbacOperators.some((operator) => operator.id !== opId && (operator.email ?? '').toLowerCase() === nextEmail)) {
         throw new Error('این ایمیل قبلاً برای اپراتور دیگری ثبت شده است.');
       }
       if (user) {
