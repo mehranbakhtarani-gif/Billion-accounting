@@ -188,7 +188,7 @@ export interface InventoryLotMovement {
   lotId: string;
   productId: string;
   warehouse: string;
-  movementType: 'receipt' | 'issue' | 'return' | 'waste' | 'transfer-in' | 'transfer-out' | 'adjustment' | 'reversal';
+  movementType: 'receipt' | 'issue' | 'return' | 'purchase-return' | 'waste' | 'transfer-in' | 'transfer-out' | 'adjustment' | 'reversal';
   quantity: number;
   unitCost: number;
   referenceId: string;
@@ -210,6 +210,8 @@ export interface InvoiceItem {
   bobbinUnit?: string; // بوبین / دوک
   bobbinCount?: number; // Total cones/bobbins
   lotNumber?: string; // شماره لات
+  receivedDate?: string;
+  expiryDate?: string;
   lotAllocations?: InvoiceLotAllocation[];
   receivedLotId?: string;
   unitPrice: number; // Unit price per kg (IRR)
