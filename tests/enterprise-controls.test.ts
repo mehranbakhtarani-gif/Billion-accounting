@@ -402,6 +402,38 @@ test('cheque status transitions reject financially unsupported paths', () => {
   assert.match(getChequeStatusTransitionError('receivable', 'cancelled', 'in_box') || '', /مجاز نیست/);
 });
 
+test('bank reconciliation resolves forced matches independent of statement order', () => {
+  const days = (from: string, to: string) => Math.abs(Date.parse(to) - Date.parse(from)) / 86400000;
+  const statement = [
+    { id: 's-ambiguous', accountId: 'bank', date: '2026-11-20', amount: 500 },
+    { id: 's-forced', accountId: 'bank', date: '2026-11-20', amount: 500, reference: 'unique-ref' },
+  ];
+  const ledger = [
+    { id: 'l-shared', accountId: 'bank', date: '2026-11-20', amount: 500 },
+    { id: 'l-forced', accountId: 'bank', date: '2026-11-20', amount: 500, reference: 'unique-ref' },
+  ];
+  const result = reconcileBankLines(statement, ledger, 0, days);
+  assert.deepEqual(result.matches, [
+    { statementLineId: 's-forced', ledgerLineId: 'l-forced', matchType: 'reference' },
+    { statementLineId: 's-ambiguous', ledgerLineId: 'l-shared', matchType: 'exact-amount-date' },
+  ]);
+  assert.deepEqual(result.ambiguousStatementIds, []);
+});
+
+test('bank reconciliation does not arbitrarily choose between competing singleton rows', () => {
+  const days = (from: string, to: string) => from === to ? 0 : 1;
+  const result = reconcileBankLines(
+    [
+      { id: 's1', accountId: 'bank', date: '2026-11-20', amount: 500 },
+      { id: 's2', accountId: 'bank', date: '2026-11-20', amount: 500 },
+    ],
+    [{ id: 'l1', accountId: 'bank', date: '2026-11-20', amount: 500 }],
+    0, days,
+  );
+  assert.deepEqual(result.matches, []);
+  assert.deepEqual(result.ambiguousStatementIds, ['s1', 's2']);
+});
+
 test('bank reconciliation validates input and prevents duplicate line identities', () => {
   const statement = [{ id: 's1', accountId: '10201', date: '1405/08/01', amount: 100 }];
   const ledger = [{ id: 'l1', accountId: '10201', date: '1405/08/01', amount: 100 }];
