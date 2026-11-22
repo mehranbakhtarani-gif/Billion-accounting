@@ -4723,7 +4723,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       const rawTotalCost = Math.round(rawLotAllocations.reduce((sum, allocation) => sum + allocation.totalCost, 0));
       const serviceFeeTotal = Math.round(payload.returnedWeightKg * job.serviceFeePerKgIrr);
       const finishedTotalCost = rawTotalCost + serviceFeeTotal;
-      const finishedUnitCost = Math.round(finishedTotalCost / payload.returnedWeightKg);
+      const finishedUnitCost = Number((finishedTotalCost / payload.returnedWeightKg).toFixed(6));
       const lines: VoucherLine[] = [
         { accountCode: '10501', accountTitle: 'موجودی انبار نخ و کالای وارداتی', description: `ورود ${payload.returnedWeightKg} کیلوگرم محصول تکمیل‌شده ${job.jobNumber}`, debit: finishedTotalCost, credit: 0 },
         { accountCode: '10501', accountTitle: 'موجودی انبار نخ و کالای وارداتی', description: `مصرف ${job.sentWeightKg} کیلوگرم نخ خام با بهای FIFO (${job.rawProductName})`, debit: 0, credit: rawTotalCost },
