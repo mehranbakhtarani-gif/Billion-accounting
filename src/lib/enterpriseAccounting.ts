@@ -385,7 +385,8 @@ export function computePayablesAging(
     }
     rows.push({
       partyId: party.id, partyCode: party.code, partyName: party.name, phone: party.phone,
-      totalPayable, bucket0to30, bucket31to60, bucket61to90, bucketOver90,
+      totalPayable, ledgerBalance, ledgerDifference: ledgerBalance - totalPayable,
+      bucket0to30, bucket31to60, bucket61to90, bucketOver90,
       oldestInvoiceDate, maxOverdueDays,
     });
   }
