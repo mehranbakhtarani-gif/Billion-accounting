@@ -2598,7 +2598,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             }
             const lotNumber = (payload.invoiceType === 'sale_return' && returnedSourceLot
               ? `${returnedSourceLot.lotNumber}-RET-${lotId.slice(-6)}`
-              : (item.lotNumber || product.lotNumber || `${payload.invoiceNumber}-${lotId.slice(-6)}`)).trim().slice(0, 80);
+              : (item.lotNumber || (payload.invoiceType === 'sale_return' ? product.lotNumber : '') || `${payload.invoiceNumber}-${lotId.slice(-6)}`)).trim().slice(0, 80);
             if (payload.invoiceType === 'purchase' && (
               inventoryLots.some((lot) => lot.productId === product.id && lot.warehouse === payload.warehouse && lot.lotNumber === lotNumber) ||
               lotReceipts.some((lot) => lot.productId === product.id && lot.warehouse === payload.warehouse && lot.lotNumber === lotNumber)
