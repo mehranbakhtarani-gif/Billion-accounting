@@ -10,6 +10,7 @@ import {
   listLocalSyncOutbox,
   loadLocalAccountingSnapshot,
   markLocalSyncOperationFailed,
+  rebaseQueuedLocalSyncOperations,
 } from './localAccountingStore';
 
 export type CloudUser = User;
@@ -221,7 +222,10 @@ async function queueOfflineChanges(
   notifyLocalChanges();
 }
 
-async function changesAlreadyApplied(companyId: string, changes: BatchChange[]): Promise<boolean> {
+async function changesAlreadyApplied(
+  companyId: string,
+  changes: BatchChange[],
+): Promise<Record<string, number> | null> {
   const recordTypes = [...new Set(changes.map((change) => String(change.record_type)))];
   const recordIds = [...new Set(changes.map((change) => String(change.legacy_record_id)))];
   const { data, error } = await supabase
@@ -234,7 +238,7 @@ async function changesAlreadyApplied(companyId: string, changes: BatchChange[]):
   const rows = new Map((data ?? []).map((row: any) => [
     revisionKey(row.record_type, row.legacy_record_id), row,
   ]));
-  return changes.every((change) => {
+  const allApplied = changes.every((change) => {
     const row = rows.get(revisionKey(String(change.record_type), String(change.legacy_record_id))) as any;
     if (change.action === 'delete') return !row;
     if (!row) return false;
@@ -242,6 +246,14 @@ async function changesAlreadyApplied(companyId: string, changes: BatchChange[]):
     const patch = (change.payload ?? {}) as Record<string, unknown>;
     return Object.entries(patch).every(([key, value]) => stableJson(row.payload?.[key]) === stableJson(value));
   });
+  if (!allApplied) return null;
+  return Object.fromEntries(changes
+    .filter((change) => change.action !== 'delete')
+    .map((change) => {
+      const key = revisionKey(String(change.record_type), String(change.legacy_record_id));
+      const row = rows.get(key) as any;
+      return [key, Number(row.revision)];
+    }));
 }
 
 async function applyChanges(
@@ -353,6 +365,13 @@ export async function flushLocalSyncOutbox(): Promise<{ synced: number; failed: 
     const payload = operation.payload as PendingSyncPayload;
     try {
       await applyChanges(payload.changes, { allowQueue: false, expectedRevisions: payload.expectedRevisions });
+      const revisionUpdates = Object.fromEntries(payload.changes
+        .filter((change) => change.action !== 'delete')
+        .map((change) => {
+          const key = revisionKey(String(change.record_type), String(change.legacy_record_id));
+          return [key, payload.expectedRevisions[key] + 1];
+        }));
+      await rebaseQueuedLocalSyncOperations(companyId, revisionUpdates);
       await acknowledgeLocalSyncOperation(operation.idempotencyKey);
       synced += 1;
       notifyLocalChanges();
@@ -361,7 +380,13 @@ export async function flushLocalSyncOutbox(): Promise<{ synced: number; failed: 
       const message = error instanceof Error ? error.message : String(error);
       if (message.includes('تغییر کرده است')) {
         try {
-          if (await changesAlreadyApplied(companyId, payload.changes)) {
+          const appliedRevisions = await changesAlreadyApplied(companyId, payload.changes);
+          if (appliedRevisions) {
+            await cacheLocalRecordRevisions(Object.entries(appliedRevisions).map(([key, revision]) => {
+              const [recordType, recordId] = key.split('\\u0000');
+              return { key, recordType, recordId, revision };
+            }));
+            await rebaseQueuedLocalSyncOperations(companyId, appliedRevisions);
             await acknowledgeLocalSyncOperation(operation.idempotencyKey);
             synced += 1;
             notifyLocalChanges();
