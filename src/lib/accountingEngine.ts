@@ -265,7 +265,7 @@ export function computePartyLedger(
 ): LedgerEntry[] {
   const entries: LedgerEntry[] = [];
   let running = 0;
-  const sorted = [...vouchers].sort((a, b) => a.voucherNumber - b.voucherNumber);
+  const sorted = vouchers.filter((voucher) => voucher.status === 'permanent').sort((a, b) => a.voucherNumber - b.voucherNumber);
   for (const v of sorted) {
     if (toDate && v.date > toDate) continue;
     for (const line of v.lines) {
