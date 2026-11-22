@@ -34,7 +34,7 @@ import {
 import { createHolooSeedData } from '../data/holooSeed';
 import { getOrCreateLocalDeviceIdentity, loadLocalAccountingSnapshot, LocalDeviceIdentity, saveLocalAccountingSnapshot } from '../lib/localAccountingStore';
 import { FxRevaluationRow } from '../lib/enterpriseAccounting';
-import { assertSufficientStock, getChequeStatusTransitionError, validateJournalEntryPayload, validateTreasuryOperationPayload, validateTreasuryAccountSelection, validateTreasuryTransferAccounts, validateChequeDateRange, validatePartyTreasuryAccount, validateJalaliDate, validateImportLandedCostPayload, aggregateStockReservations } from '../lib/enterpriseControls';
+import { assertSufficientStock, getChequeStatusTransitionError, validateJournalEntryPayload, validateTreasuryOperationPayload, validateTreasuryAccountSelection, validateTreasuryTransferAccounts, validateChequeDateRange, validatePartyTreasuryAccount, validateJalaliDate, validateImportLandedCostPayload, aggregateStockReservations, validateSalesOrderDispatchQuantities } from '../lib/enterpriseControls';
 import {
   AuditReport,
   buildInvoiceVoucherLines,
@@ -3661,13 +3661,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       if (order.status === 'dispatched') throw new Error('این سفارش قبلاً حواله خروج دریافت کرده است.');
       if (!payload.dispatchDate.trim() || !payload.driverName.trim() || !payload.plateNumber.trim()) throw new Error('تاریخ حواله، نام راننده و شماره پلاک الزامی است.');
       if (!payload.items.length) throw new Error('برای صدور حواله، حداقل یک ردیف کالا لازم است.');
-      const requestedLines = payload.items.map((item) => {
-        const orderLine = order.items.find((candidate) => candidate.productId === item.productId);
-        if (!orderLine) throw new Error(`کالای ${item.productName} در سفارش اصلی وجود ندارد.`);
-        const quantity = item.actualWeighedKg > 0 ? item.actualWeighedKg : item.orderedWeightKg;
-        if (!Number.isFinite(quantity) || quantity <= 0) throw new Error(`وزن حواله کالای ${item.productName} معتبر نیست.`);
-        return { productId: item.productId, quantity };
-      });
+      const requestedLines = validateSalesOrderDispatchQuantities(order.items, payload.items);
       const reservedByOtherOrders = new Map<string, number>();
       for (const other of salesOrders) {
         if (other.id === orderId || other.status !== 'dispatched') continue;
