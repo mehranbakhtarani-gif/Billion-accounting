@@ -70,6 +70,7 @@ interface AccountingContextValue {
   inventoryLots: InventoryLot[];
   inventoryLotMovements: InventoryLotMovement[];
   createOpeningInventoryLot: (payload: { productId: string; lotNumber: string; quantity: number; unitCost: number; receivedDate: string; expiryDate?: string }) => Promise<void>;
+  reconcileProductLotsToStock: (productId: string) => Promise<void>;
   vouchers: Voucher[];
   invoices: Invoice[];
   cheques: Cheque[];
@@ -1642,6 +1643,77 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     setInventoryLotMovements((prev) => [...prev, movement]);
     showToast('بچ افتتاحیه ثبت شد؛ بهای آن برآوردی است و به‌عنوان خرید تاریخی ثبت نشده است.');
   }, [products, inventoryLots, ownerId, user, showToast]);
+
+  const reconcileProductLotsToStock = useCallback(async (productId: string) => {
+    const product = products.find((item) => item.id === productId);
+    if (!product) throw new Error('کالا برای تطبیق مانده بچ یافت نشد.');
+    const ledgerIssues = reconcileInventoryLotLedger(inventoryLots as any, inventoryLotMovements);
+    if (ledgerIssues.length) throw new Error('ابتدا مغایرت دفتر گردش بچ را رفع کنید؛ تطبیق خودکار مجاز نیست.');
+    const currentLots = inventoryLots.filter((lot) => lot.productId === productId && lot.warehouse === product.warehouse);
+    const lotBalance = currentLots.reduce((sum, lot) => sum + lot.quantityRemaining, 0);
+    const difference = Number((product.stock - lotBalance).toFixed(4));
+    if (Math.abs(difference) <= 0.01) {
+      showToast('مانده بچ‌ها با موجودی کالا برابر است.');
+      return;
+    }
+    const date = new Date().toISOString().slice(0, 10);
+    const updatedLots = new Map<string, InventoryLot>();
+    const movements: InventoryLotMovement[] = [];
+    let remaining = Math.abs(difference);
+    if (difference > 0) {
+      const lotId = generateSafeId('lot');
+      const lot: InventoryLot = {
+        id: lotId, ownerId, productId, warehouse: product.warehouse,
+        lotNumber: `ADJ-${product.sku}-${lotId.slice(-6)}`,
+        receivedDate: date, quantityReceived: difference, quantityRemaining: difference,
+        unitCost: product.buyPrice, costBasis: currentLots.length ? 'estimated-adjustment' : 'estimated-opening',
+        createdAt: serverTimestamp(),
+      };
+      updatedLots.set(lot.id, lot);
+      movements.push({
+        id: generateSafeId('lotmove'), ownerId, lotId, productId, warehouse: product.warehouse,
+        movementType: 'adjustment', quantity: difference, unitCost: product.buyPrice,
+        referenceId: 'stock-reconciliation:' + productId, referenceNumber: 'تطبیق موجودی',
+        date, notes: 'افزایش مانده بچ برای تطبیق با موجودی کالا؛ بهای واحد برآوردی است.',
+      });
+    } else {
+      const orderedLots = currentLots.slice().sort((a, b) => a.receivedDate.localeCompare(b.receivedDate) || a.id.localeCompare(b.id));
+      for (const lot of orderedLots) {
+        if (remaining <= 0.0001) break;
+        const take = Math.min(remaining, lot.quantityRemaining);
+        if (take <= 0) continue;
+        updatedLots.set(lot.id, { ...lot, quantityRemaining: Number((lot.quantityRemaining - take).toFixed(4)) });
+        movements.push({
+          id: generateSafeId('lotmove'), ownerId, lotId: lot.id, productId, warehouse: lot.warehouse,
+          movementType: 'adjustment', quantity: -take, unitCost: lot.unitCost,
+          referenceId: 'stock-reconciliation:' + productId, referenceNumber: 'تطبیق موجودی',
+          date, notes: 'کاهش مانده بچ برای تطبیق با موجودی شمارش‌شده.',
+        });
+        remaining = Number((remaining - take).toFixed(4));
+      }
+      if (remaining > 0.01) throw new Error('مقدار کاهش از مانده تمام بچ‌های ثبت‌شده بیشتر است؛ عملیات متوقف شد.');
+    }
+    if (user) {
+      const batch = writeBatch(db);
+      updatedLots.forEach((lot) => {
+        if (currentLots.some((current) => current.id === lot.id)) {
+          batch.update(doc(db, 'inventoryLots', lot.id), { quantityRemaining: lot.quantityRemaining, updatedAt: serverTimestamp() });
+        } else {
+          batch.set(doc(db, 'inventoryLots', lot.id), lot);
+        }
+      });
+      movements.forEach((movement) => batch.set(doc(db, 'inventoryLotMovements', movement.id), movement));
+      await batch.commit();
+    }
+    setInventoryLots((prev) => [
+      ...prev.filter((lot) => !updatedLots.has(lot.id)),
+      ...[...updatedLots.values()],
+    ]);
+    setInventoryLotMovements((prev) => [...prev, ...movements]);
+    showToast(difference > 0
+      ? 'مانده بچ با یک بچ تعدیل افزایشی و بهای برآوردی تطبیق داده شد.'
+      : 'مانده بچ‌ها با گردش تعدیل کاهشی تطبیق داده شد.');
+  }, [products, inventoryLots, inventoryLotMovements, ownerId, user, showToast]);
 
   const transferProductWarehouse = useCallback(
     async (productId: string, targetWarehouse: string) => {
@@ -4616,6 +4688,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         addProduct,
         updateProduct,
         createOpeningInventoryLot,
+        reconcileProductLotsToStock,
         deleteProduct,
         adjustProductStock,
         adjustProductStockWithVoucher,
