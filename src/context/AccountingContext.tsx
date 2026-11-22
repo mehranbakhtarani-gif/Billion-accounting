@@ -2429,6 +2429,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       const lotUpdates = new Map<string, InventoryLot>();
       const lotReceipts: InventoryLot[] = [];
       const lotMovementsToSave: InventoryLotMovement[] = [];
+      const returnQtyInCurrentInvoice = new Map<string, number>();
       const invoiceItems = payload.items.map((item) => ({ ...item }));
       validateJalaliDate(payload.date, 'تاریخ فاکتور');
       const asOfDate = shamsiToGregorianIso(payload.date);
@@ -2495,10 +2496,13 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
               throw new Error('برای برگشت فروش باید شماره بچ اصلیِ فروش‌شده وارد شود؛ بچ ناشناس قابل برگشت نیست.');
             }
             if (returnedSourceLot) {
-              const returnable = calculateLotReturnableQuantity(returnedSourceLot.id, inventoryLotMovements);
+              const returnable = Math.max(0, calculateLotReturnableQuantity(returnedSourceLot.id, inventoryLotMovements) -
+                (returnQtyInCurrentInvoice.get(returnedSourceLot.id) || 0));
               if (item.quantity > returnable + 0.0001) {
                 throw new Error(`مقدار برگشت از بچ ${returnedSourceLot.lotNumber} بیش از مقدار فروش خالص همان بچ است. حداکثر قابل برگشت: ${returnable}`);
               }
+              returnQtyInCurrentInvoice.set(returnedSourceLot.id,
+                (returnQtyInCurrentInvoice.get(returnedSourceLot.id) || 0) + item.quantity);
             }
             if (item.receivedDate && !/^\d{4}-\d{2}-\d{2}$/.test(item.receivedDate)) throw new Error('تاریخ ورود بچ در ردیف فاکتور معتبر نیست.');
             if (item.expiryDate && (!/^\d{4}-\d{2}-\d{2}$/.test(item.expiryDate) || item.expiryDate < (item.receivedDate || asOfDate))) throw new Error('تاریخ انقضای بچ باید معتبر و بعد از تاریخ ورود باشد.');
