@@ -664,7 +664,13 @@ export const CorporateView: React.FC<CorporateViewProps> = ({ initialIntent, cle
                         <Edit3 className="w-3.5 h-3.5" />
                       </button>
                       <button
-                        onClick={() => deleteCostCenter(cc.id)}
+                        onClick={async () => {
+                          try {
+                            await deleteCostCenter(cc.id);
+                          } catch (error) {
+                            showToast(error instanceof Error ? error.message : 'حذف مرکز هزینه ناموفق بود.');
+                          }
+                        }}
                         title="حذف مرکز هزینه"
                         className="p-1 rounded text-slate-400 hover:text-rose-600"
                       >
@@ -728,15 +734,22 @@ export const CorporateView: React.FC<CorporateViewProps> = ({ initialIntent, cle
           <form
             onSubmit={async (e) => {
               e.preventDefault();
-              if (!ccName.trim()) return;
-              await addCostCenter({
-                code: `CC-0${costCenters.length + 1}`,
-                name: ccName.trim(),
-                budget: ccBudget,
-                manager: profile.displayName,
-                active: true,
-              });
-              setCcName('');
+              try {
+                const nextNumber = costCenters.reduce((max, center) => {
+                  const number = Number(center.code.replace(/^CC-/i, ''));
+                  return Number.isFinite(number) ? Math.max(max, number) : max;
+                }, 0) + 1;
+                await addCostCenter({
+                  code: `CC-${String(nextNumber).padStart(2, '0')}`,
+                  name: ccName.trim(),
+                  budget: ccBudget,
+                  manager: profile.displayName,
+                  active: true,
+                });
+                setCcName('');
+              } catch (error) {
+                showToast(error instanceof Error ? error.message : 'ثبت مرکز هزینه ناموفق بود.');
+              }
             }}
             className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4 flex flex-wrap items-end gap-3 text-xs"
           >
@@ -1281,13 +1294,17 @@ export const CorporateView: React.FC<CorporateViewProps> = ({ initialIntent, cle
           <form
             onSubmit={async (e) => {
               e.preventDefault();
-              await updateCostCenter(editingCC.id, {
-                name: editingCC.name,
-                budget: editingCC.budget,
-                manager: editingCC.manager,
-                active: editingCC.active,
-              });
-              setEditingCC(null);
+              try {
+                await updateCostCenter(editingCC.id, {
+                  name: editingCC.name,
+                  budget: editingCC.budget,
+                  manager: editingCC.manager,
+                  active: editingCC.active,
+                });
+                setEditingCC(null);
+              } catch (error) {
+                showToast(error instanceof Error ? error.message : 'ویرایش مرکز هزینه ناموفق بود.');
+              }
             }}
             className="w-full max-w-md rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-5 space-y-4 text-xs"
           >
