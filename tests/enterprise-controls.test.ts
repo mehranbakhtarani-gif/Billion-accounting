@@ -24,6 +24,7 @@ import {
   validateJournalEntryPayload,
   validateSalesOrderDispatchQuantities,
   validateInvoicePaymentAllocations,
+  buildInvoiceAllocationReversal,
 } from '../src/lib/enterpriseControls.ts';
 import { calculateLandedCostAllocation, computeReceivablesAging, computePayablesAging, computeFxRevaluationReport } from '../src/lib/enterpriseAccounting.ts';
 import { calculateEmployeePayroll, calculateMonthlyDepreciation, computeAccountLedger, computeAuditReport, computePartyBalances, computePartyLedger, computeTrialBalance } from '../src/lib/accountingEngine.ts';
@@ -653,4 +654,32 @@ test('aging report exposes ledger-to-invoice differences instead of forcing FIFO
   assert.equal(rows[0].ledgerBalance, 300);
   assert.equal(rows[0].ledgerDifference, 50);
   assert.equal(rows[0].bucket0to30 + rows[0].bucket31to60 + rows[0].bucket61to90 + rows[0].bucketOver90, 250);
+});
+
+
+test('allocated treasury voucher reversal restores invoice balances and removes its allocations', () => {
+  const invoices = [
+    { id: 'i1', creditAmount: 400, paidCash: 600, paidBank: 0, status: 'issued',
+      paymentAllocations: [{ voucherId: 'v1', amount: 200 }, { voucherId: 'v2', amount: 100 }] },
+    { id: 'i2', creditAmount: 300, paidCash: 0, paidBank: 200, status: 'settled',
+      paymentAllocations: [{ voucherId: 'v1', amount: 200 }] },
+  ];
+  const cash = buildInvoiceAllocationReversal(invoices as any, 'v1', '10101');
+  assert.deepEqual(cash, [
+    { invoiceId: 'i1', creditAmount: 600, paidCash: 400, paidBank: 0, status: 'issued',
+      paymentAllocations: [{ voucherId: 'v2', amount: 100 }] },
+    { invoiceId: 'i2', creditAmount: 500, paidCash: 0, paidBank: 200, status: 'issued',
+      paymentAllocations: [] },
+  ]);
+  const bank = buildInvoiceAllocationReversal([{
+    id: 'i3', creditAmount: 0, paidCash: 0, paidBank: 500, status: 'settled',
+    paymentAllocations: [{ voucherId: 'v3', amount: 500 }],
+  }] as any, 'v3', '10201');
+  assert.equal(bank[0].paidBank, 0);
+  assert.equal(bank[0].creditAmount, 500);
+  assert.throws(() => buildInvoiceAllocationReversal(invoices as any, 'missing', '10101'), /یافت نشد/);
+  assert.throws(() => buildInvoiceAllocationReversal([{
+    id: 'bad', creditAmount: 0, paidCash: 10, paidBank: 0, status: 'issued',
+    paymentAllocations: [{ voucherId: 'v4', amount: 50 }],
+  }] as any, 'v4', '10101'), /تطبیق ندارد/);
 });

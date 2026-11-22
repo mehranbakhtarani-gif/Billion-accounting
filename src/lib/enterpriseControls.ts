@@ -776,3 +776,55 @@ export function auditTreasuryVoucherLinks(
   }
   return issues;
 }
+
+
+export interface InvoiceAllocationReversalCandidate {
+  id: string;
+  creditAmount: number;
+  paidCash: number;
+  paidBank: number;
+  status: string;
+  paymentAllocations?: { voucherId: string; amount: number }[];
+}
+
+export function buildInvoiceAllocationReversal(
+  invoices: InvoiceAllocationReversalCandidate[],
+  originalVoucherId: string,
+  cashAccountCode: string,
+): Array<{
+  invoiceId: string;
+  creditAmount: number;
+  paidCash: number;
+  paidBank: number;
+  status: string;
+  paymentAllocations: { voucherId: string; amount: number }[];
+}> {
+  if (!originalVoucherId?.trim() || !(cashAccountCode.startsWith('101') || cashAccountCode.startsWith('102'))) {
+    throw new Error('شناسه سند یا حساب صندوق/بانک برای برگشت تخصیص معتبر نیست.');
+  }
+  const isBank = cashAccountCode.startsWith('102');
+  const updates = [];
+  for (const invoice of invoices) {
+    const existing = invoice.paymentAllocations ?? [];
+    const reversed = existing.filter((allocation) => allocation.voucherId === originalVoucherId);
+    if (!reversed.length) continue;
+    const amount = reversed.reduce((sum, allocation) => sum + Number(allocation.amount), 0);
+    if (!Number.isFinite(amount) || amount <= 0) throw new Error(`تخصیص ثبت‌شده روی فاکتور ${invoice.id} برای برگشت معتبر نیست.`);
+    const paidAmount = Number(isBank ? invoice.paidBank : invoice.paidCash);
+    if (!Number.isFinite(paidAmount) || paidAmount + 0.000001 < amount) {
+      throw new Error(`مبلغ پرداخت ثبت‌شده فاکتور ${invoice.id} با تخصیص قابل برگشت تطبیق ندارد.`);
+    }
+    const creditAmount = Number(invoice.creditAmount) + amount;
+    if (!Number.isFinite(creditAmount)) throw new Error(`مانده فاکتور ${invoice.id} پس از برگشت تخصیص معتبر نیست.`);
+    updates.push({
+      invoiceId: invoice.id,
+      creditAmount: Number(creditAmount.toFixed(2)),
+      paidCash: Number((invoice.paidCash - (isBank ? 0 : amount)).toFixed(2)),
+      paidBank: Number((invoice.paidBank - (isBank ? amount : 0)).toFixed(2)),
+      status: invoice.status === 'cancelled' ? 'cancelled' : 'issued',
+      paymentAllocations: existing.filter((allocation) => allocation.voucherId !== originalVoucherId),
+    });
+  }
+  if (!updates.length) throw new Error('تخصیص فاکتور متناظر با سند خزانه برای برگشت یافت نشد.');
+  return updates;
+}

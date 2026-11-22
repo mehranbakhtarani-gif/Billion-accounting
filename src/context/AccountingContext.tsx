@@ -34,7 +34,7 @@ import {
 import { createHolooSeedData } from '../data/holooSeed';
 import { getOrCreateLocalDeviceIdentity, loadLocalAccountingSnapshot, LocalDeviceIdentity, saveLocalAccountingSnapshot } from '../lib/localAccountingStore';
 import { FxRevaluationRow } from '../lib/enterpriseAccounting';
-import { assertSufficientStock, getChequeStatusTransitionError, validateJournalEntryPayload, validateTreasuryOperationPayload, validateTreasuryAccountSelection, validateTreasuryTransferAccounts, validateChequeDateRange, validatePartyTreasuryAccount, validateJalaliDate, validateImportLandedCostPayload, aggregateStockReservations, collectActiveStockReservations, validateSalesOrderDispatchQuantities, validateInvoicePaymentAllocations } from '../lib/enterpriseControls';
+import { assertSufficientStock, getChequeStatusTransitionError, validateJournalEntryPayload, validateTreasuryOperationPayload, validateTreasuryAccountSelection, validateTreasuryTransferAccounts, validateChequeDateRange, validatePartyTreasuryAccount, validateJalaliDate, validateImportLandedCostPayload, aggregateStockReservations, collectActiveStockReservations, validateSalesOrderDispatchQuantities, validateInvoicePaymentAllocations, buildInvoiceAllocationReversal } from '../lib/enterpriseControls';
 import {
   AuditReport,
   buildInvoiceVoucherLines,
@@ -1102,8 +1102,40 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const finalizeVoucher = useCallback(
     async (voucherId: string) => {
       const existing = vouchers.find((voucher) => voucher.id === voucherId);
-      if (!existing) return;
+      if (!existing || existing.status === 'permanent') return;
       if (vouchers.some((voucher) => voucher.voucherType === 'closing' && voucher.date.slice(0, 4) === existing.date.slice(0, 4))) { const message = `دوره مالی ${existing.date.slice(0, 4)} بسته شده است؛ قطعی‌سازی سند مجاز نیست.`; showToast(message); throw new Error(message); }
+
+      const originalVoucher = existing.referenceId
+        ? vouchers.find((voucher) => voucher.id === existing.referenceId)
+        : undefined;
+      if (originalVoucher?.referenceId?.startsWith('treasury-allocation:')) {
+        if (vouchers.some((voucher) => voucher.referenceId === originalVoucher.id && voucher.id !== existing.id && voucher.status === 'permanent')) {
+          throw new Error('اثر تخصیص این سند خزانه قبلاً برگشت داده شده است.');
+        }
+        const cashLine = originalVoucher.lines.find((line) => line.accountCode.startsWith('101') || line.accountCode.startsWith('102'));
+        if (!cashLine) throw new Error('حساب صندوق/بانک سند اصلی برای برگشت تخصیص یافت نشد.');
+        const invoiceUpdates = buildInvoiceAllocationReversal(invoices, originalVoucher.id, cashLine.accountCode);
+        if (user) {
+          const batch = writeBatch(db);
+          batch.update(doc(db, 'vouchers', voucherId), { status: 'permanent', updatedAt: serverTimestamp() });
+          for (const update of invoiceUpdates) {
+            batch.update(doc(db, 'invoices', update.invoiceId), {
+              creditAmount: update.creditAmount, paidCash: update.paidCash, paidBank: update.paidBank,
+              status: update.status, paymentAllocations: update.paymentAllocations, updatedAt: serverTimestamp(),
+            });
+          }
+          await batch.commit();
+        } else {
+          setVouchers((prev) => prev.map((voucher) => voucher.id === voucherId ? { ...voucher, status: 'permanent' } : voucher));
+          setInvoices((prev) => prev.map((invoice) => {
+            const update = invoiceUpdates.find((candidate) => candidate.invoiceId === invoice.id);
+            return update ? { ...invoice, ...update, id: invoice.id } : invoice;
+          }));
+        }
+        showToast('سند معکوس قطعی شد و تخصیص‌های فاکتورها نیز به‌صورت یکجا برگشت خورد.');
+        return;
+      }
+
       if (user) {
         try {
           await updateDoc(doc(db, 'vouchers', voucherId), {
@@ -1121,13 +1153,17 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       }
       showToast('سند حسابداری به وضعیت «دائم و قطعی» تبدیل شد.');
     },
-    [vouchers, user, showToast]
+    [vouchers, invoices, user, showToast]
   );
 
   const createReversingVoucher = useCallback(
     async (voucherId: string): Promise<Voucher | null> => {
       const orig = vouchers.find((v) => v.id === voucherId);
       if (!orig) return null;
+      if (orig.referenceId?.startsWith('treasury-allocation:') &&
+          vouchers.some((voucher) => voucher.referenceId === orig.id && voucher.status !== 'cancelled')) {
+        throw new Error('برای این سند خزانه قبلاً سند معکوس ایجاد شده است.');
+      }
       const reversedLines: VoucherLine[] = orig.lines.map((l) => ({
         ...l,
         description: `برگشت/اصلاح سند #${orig.voucherNumber}: ${l.description}`,
