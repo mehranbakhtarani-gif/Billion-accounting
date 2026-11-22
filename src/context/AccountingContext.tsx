@@ -1208,7 +1208,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const updateProduct = useCallback(
     async (productId: string, patch: Partial<Omit<Product, 'id' | 'ownerId' | 'sku'>>) => {
       const existing = products.find((p) => p.id === productId);
-      if (!existing) return;
+      if (!existing) throw new Error(`کالای موردنظر برای ویرایش یافت نشد: ${productId}`);
       if (user) {
         try {
           const payload: Record<string, unknown> = { updatedAt: serverTimestamp() };
@@ -1235,6 +1235,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           await updateDoc(doc(db, 'products', productId), payload);
         } catch (err) {
           handleSupabaseError(err, OperationType.UPDATE, `products/${productId}`);
+          throw err;
         }
       } else {
         setProducts((prev) => prev.map((p) => (p.id === productId ? { ...p, ...patch } : p)));
@@ -1270,6 +1271,9 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
   const adjustProductStock = useCallback(
     async (productId: string, newStock: number) => {
+      const product = products.find((item) => item.id === productId);
+      if (!product) throw new Error(`کالای موردنظر برای تعدیل موجودی یافت نشد: ${productId}`);
+      if (!Number.isFinite(newStock) || newStock < 0) throw new Error('موجودی جدید باید عددی معتبر و غیرمنفی باشد.');
       if (user) {
         try {
           await updateDoc(doc(db, 'products', productId), {
@@ -1278,6 +1282,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           });
         } catch (err) {
           handleSupabaseError(err, OperationType.UPDATE, `products/${productId}`);
+          throw err;
         }
       } else {
         setProducts((prev) =>
@@ -1285,7 +1290,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         );
       }
     },
-    [user]
+    [user, products]
   );
 
   const adjustProductStockWithVoucher = useCallback(
