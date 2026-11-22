@@ -2355,8 +2355,8 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
               ? inventoryLots.find((candidate) => candidate.productId === product.id &&
                   candidate.warehouse === payload.warehouse && candidate.lotNumber === item.lotNumber)
               : undefined;
-            if (item.receivedDate && !/^\\d{4}-\\d{2}-\\d{2}$/.test(item.receivedDate)) throw new Error('تاریخ ورود بچ در ردیف فاکتور معتبر نیست.');
-            if (item.expiryDate && !/^\\d{4}-\\d{2}-\\d{2}$/.test(item.expiryDate)) throw new Error('تاریخ انقضای بچ در ردیف فاکتور معتبر نیست.');
+            if (item.receivedDate && !/^\d{4}-\d{2}-\d{2}$/.test(item.receivedDate)) throw new Error('تاریخ ورود بچ در ردیف فاکتور معتبر نیست.');
+            if (item.expiryDate && !/^\d{4}-\d{2}-\d{2}$/.test(item.expiryDate)) throw new Error('تاریخ انقضای بچ در ردیف فاکتور معتبر نیست.');
             const lot: InventoryLot = {
               id: lotId, ownerId, productId: product.id, warehouse: payload.warehouse,
               lotNumber: lotNumber.slice(0, 80), receivedDate: item.receivedDate || asOfDate,
