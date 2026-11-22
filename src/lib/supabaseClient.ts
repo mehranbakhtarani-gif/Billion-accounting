@@ -5,7 +5,7 @@ import { createClient } from '@supabase/supabase-js';
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://qsdlthvnfmjbodtdkbqc.supabase.co';
 const supabasePublishableKey =
   import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
-  'sb_publishable_QcBjn5E9_KavayJkBOv7zg_HTdnj71v';
+  'sb_publishable_pqLUltTUvAEPnE786BFKWw_uc8_R5Fk';
 
 export const supabase = createClient(supabaseUrl, supabasePublishableKey, {
   auth: {
