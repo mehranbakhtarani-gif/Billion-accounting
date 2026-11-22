@@ -359,7 +359,7 @@ export function allocateStockFIFO(
       throw new Error('مشخصات بچ انبار ناقص است.');
     }
     if (!/^\d{4}-\d{2}-\d{2}$/.test(lot.receivedDate) ||
-        (lot.expiryDate !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(lot.expiryDate))) {
+        (lot.expiryDate !== undefined && (!/^\d{4}-\d{2}-\d{2}$/.test(lot.expiryDate) || lot.expiryDate < lot.receivedDate))) {
       throw new Error('تاریخ دریافت یا انقضای بچ معتبر نیست.');
     }
     if (!Number.isFinite(lot.quantityReceived) || !Number.isFinite(lot.quantityRemaining) ||
