@@ -156,6 +156,7 @@ test('FIFO allocates oldest eligible lots and excludes expired lots', () => {
     { id: 'new', productId: 'p1', warehouse: 'w1', lotNumber: 'L2', receivedDate: '2026-02-01', quantityReceived: 10, quantityRemaining: 10, unitCost: 140 },
     { id: 'old', productId: 'p1', warehouse: 'w1', lotNumber: 'L1', receivedDate: '2026-01-01', expiryDate: '2026-12-31', quantityReceived: 5, quantityRemaining: 5, unitCost: 100 },
     { id: 'expired', productId: 'p1', warehouse: 'w1', lotNumber: 'L0', receivedDate: '2025-12-01', expiryDate: '2026-01-01', quantityReceived: 7, quantityRemaining: 7, unitCost: 80 },
+    { id: 'future', productId: 'p1', warehouse: 'w1', lotNumber: 'L3', receivedDate: '2027-01-01', quantityReceived: 20, quantityRemaining: 20, unitCost: 90 },
   ];
   const result = allocateStockFIFO(lots, 8, { productId: 'p1', warehouse: 'w1', asOfDate: '2026-11-22' });
   assert.deepEqual(result.allocations.map((x) => [x.lotId, x.quantity]), [['old', 5], ['new', 3]]);
@@ -163,6 +164,7 @@ test('FIFO allocates oldest eligible lots and excludes expired lots', () => {
   assert.equal(result.weightedUnitCost, 115);
   assert.equal(result.remainingLots.find((x) => x.id === 'old')?.quantityRemaining, 0);
   assert.equal(result.remainingLots.find((x) => x.id === 'expired')?.quantityRemaining, 7);
+  assert.equal(result.remainingLots.find((x) => x.id === 'future')?.quantityRemaining, 20);
   assert.throws(() => allocateStockFIFO(lots, 30, { productId: 'p1', warehouse: 'w1', asOfDate: '2026-11-22' }), /کافی نیست/);
   assert.throws(() => allocateStockFIFO([...lots, { ...lots[0] }], 1, {
     productId: 'p1', warehouse: 'w1', asOfDate: '2026-11-22',
