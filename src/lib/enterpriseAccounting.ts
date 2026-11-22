@@ -120,8 +120,27 @@ export function calculateLandedCostAllocation(
   totalLandedCostsIrr: number;
   grandTotalLandedIrr: number;
 } {
+  if (!Array.isArray(items) || items.length === 0) throw new Error('پرونده واردات باید حداقل یک قلم کالا داشته باشد.');
+  if (!Array.isArray(costs)) throw new Error('فهرست هزینه‌های جانبی واردات معتبر نیست.');
+  if (!Number.isFinite(exchangeRate) || exchangeRate <= 0) throw new Error('نرخ تبدیل ارز باید عددی مثبت و معتبر باشد.');
+  if (method !== 'weight' && method !== 'value') throw new Error('روش سرشکن‌کردن هزینه‌های واردات معتبر نیست.');
+  for (const item of items) {
+    if (!item.productId?.trim() || !item.sku?.trim() || !item.productName?.trim()) {
+      throw new Error('شناسه، کد یا نام یکی از کالاهای وارداتی ناقص است.');
+    }
+    if (!Number.isFinite(item.weightKg) || item.weightKg <= 0 ||
+        !Number.isFinite(item.foreignUnitPrice) || item.foreignUnitPrice < 0 ||
+        !Number.isFinite(item.cartonCount) || item.cartonCount < 0) {
+      throw new Error('وزن، قیمت ارزی یا تعداد کارتن یکی از اقلام وارداتی معتبر نیست.');
+    }
+  }
+  for (const cost of costs) {
+    if (!cost.accountCode?.trim() || !Number.isFinite(cost.amountIrr) || cost.amountIrr < 0) {
+      throw new Error('حساب یا مبلغ یکی از هزینه‌های جانبی واردات معتبر نیست.');
+    }
+  }
   const totalLandedCostsIrr = Math.round(
-    costs.reduce((s, c) => s + Math.max(0, Math.round(Number(c.amountIrr) || 0)), 0)
+    costs.reduce((sum, cost) => sum + Math.round(cost.amountIrr), 0)
   );
 
   const enriched = items.map((it) => {
