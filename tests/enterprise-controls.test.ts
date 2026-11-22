@@ -865,18 +865,58 @@ test('invoice payment allocations reject duplicates, wrong party/type and over-s
 });
 
 
-test('aging report exposes ledger-to-invoice differences instead of forcing FIFO attribution', () => {
+test('aging report reconciles open invoices to permanent receivables control-account journal lines by party', () => {
   const party = { id: 'p1', ownerId: 'o1', code: 'C1', name: 'مشتری', partyType: 'customer', creditLimit: 0, openingBalance: 0, accountCode: '10401' };
   const invoice = { id: 'i1', ownerId: 'o1', invoiceNumber: 'S-1', invoiceType: 'sale', date: '1405/08/01', dueDate: '1405/08/01',
     partyId: 'p1', partyName: 'مشتری', warehouse: 'انبار', subtotal: 250, discount: 0, vatAmount: 0, grandTotal: 250,
     paidCash: 0, paidBank: 0, paidCheque: 0, creditAmount: 250, status: 'issued', items: [] };
-  const rows = computeReceivablesAging([party] as any, [invoice] as any, new Map([['p1', 300]]), '1405/09/01');
+  const accounts = [
+    { code: '104', level: 'kol', category: 'asset', parentCode: '1' },
+    { code: '10401', level: 'moein', category: 'asset', parentCode: '104' },
+  ];
+  const vouchers = [
+    { status: 'permanent', lines: [
+      { partyId: 'p1', accountCode: '10401', debit: 300, credit: 0 },
+      { partyId: 'p1', accountCode: '10101', debit: 0, credit: 900 },
+      { partyId: 'p1', accountCode: '10301', debit: 0, credit: 700 },
+    ] },
+    { status: 'draft', lines: [{ partyId: 'p1', accountCode: '10401', debit: 5000, credit: 0 }] },
+  ];
+  const rows = computeReceivablesAging([party] as any, [invoice] as any, accounts as any, vouchers as any, '1405/09/01');
   assert.equal(rows[0].totalReceivable, 250);
   assert.equal(rows[0].ledgerBalance, 300);
   assert.equal(rows[0].ledgerDifference, 50);
   assert.equal(rows[0].bucket0to30 + rows[0].bucket31to60 + rows[0].bucket61to90 + rows[0].bucketOver90, 250);
 });
 
+test('payables aging reconciles to the configured liability control account', () => {
+  const party = { id: 'v1', ownerId: 'o1', code: 'V1', name: 'تأمین‌کننده', partyType: 'vendor', creditLimit: 0, openingBalance: 0, accountCode: '30101' };
+  const invoice = { id: 'pi1', ownerId: 'o1', invoiceNumber: 'P-1', invoiceType: 'purchase', date: '1405/08/01', dueDate: '1405/08/01',
+    partyId: 'v1', partyName: 'تأمین‌کننده', warehouse: 'انبار', subtotal: 180, discount: 0, vatAmount: 0, grandTotal: 180,
+    paidCash: 0, paidBank: 0, paidCheque: 0, creditAmount: 180, status: 'issued', items: [] };
+  const accounts = [
+    { code: '301', level: 'kol', category: 'liability', parentCode: '3' },
+    { code: '30101', level: 'moein', category: 'liability', parentCode: '301' },
+  ];
+  const vouchers = [{ status: 'permanent', lines: [
+    { partyId: 'v1', accountCode: '30101', debit: 0, credit: 200 },
+    { partyId: 'v1', accountCode: '10201', debit: 50, credit: 0 },
+  ] }];
+  const rows = computePayablesAging([party] as any, [invoice] as any, accounts as any, vouchers as any, '1405/09/01');
+  assert.equal(rows[0].totalPayable, 180);
+  assert.equal(rows[0].ledgerBalance, 200);
+  assert.equal(rows[0].ledgerDifference, 20);
+});
+
+test('aging reconciliation rejects missing or incorrectly typed control accounts', () => {
+  const party = { id: 'p1', ownerId: 'o1', code: 'C1', name: 'مشتری', partyType: 'customer', creditLimit: 0, openingBalance: 0, accountCode: '10401' };
+  assert.throws(() => computeReceivablesAging([party] as any, [] as any, [] as any, [] as any, '1405/09/01'), /یافت نشد/);
+  const wrongAccounts = [
+    { code: '104', level: 'kol', category: 'liability', parentCode: '1' },
+    { code: '10401', level: 'moein', category: 'asset', parentCode: '104' },
+  ];
+  assert.throws(() => computeReceivablesAging([party] as any, [] as any, wrongAccounts as any, [] as any, '1405/09/01'), /ماهیت حساب کنترل/);
+});
 
 test('allocated treasury voucher reversal restores invoice balances and removes its allocations', () => {
   const invoices = [
