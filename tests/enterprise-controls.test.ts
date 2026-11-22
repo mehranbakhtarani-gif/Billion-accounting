@@ -30,7 +30,7 @@ import {
   buildInvoiceAllocationReversal,
 } from '../src/lib/enterpriseControls.ts';
 import { calculateLandedCostAllocation, computeReceivablesAging, computePayablesAging, computeFxRevaluationReport } from '../src/lib/enterpriseAccounting.ts';
-import { buildInvoiceVoucherLines, calculateEmployeePayroll, calculateMonthlyDepreciation, computeAccountLedger, computeAuditReport, computePartyBalances, computePartyLedger, computeTrialBalance } from '../src/lib/accountingEngine.ts';
+import { buildInvoiceVoucherLines, calculateEmployeePayroll, calculateMonthlyDepreciation, computeAccountLedger, computeAuditReport, computePartyBalances, computePartyLedger, computeTrialBalance, computeInventoryValuation } from '../src/lib/accountingEngine.ts';
 
 test('CSV parser preserves quoted commas and escaped quotes', () => {
   assert.deepEqual(parseCsvRow('1405/09/01,"کارمزد، انتقال, فوری","شناسه ""ABC""",1250,0'), ['1405/09/01', 'کارمزد، انتقال, فوری', 'شناسه "ABC"', '1250', '0']);
