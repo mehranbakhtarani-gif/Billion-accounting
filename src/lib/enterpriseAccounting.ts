@@ -125,7 +125,7 @@ export function calculateLandedCostAllocation(
   if (!Number.isFinite(exchangeRate) || exchangeRate <= 0) throw new Error('نرخ تبدیل ارز باید عددی مثبت و معتبر باشد.');
   if (method !== 'weight' && method !== 'value') throw new Error('روش سرشکن‌کردن هزینه‌های واردات معتبر نیست.');
   for (const item of items) {
-    if (!item.productId?.trim() || !item.sku?.trim() || !item.productName?.trim()) {
+    if (!item.productId?.trim() || !item.sku?.trim() || !item.productName?.trim() || !item.lotNumber?.trim()) {
       throw new Error('شناسه، کد یا نام یکی از کالاهای وارداتی ناقص است.');
     }
     if (!Number.isFinite(item.weightKg) || item.weightKg <= 0 ||
