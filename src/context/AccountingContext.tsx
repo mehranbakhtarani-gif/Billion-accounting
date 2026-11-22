@@ -632,21 +632,29 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const incomeStatement = useMemo(() => computeIncomeStatement(trialBalance), [trialBalance]);
   const balanceSheet = useMemo(() => computeBalanceSheet(trialBalance), [trialBalance]);
   const partyBalances = useMemo(() => computePartyBalances(parties, vouchers), [parties, vouchers]);
-  const auditReport = useMemo(
-    () =>
-      computeAuditReport({
-        accounts,
-        vouchers,
-        invoices,
-        parties,
-        products,
-        cheques,
-        trialBalance,
-        balanceSheet,
-        partyBalances,
-      }),
-    [accounts, vouchers, invoices, parties, products, cheques, trialBalance, balanceSheet, partyBalances]
-  );
+  const auditReport = useMemo(() => {
+    let inventoryLotReconciliationIssues: string[] = [];
+    try {
+      const lotDiscrepancies = reconcileInventoryLotLedger(inventoryLots, inventoryLotMovements);
+      inventoryLotReconciliationIssues = lotDiscrepancies
+        .filter((row) => Math.abs(row.difference) > 0.0001)
+        .map((row) => \`بچ \${row.lotId}: مانده مورد انتظار \${row.expectedRemaining}، مانده ثبت‌شده \${row.actualRemaining}\`);
+    } catch (error) {
+      inventoryLotReconciliationIssues = [error instanceof Error ? error.message : String(error)];
+    }
+    return computeAuditReport({
+      accounts,
+      vouchers,
+      invoices,
+      parties,
+      products,
+      cheques,
+      trialBalance,
+      balanceSheet,
+      partyBalances,
+      inventoryLotReconciliationIssues,
+    });
+  }, [accounts, vouchers, invoices, parties, products, cheques, trialBalance, balanceSheet, partyBalances, inventoryLots, inventoryLotMovements]);
 
   const completeEnrollment = useCallback(async (mode: 'bootstrap' | 'invite', token: string) => {
     const session = await ensurePasswordlessSession();
