@@ -290,6 +290,7 @@ export const TreasuryView: React.FC<TreasuryViewProps> = ({ initialIntent, clear
   }, [bankCsvText, reconBankCode, vouchers]);
 
   const handlePostBankAdjustment = async (row: {
+    id: string;
     date: string;
     desc: string;
     deposit: number;
