@@ -20,6 +20,7 @@ import {
   collectActiveStockReservations,
   getChequeStatusTransitionError,
   classifySyncOperation,
+  resolveExpectedRecordRevision,
   computeOpenItemAging,
   reconcileBankLines,
   parseCsvRow,
@@ -37,6 +38,17 @@ import { calculateLandedCostAllocation, computeReceivablesAging, computePayables
 import { buildInvoiceVoucherLines, calculateEmployeePayroll, calculateMonthlyDepreciation, computeAccountLedger, computeAuditReport, computePartyBalances, computePartyLedger, computeTrialBalance, computeInventoryValuation } from '../src/lib/accountingEngine.ts';
 
 test('CSV parser preserves quoted commas and escaped quotes', () => {
+
+test('online writes use the device cached revision and never silently adopt a newer server revision', () => {
+  assert.equal(resolveExpectedRecordRevision('patch', 4), 4);
+  assert.equal(resolveExpectedRecordRevision('delete', 7), 7);
+  assert.equal(resolveExpectedRecordRevision('set', undefined), 0);
+  assert.throws(() => resolveExpectedRecordRevision('patch', undefined), /نسخه مبنای این رکورد روی دستگاه موجود نیست/);
+  assert.throws(() => resolveExpectedRecordRevision('delete', undefined), /هیچ تغییری ثبت نشد/);
+  assert.throws(() => resolveExpectedRecordRevision('patch', -1), /معتبر نیست/);
+  assert.throws(() => resolveExpectedRecordRevision('patch', 1.5), /معتبر نیست/);
+});
+
   assert.deepEqual(parseCsvRow('1405/09/01,"کارمزد، انتقال, فوری","شناسه ""ABC""",1250,0'), ['1405/09/01', 'کارمزد، انتقال, فوری', 'شناسه "ABC"', '1250', '0']);
 });
 
