@@ -36,7 +36,7 @@ import {
 import { createHolooSeedData } from '../data/holooSeed';
 import { getOrCreateLocalDeviceIdentity, loadLocalAccountingSnapshot, LocalDeviceIdentity, saveLocalAccountingSnapshot } from '../lib/localAccountingStore';
 import { FxRevaluationRow } from '../lib/enterpriseAccounting';
-import { assertSufficientStock, getChequeStatusTransitionError, validateJournalEntryPayload, validateTreasuryOperationPayload, validateTreasuryAccountSelection, validateTreasuryTransferAccounts, validateChequeDateRange, validatePartyTreasuryAccount, validateJalaliDate, validateImportLandedCostPayload, aggregateStockReservations, collectActiveStockReservations, validateSalesOrderDispatchQuantities, validateInvoicePaymentAllocations, buildInvoiceAllocationReversal, getInvoiceStockDirection, getInvoiceCancellationBlockReason, allocateStockFIFO, reconcileInventoryLotLedger, calculateLotReturnableQuantity } from '../lib/enterpriseControls';
+import { assertSufficientStock, getChequeStatusTransitionError, validateJournalEntryPayload, validateTreasuryOperationPayload, validateTreasuryAccountSelection, validateTreasuryTransferAccounts, validateChequeDateRange, validatePartyTreasuryAccount, validateJalaliDate, validateImportLandedCostPayload, aggregateStockReservations, collectActiveStockReservations, validateSalesOrderDispatchQuantities, validateInvoicePaymentAllocations, buildInvoiceAllocationReversal, getInvoiceStockDirection, getInvoiceCancellationBlockReason, allocateStockFIFO, reconcileInventoryLotLedger, calculateLotReturnableQuantity, calculateLotReturnedQuantity } from '../lib/enterpriseControls';
 import {
   AuditReport,
   buildInvoiceVoucherLines,
@@ -2496,11 +2496,18 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
               throw new Error('برای برگشت فروش باید شماره بچ اصلیِ فروش‌شده وارد شود؛ بچ ناشناس قابل برگشت نیست.');
             }
             if (returnedSourceLot) {
-              const returnable = Math.max(0, calculateLotReturnableQuantity(returnedSourceLot.id, inventoryLotMovements) -
+              const movementReturned = calculateLotReturnedQuantity(returnedSourceLot.id, inventoryLotMovements);
+              const sourceLotCurrent = lotUpdates.get(returnedSourceLot.id) ?? returnedSourceLot;
+              const returnedSoFar = Math.max(sourceLotCurrent.returnedQuantity ?? 0, movementReturned);
+              const netSoldFromSource = calculateLotReturnableQuantity(returnedSourceLot.id, inventoryLotMovements) + movementReturned;
+              const returnable = Math.max(0, netSoldFromSource - returnedSoFar -
                 (returnQtyInCurrentInvoice.get(returnedSourceLot.id) || 0));
               if (item.quantity > returnable + 0.0001) {
                 throw new Error(`مقدار برگشت از بچ ${returnedSourceLot.lotNumber} بیش از مقدار فروش خالص همان بچ است. حداکثر قابل برگشت: ${returnable}`);
               }
+              lotUpdates.set(returnedSourceLot.id, {
+                ...sourceLotCurrent, returnedQuantity: returnedSoFar + item.quantity,
+              });
               returnQtyInCurrentInvoice.set(returnedSourceLot.id,
                 (returnQtyInCurrentInvoice.get(returnedSourceLot.id) || 0) + item.quantity);
             }
@@ -2653,7 +2660,9 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             const lotBatch = writeBatch(db);
             lotReceipts.forEach((lot) => lotBatch.set(doc(db, 'inventoryLots', lot.id), lot));
             lotUpdates.forEach((lot) => lotBatch.update(doc(db, 'inventoryLots', lot.id), {
-              quantityRemaining: lot.quantityRemaining, updatedAt: serverTimestamp(),
+              quantityRemaining: lot.quantityRemaining,
+              ...(lot.returnedQuantity !== undefined ? { returnedQuantity: lot.returnedQuantity } : {}),
+              updatedAt: serverTimestamp(),
             }));
             lotMovementsToSave.forEach((movement) => lotBatch.set(doc(db, 'inventoryLotMovements', movement.id), movement));
             await lotBatch.commit();
