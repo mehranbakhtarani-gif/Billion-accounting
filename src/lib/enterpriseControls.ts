@@ -497,8 +497,8 @@ export function reconcileBankLines(
 }
 
 export function validateTreasuryOperationPayload(payload: { date: string; amount: number; description: string }): void {
-  const dateParts = payload.date.split('/').map(Number);
-  if (!/^14\d{2}\/\d{2}\/\d{2}$/.test(payload.date) ||
+  const dateParts = typeof payload.date === 'string' ? payload.date.split('/').map(Number) : [];
+  if (typeof payload.date !== 'string' || !/^14\d{2}\/\d{2}\/\d{2}$/.test(payload.date) ||
       dateParts.length !== 3 || dateParts[1] < 1 || dateParts[1] > 12 ||
       dateParts[2] < 1 || dateParts[2] > 31) {
     throw new Error('تاریخ عملیات خزانه معتبر نیست.');
@@ -506,31 +506,33 @@ export function validateTreasuryOperationPayload(payload: { date: string; amount
   if (!Number.isFinite(payload.amount) || payload.amount <= 0) {
     throw new Error('مبلغ عملیات خزانه باید عددی معتبر و بزرگ‌تر از صفر باشد.');
   }
-  if (!payload.description?.trim()) throw new Error('شرح عملیات خزانه الزامی است.');
-}
-
-export interface TreasuryAuditIssue {
-  transactionId: string;
-  kind: 'missing-voucher' | 'duplicate-voucher' | 'amount-mismatch';
-}
-
-export function auditTreasuryVoucherLinks(
-  transactions: Array<{ id: string; amount: number }>,
-  vouchers: Array<{ id: string; referenceId?: string; totalDebit: number; totalCredit: number }>,
-): TreasuryAuditIssue[] {
-  const issues: TreasuryAuditIssue[] = [];
-  for (const transaction of transactions) {
-    const linked = vouchers.filter((voucher) => voucher.referenceId === transaction.id);
-    if (linked.length === 0) {
-      issues.push({ transactionId: transaction.id, kind: 'missing-voucher' });
-    } else if (linked.length > 1) {
-      issues.push({ transactionId: transaction.id, kind: 'duplicate-voucher' });
-    } else if (
-      Math.abs(linked[0].totalDebit - transaction.amount) > 0.01 ||
-      Math.abs(linked[0].totalCredit - transaction.amount) > 0.01
-    ) {
-      issues.push({ transactionId: transaction.id, kind: 'amount-mismatch' });
-    }
+  if (typeof payload.description !== 'string' || !payload.description.trim()) {
+    throw new Error('شرح عملیات خزانه الزامی است.');
   }
-  return issues;
+}
+
+export interface TreasuryAccountIdentity {
+  code: string;
+  level: string;
+}
+
+export function validateTreasuryAccountSelection(
+  account: TreasuryAccountIdentity | undefined,
+  label = 'حساب خزانه',
+): void {
+  if (!account || account.level !== 'moein' ||
+      !(account.code.startsWith('101') || account.code.startsWith('102'))) {
+    throw new Error(label + ' انتخاب‌شده معتبر نیست یا حساب صندوق/بانک معین نیست.');
+  }
+}
+
+export function validateTreasuryTransferAccounts(
+  fromAccount: TreasuryAccountIdentity | undefined,
+  toAccount: TreasuryAccountIdentity | undefined,
+): void {
+  validateTreasuryAccountSelection(fromAccount, 'حساب مبدأ');
+  validateTreasuryAccountSelection(toAccount, 'حساب مقصد');
+  if (fromAccount!.code === toAccount!.code) {
+    throw new Error('حساب مبدأ و مقصد انتقال باید متفاوت باشند.');
+  }
 }
