@@ -2590,7 +2590,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             const lotId = generateSafeId('lot');
             const returnedSourceLot = payload.invoiceType === 'sale_return'
               ? inventoryLots.find((candidate) => candidate.productId === product.id &&
-                  candidate.warehouse === payload.warehouse && candidate.lotNumber === item.lotNumber)
+                  candidate.warehouse === payload.warehouse && candidate.lotNumber === (item.lotNumber || product.lotNumber))
               : undefined;
             if (payload.invoiceType === 'sale_return' && !returnedSourceLot &&
                 inventoryLotMovements.some((movement) => movement.productId === product.id && movement.warehouse === payload.warehouse && movement.movementType === 'issue')) {
