@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { shamsiToGregorianIso } from '../src/lib/format';
 import {
   allocateStockFIFO,
   reconcileInventoryLotLedger,
@@ -177,6 +178,13 @@ test('FIFO allocates oldest eligible lots and excludes expired lots', () => {
   assert.throws(() => allocateStockFIFO([{ ...lots[0], unitCost: Number.NaN }], 1, {
     productId: 'p1', warehouse: 'w1', asOfDate: '2026-11-22',
   }), /بهای واحد/);
+});
+
+test('Jalali dates convert to Gregorian ISO for FIFO transaction chronology', () => {
+  assert.equal(shamsiToGregorianIso('1405/09/01'), '2026-11-22');
+  assert.equal(shamsiToGregorianIso('1405/01/01'), '2026-03-21');
+  assert.equal(shamsiToGregorianIso('1404/01/01'), '2025-03-21');
+  assert.throws(() => shamsiToGregorianIso('1405/13/01'), /معتبر/);
 });
 
 test('sales returns cannot exceed net sold quantity of the source lot', () => {
