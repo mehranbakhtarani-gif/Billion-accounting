@@ -179,6 +179,7 @@ export interface InventoryLot {
   unitCost: number;
   costBasis: 'documented' | 'estimated-opening' | 'estimated-return' | 'estimated-adjustment';
   sourceInvoiceId?: string;
+  sourceLotId?: string;
   createdAt?: string;
 }
 
@@ -195,6 +196,7 @@ export interface InventoryLotMovement {
   referenceNumber?: string;
   date: string;
   reversalOfMovementId?: string;
+  sourceLotId?: string;
   notes?: string;
 }
 
