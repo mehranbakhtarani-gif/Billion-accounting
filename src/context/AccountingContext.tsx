@@ -4300,10 +4300,37 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       if (!Number.isFinite(rawProduct.stock) || availableForSubcontract + 1e-9 < job.sentWeightKg) {
         throw new Error('موجودی قابل تخصیص پس از کسر حواله‌های باز پیمانکاری کافی نیست.');
       }
+      const legacyOpenJobs = subcontractJobs.filter((item) =>
+        item.status === 'sent' && item.rawProductId === job.rawProductId && !item.rawLotAllocations?.length);
+      if (legacyOpenJobs.length) {
+        throw new Error('برای حواله‌های پیمانکاری باز قدیمی تخصیص بچ ثبت نشده است؛ ابتدا آن‌ها را تکمیل کنید تا FIFO دوباره‌شماری نشود.');
+      }
+      const ledgerIssues = reconcileInventoryLotLedger(inventoryLots as any, inventoryLotMovements);
+      if (ledgerIssues.length) throw new Error('دفتر بچ با گردش‌های ثبت‌شده مغایرت دارد؛ حواله پیمانکاری متوقف شد.');
+      const lotBalance = inventoryLots.filter((lot) => lot.productId === rawProduct.id && lot.warehouse === rawProduct.warehouse)
+        .reduce((sum, lot) => sum + lot.quantityRemaining, 0);
+      if (Math.abs(lotBalance - rawProduct.stock) > 0.01) {
+        throw new Error('مانده بچ‌های نخ خام با موجودی کالا برابر نیست؛ ابتدا دفتر بچ را تطبیق دهید.');
+      }
+      const reservedLots = new Map<string, number>();
+      subcontractJobs.filter((item) => item.status === 'sent' && item.rawProductId === job.rawProductId)
+        .forEach((item) => (item.rawLotAllocations || []).forEach((allocation) => {
+          reservedLots.set(allocation.lotId, (reservedLots.get(allocation.lotId) || 0) + allocation.quantity);
+        }));
+      const availableLots = inventoryLots.map((lot) => ({
+        ...lot,
+        quantityRemaining: Math.max(0, lot.quantityRemaining - (reservedLots.get(lot.id) || 0)),
+      }));
+      const asOfDate = new Date().toISOString().slice(0, 10);
+      const fifoReservation = allocateStockFIFO(availableLots as any, job.sentWeightKg, {
+        productId: rawProduct.id, warehouse: rawProduct.warehouse, asOfDate,
+      });
       const full: SubcontractJob = {
         ...job,
         id: generateSafeId('sub'),
         ownerId,
+        rawUnitCostIrr: fifoReservation.weightedUnitCost,
+        rawLotAllocations: fifoReservation.allocations,
       };
       if (user) {
          try { await setDoc(doc(db, 'subcontractJobs', full.id), { ...full, createdAt: serverTimestamp(), updatedAt: serverTimestamp() }); }
@@ -4317,7 +4344,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       );
       showToast(`حواله پیمانکاری ${full.jobNumber} ثبت شد.`);
     },
-    [ownerId, products, parties, subcontractJobs, salesOrders, logActivity, showToast, user]
+    [ownerId, products, parties, subcontractJobs, salesOrders, inventoryLots, inventoryLotMovements, logActivity, showToast, user]
   );
 
   const completeSubcontractJob = useCallback(
