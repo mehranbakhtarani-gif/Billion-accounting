@@ -3,6 +3,7 @@ name: Enterprise controls validation
 on:
   push:
     branches:
+      - main
       - feat/enterprise-controls-foundation
   pull_request:
     branches:
