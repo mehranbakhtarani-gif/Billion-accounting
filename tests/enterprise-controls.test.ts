@@ -267,17 +267,21 @@ test('open-item aging uses invoice outstanding amounts and due dates', () => {
 });
 
 test('receivables aging uses due dates and actual outstanding invoice balances', () => {
-  const party = { id: 'p1', ownerId: 'o1', code: 'C1', name: 'مشتری نمونه', partyType: 'customer', creditLimit: 0, openingBalance: 0, accountCode: '1103', phone: '09120000000' };
+  const party = { id: 'p1', ownerId: 'o1', code: 'C1', name: 'مشتری نمونه', partyType: 'customer', creditLimit: 0, openingBalance: 0, accountCode: '10401', phone: '09120000000' };
+  const accounts = [
+    { code: '104', level: 'kol', category: 'asset', parentCode: '1' },
+    { code: '10401', level: 'moein', category: 'asset', parentCode: '104' },
+  ];
   const invoice = (id: string, date: string, dueDate: string, creditAmount: number, grandTotal: number) => ({
     id, ownerId: 'o1', invoiceNumber: id, invoiceType: 'sale', date, dueDate, partyId: 'p1', partyName: 'مشتری نمونه',
     warehouse: 'انبار', subtotal: grandTotal, discount: 0, vatAmount: 0, grandTotal, paidCash: grandTotal - creditAmount,
     paidBank: 0, paidCheque: 0, creditAmount, status: 'issued', items: [],
   });
+  const vouchers = [{ status: 'permanent', lines: [{ partyId: 'p1', accountCode: '10401', debit: 300, credit: 0 }] }];
   const rows = computeReceivablesAging(
     [party] as any,
     [invoice('old', '1405/07/15', '1405/07/15', 200, 1000), invoice('new', '1405/08/30', '1405/08/30', 100, 1000)] as any,
-    new Map([['p1', 300]]),
-    '1405/09/01',
+    accounts as any, vouchers as any, '1405/09/01',
   );
   assert.equal(rows[0].totalReceivable, 300);
   assert.equal(rows[0].ledgerDifference, 0);
@@ -307,12 +311,17 @@ test('straight-line depreciation never exceeds depreciable base or salvage value
   assert.equal(calculateMonthlyDepreciation({ ...asset, salvageValue: 1300 } as any), 0);
   assert.equal(calculateMonthlyDepreciation({ ...asset, usefulLifeYears: 0 } as any), 0);
 });
-test('payables aging uses supplier balances, purchase invoices and due dates', () => {
-  const supplier = { id: 's1', ownerId: 'o1', code: 'S1', name: 'تأمین‌کننده نمونه', partyType: 'supplier', creditLimit: 0, openingBalance: 0, accountCode: '2101' };
+test('payables aging uses supplier control-account postings and purchase invoice due dates', () => {
+  const supplier = { id: 's1', ownerId: 'o1', code: 'S1', name: 'تأمین‌کننده نمونه', partyType: 'vendor', creditLimit: 0, openingBalance: 0, accountCode: '30101' };
+  const accounts = [
+    { code: '301', level: 'kol', category: 'liability', parentCode: '3' },
+    { code: '30101', level: 'moein', category: 'liability', parentCode: '301' },
+  ];
   const purchase = { id: 'buy1', ownerId: 'o1', invoiceNumber: 'P-1', invoiceType: 'purchase', date: '1405/07/15', dueDate: '1405/07/15',
     partyId: 's1', partyName: 'تأمین‌کننده نمونه', warehouse: 'انبار', subtotal: 900, discount: 0, vatAmount: 0, grandTotal: 900,
     paidCash: 700, paidBank: 0, paidCheque: 0, creditAmount: 200, status: 'issued', items: [] };
-  const rows = computePayablesAging([supplier] as any, [purchase] as any, new Map([['s1', -200]]), '1405/09/01');
+  const vouchers = [{ status: 'permanent', lines: [{ partyId: 's1', accountCode: '30101', debit: 0, credit: 200 }] }];
+  const rows = computePayablesAging([supplier] as any, [purchase] as any, accounts as any, vouchers as any, '1405/09/01');
   assert.equal(rows[0].totalPayable, 200);
   assert.equal(rows[0].ledgerDifference, 0);
   assert.equal(rows[0].bucket31to60, 200);
@@ -481,16 +490,7 @@ test('straight-line depreciation never exceeds depreciable base or salvage value
   assert.equal(calculateMonthlyDepreciation({ ...asset, accumulatedDepreciation: 1080 } as any), 0);
   assert.equal(calculateMonthlyDepreciation({ ...asset, salvageValue: 1300 } as any), 0);
 });
-test('payables aging uses supplier balances, purchase invoices and due dates', () => {
-  const supplier = { id: 's1', ownerId: 'o1', code: 'S1', name: 'تأمین‌کننده نمونه', partyType: 'supplier', creditLimit: 0, openingBalance: 0, accountCode: '2101' };
-  const purchase = { id: 'buy1', ownerId: 'o1', invoiceNumber: 'P-1', invoiceType: 'purchase', date: '1405/07/15', dueDate: '1405/07/15',
-    partyId: 's1', partyName: 'تأمین‌کننده نمونه', warehouse: 'انبار', subtotal: 900, discount: 0, vatAmount: 0, grandTotal: 900,
-    paidCash: 700, paidBank: 0, paidCheque: 0, creditAmount: 200, status: 'issued', items: [] };
-  const rows = computePayablesAging([supplier] as any, [purchase] as any, new Map([['s1', -200]]), '1405/09/01');
-  assert.equal(rows[0].totalPayable, 200);
-  assert.equal(rows[0].bucket31to60, 200);
-  assert.equal(rows[0].bucketOver90, 0);
-});
+
 test('atomic financial plan rejects unbalanced and duplicate side effects', () => {
   const valid = { operationId: 'op', idempotencyKey: 'idem', debitTotal: 100, creditTotal: 100,
     stockMovements: [{ id: 'move-1', productId: 'p1', quantityDelta: -2 }], documentIds: ['invoice-1'] };
