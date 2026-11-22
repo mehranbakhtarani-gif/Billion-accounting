@@ -180,6 +180,7 @@ export interface InventoryLot {
   costBasis: 'documented' | 'estimated-opening' | 'estimated-return' | 'estimated-adjustment';
   sourceInvoiceId?: string;
   sourceLotId?: string;
+  returnedQuantity?: number;
   createdAt?: string;
 }
 
