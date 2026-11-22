@@ -2136,7 +2136,17 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             if (!product) throw new Error(`کالای فاکتور یافت نشد: ${item.productName || item.productId}`);
             stockDeltas.set(product.id, (stockDeltas.get(product.id) || 0) + (wasOut ? item.quantity : -item.quantity));
           }
-          if (!wasOut) assertSufficientStock(new Map(products.map((product) => [product.id, product.stock])), inv.items.map((item) => ({ productId: item.productId, quantity: item.quantity })));
+          if (!wasOut) {
+            const subcontractReservations = new Map<string, number>();
+            for (const job of subcontractJobs) {
+              if (job.status !== 'sent') continue;
+              subcontractReservations.set(job.rawProductId, (subcontractReservations.get(job.rawProductId) ?? 0) + job.sentWeightKg);
+            }
+            assertSufficientStock(
+              new Map(products.map((product) => [product.id, Math.max(0, product.stock - (subcontractReservations.get(product.id) ?? 0))])),
+              inv.items.map((item) => ({ productId: item.productId, quantity: item.quantity })),
+            );
+          }
           for (const [productId, delta] of stockDeltas) {
             const product = products.find((candidate) => candidate.id === productId);
             if (!product) throw new Error(`کالای فاکتور یافت نشد: ${productId}`);
@@ -2164,7 +2174,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       }
       showToast(`فاکتور ${inv.invoiceNumber} ابطال شد و گردش موجودی/سند معکوس ثبت گردید.`);
     },
-    [invoices, products, vouchers, adjustProductStock, createVoucher, user, showToast]
+    [invoices, products, vouchers, subcontractJobs, adjustProductStock, createVoucher, user, showToast]
   );
 
   const convertProformaToSale = useCallback(
