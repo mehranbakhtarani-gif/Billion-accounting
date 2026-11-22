@@ -3414,7 +3414,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           rawProduct.stock - job.sentWeightKg + 1e-9 < reservedByOtherJobs) {
         throw new Error('موجودی نخ خام برای تکمیل این حواله، پس از حفظ موجودی رزروشده سایر پیمانکاری‌ها کافی نیست.');
       }
-      if (!Number.isFinite(payload.returnedWeightKg) || payload.returnedWeightKg <= 0 || payload.returnedWeightKg > job.sentWeightKg + 1e-9 || !/^14\\d{2}\\/\\d{2}\\/\\d{2}$/.test(payload.completionDate) || !payload.finishedLotNumber.trim()) {
+      if (!Number.isFinite(payload.returnedWeightKg) || payload.returnedWeightKg <= 0 || payload.returnedWeightKg > job.sentWeightKg + 1e-9 || !/^14\d{2}\/\d{2}\/\d{2}$/.test(payload.completionDate) || !payload.finishedLotNumber.trim()) {
         throw new Error('وزن برگشتی باید مثبت و حداکثر برابر وزن نخ ارسالی باشد؛ تاریخ و شماره لات نیز باید معتبر باشند.');
       }
       if (!Number.isFinite(job.rawUnitCostIrr) || job.rawUnitCostIrr < 0 || !Number.isFinite(job.serviceFeePerKgIrr) || job.serviceFeePerKgIrr < 0) throw new Error('بهای مواد اولیه یا اجرت پیمانکاری نامعتبر است.');
