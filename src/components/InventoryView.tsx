@@ -1328,7 +1328,7 @@ export const InventoryView: React.FC<{ initialIntent?: string; clearIntent?: () 
                         Math.abs(selectedProduct.stock - inventoryLots.filter((lot) => lot.productId === selectedProduct.id && lot.warehouse === selectedProduct.warehouse).reduce((sum, lot) => sum + lot.quantityRemaining, 0)) > 0.01 && (
                         <div className="rounded-md border border-amber-300 bg-amber-50 dark:bg-amber-950/30 p-2 space-y-2">
                           <div className="text-[10px] text-amber-900 dark:text-amber-300">موجودی کالا با جمع مانده بچ‌ها برابر نیست. فروش FIFO تا تطبیق مانده بچ‌ها قابل اتکا نیست.</div>
-                          <button type="button" onClick={() => reconcileProductLotsToStock(selectedProduct.id)} className="w-full rounded-md bg-amber-700 hover:bg-amber-800 text-white py-2 font-semibold">تطبیق بچ‌ها با موجودی شمارش‌شده</button>
+                          <button type="button" onClick={async () => { try { await reconcileProductLotsToStock(selectedProduct.id); } catch (error) { showToast(error instanceof Error ? error.message : String(error)); } }} className="w-full rounded-md bg-amber-700 hover:bg-amber-800 text-white py-2 font-semibold">تطبیق بچ‌ها با موجودی شمارش‌شده</button>
                         </div>
                       )}
                       <div className="space-y-1">
@@ -1355,13 +1355,17 @@ export const InventoryView: React.FC<{ initialIntent?: string; clearIntent?: () 
                             <label className="space-y-1"><span>تاریخ انقضا (اختیاری)</span><input type="date" value={openingLotExpiry} onChange={(e) => setOpeningLotExpiry(e.target.value)} className="w-full rounded border p-2 bg-white dark:bg-slate-900" /></label>
                           </div>
                           <button type="button" onClick={async () => {
-                            await createOpeningInventoryLot({
-                              productId: selectedProduct.id, lotNumber: openingLotNumber,
-                              quantity: Number(openingLotQty || selectedProduct.stock),
-                              unitCost: Number(openingLotCost || selectedProduct.buyPrice),
-                              receivedDate: openingLotDate, ...(openingLotExpiry ? { expiryDate: openingLotExpiry } : {}),
-                            });
-                            setOpeningLotNumber(''); setOpeningLotQty(''); setOpeningLotCost(''); setOpeningLotExpiry('');
+                            try {
+                              await createOpeningInventoryLot({
+                                productId: selectedProduct.id, lotNumber: openingLotNumber,
+                                quantity: Number(openingLotQty || selectedProduct.stock),
+                                unitCost: Number(openingLotCost || selectedProduct.buyPrice),
+                                receivedDate: openingLotDate, ...(openingLotExpiry ? { expiryDate: openingLotExpiry } : {}),
+                              });
+                              setOpeningLotNumber(''); setOpeningLotQty(''); setOpeningLotCost(''); setOpeningLotExpiry('');
+                            } catch (error) {
+                              showToast(error instanceof Error ? error.message : String(error));
+                            }
                           }} className="w-full py-2 rounded-lg bg-teal-700 hover:bg-teal-800 text-white font-semibold">ثبت بچ افتتاحیه برآوردی</button>
                         </div>
                       )}
