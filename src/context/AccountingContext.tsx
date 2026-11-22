@@ -2475,9 +2475,15 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
                 .reduce((sum, movement) => sum +
                   (movement.movementType === 'return' ? movement.quantity :
                     movement.movementType === 'reversal' ? movement.quantity : 0), 0);
-              const soldFromSource = inventoryLotMovements
+              const sourceIssueIds = new Set(inventoryLotMovements
                 .filter((movement) => movement.lotId === returnedSourceLot.id && movement.movementType === 'issue')
-                .reduce((sum, movement) => sum + Math.abs(Math.min(0, movement.quantity)), 0);
+                .map((movement) => movement.id));
+              const netIssued = inventoryLotMovements
+                .filter((movement) =>
+                  (movement.lotId === returnedSourceLot.id && movement.movementType === 'issue') ||
+                  (movement.movementType === 'reversal' && movement.reversalOfMovementId && sourceIssueIds.has(movement.reversalOfMovementId)))
+                .reduce((sum, movement) => sum + movement.quantity, 0);
+              const soldFromSource = Math.max(0, -netIssued);
               const returnable = Math.max(0, soldFromSource - previouslyReturned);
               if (item.quantity > returnable + 0.0001) {
                 throw new Error(`مقدار برگشت از بچ ${returnedSourceLot.lotNumber} بیش از مقدار فروش خالص همان بچ است. حداکثر قابل برگشت: ${returnable}`);
