@@ -4391,10 +4391,22 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         throw new Error('مانده بچ‌های نخ خام با موجودی کالا برابر نیست؛ ابتدا دفتر بچ را تطبیق دهید.');
       }
       const movementDate = new Date().toISOString().slice(0, 10);
-      const fifo = allocateStockFIFO(inventoryLots as any, job.sentWeightKg, {
-        productId: rawProduct.id, warehouse: rawProduct.warehouse, asOfDate: movementDate,
-      });
-      const rawTotalCost = Math.round(fifo.totalCost);
+      let rawLotAllocations = job.rawLotAllocations || [];
+      if (!rawLotAllocations.length) {
+        const reservedLots = new Map<string, number>();
+        subcontractJobs.filter((item) => item.id !== jobId && item.status === 'sent')
+          .forEach((item) => (item.rawLotAllocations || []).forEach((allocation) => {
+            reservedLots.set(allocation.lotId, (reservedLots.get(allocation.lotId) || 0) + allocation.quantity);
+          }));
+        const availableLots = inventoryLots.map((lot) => ({
+          ...lot,
+          quantityRemaining: Math.max(0, lot.quantityRemaining - (reservedLots.get(lot.id) || 0)),
+        }));
+        rawLotAllocations = allocateStockFIFO(availableLots as any, job.sentWeightKg, {
+          productId: rawProduct.id, warehouse: rawProduct.warehouse, asOfDate: movementDate,
+        }).allocations;
+      }
+      const rawTotalCost = Math.round(rawLotAllocations.reduce((sum, allocation) => sum + allocation.totalCost, 0));
       const serviceFeeTotal = Math.round(payload.returnedWeightKg * job.serviceFeePerKgIrr);
       const finishedTotalCost = rawTotalCost + serviceFeeTotal;
       const finishedUnitCost = Math.round(finishedTotalCost / payload.returnedWeightKg);
@@ -4423,12 +4435,18 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           quantityReceived: payload.returnedWeightKg, quantityRemaining: payload.returnedWeightKg,
           unitCost: finishedUnitCost, costBasis: 'documented', sourceInvoiceId: job.id, createdAt: serverTimestamp(),
         };
-        const rawUpdatedLots = new Map(fifo.allocations.map((allocation) => {
-          const lot = fifo.remainingLots.find((candidate: any) => candidate.id === allocation.lotId);
-          if (!lot) throw new Error(`بچ ${allocation.lotNumber} برای مصرف پیمانکاری یافت نشد.`);
-          return [lot.id, lot as unknown as InventoryLot] as const;
-        }));
-        const rawMovements: InventoryLotMovement[] = fifo.allocations.map((allocation) => ({
+        const rawUpdatedLots = new Map<string, InventoryLot>();
+        for (const allocation of rawLotAllocations) {
+          const lot = rawUpdatedLots.get(allocation.lotId) ?? inventoryLots.find((candidate) => candidate.id === allocation.lotId);
+          if (!lot || lot.productId !== rawProduct.id || lot.warehouse !== rawProduct.warehouse ||
+              lot.quantityRemaining + 0.0001 < allocation.quantity) {
+            throw new Error(`بچ ${allocation.lotNumber} برای مصرف پیمانکاری موجودی کافی ندارد؛ حواله دوباره بررسی شود.`);
+          }
+          rawUpdatedLots.set(lot.id, {
+            ...lot, quantityRemaining: Number((lot.quantityRemaining - allocation.quantity).toFixed(4)),
+          });
+        }
+        const rawMovements: InventoryLotMovement[] = rawLotAllocations.map((allocation) => ({
           id: generateSafeId('lotmove'), ownerId, lotId: allocation.lotId, productId: rawProduct.id,
           warehouse: rawProduct.warehouse, movementType: 'issue', quantity: -allocation.quantity,
           unitCost: allocation.unitCost, referenceId: job.id, referenceNumber: job.jobNumber, date: movementDate,
