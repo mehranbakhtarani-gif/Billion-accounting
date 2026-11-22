@@ -4533,14 +4533,26 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           unitCost: finishedUnitCost, costBasis: 'documented', sourceInvoiceId: job.id, createdAt: serverTimestamp(),
         };
         const rawUpdatedLots = new Map<string, InventoryLot>();
+        const jobLotReservations = new Map<string, number>();
+        subcontractJobs.filter((item) => item.status === 'sent')
+          .forEach((item) => (item.rawLotAllocations || []).forEach((allocation) => {
+            jobLotReservations.set(allocation.lotId, (jobLotReservations.get(allocation.lotId) || 0) + allocation.quantity);
+          }));
+        const isLotReservedJob = !!job.rawLotAllocations?.length;
         for (const allocation of rawLotAllocations) {
           const lot = rawUpdatedLots.get(allocation.lotId) ?? inventoryLots.find((candidate) => candidate.id === allocation.lotId);
           if (!lot || lot.productId !== rawProduct.id || lot.warehouse !== rawProduct.warehouse ||
               lot.quantityRemaining + 0.0001 < allocation.quantity) {
             throw new Error(`بچ ${allocation.lotNumber} برای مصرف پیمانکاری موجودی کافی ندارد؛ حواله دوباره بررسی شود.`);
           }
+          const currentReserved = Math.max(lot.reservedQuantity || 0, jobLotReservations.get(lot.id) || 0);
+          if (isLotReservedJob && currentReserved + 0.0001 < allocation.quantity) {
+            throw new Error(`رزرو بچ ${lot.lotNumber} برای این حواله معتبر نیست؛ تکمیل متوقف شد.`);
+          }
           rawUpdatedLots.set(lot.id, {
-            ...lot, quantityRemaining: Number((lot.quantityRemaining - allocation.quantity).toFixed(4)),
+            ...lot,
+            quantityRemaining: Number((lot.quantityRemaining - allocation.quantity).toFixed(4)),
+            ...(isLotReservedJob ? { reservedQuantity: Number(Math.max(0, currentReserved - allocation.quantity).toFixed(4)) } : {}),
           });
         }
         const rawMovements: InventoryLotMovement[] = rawLotAllocations.map((allocation) => ({
@@ -4558,7 +4570,9 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         if (user) {
           const batch = writeBatch(db);
           rawUpdatedLots.forEach((lot) => batch.update(doc(db, 'inventoryLots', lot.id), {
-            quantityRemaining: lot.quantityRemaining, updatedAt: serverTimestamp(),
+            quantityRemaining: lot.quantityRemaining,
+            ...(lot.reservedQuantity !== undefined ? { reservedQuantity: lot.reservedQuantity } : {}),
+            updatedAt: serverTimestamp(),
           }));
           rawMovements.forEach((movement) => batch.set(doc(db, 'inventoryLotMovements', movement.id), movement));
           batch.set(doc(db, 'inventoryLots', finishedLotId), finishedLot);
