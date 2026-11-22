@@ -209,6 +209,7 @@ export interface Invoice {
   creditAmount: number;
   status: InvoiceStatus;
   voucherId?: string;
+  salesOrderId?: string;
   items: InvoiceItem[];
 }
 
