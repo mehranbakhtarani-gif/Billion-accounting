@@ -15,7 +15,7 @@ import {
 } from 'lucide-react';
 import { useAccounting } from '../context/AccountingContext';
 import { Product } from '../types/accounting';
-import {
+import { getLocalIsoDate,
   exportToCsv,
   formatMoney,
   formatNumber,
@@ -112,7 +112,7 @@ export const InventoryView: React.FC<{ initialIntent?: string; clearIntent?: () 
   const [openingLotNumber, setOpeningLotNumber] = useState('');
   const [openingLotQty, setOpeningLotQty] = useState('');
   const [openingLotCost, setOpeningLotCost] = useState('');
-  const [openingLotDate, setOpeningLotDate] = useState(new Date().toISOString().slice(0, 10));
+  const [openingLotDate, setOpeningLotDate] = useState(getLocalIsoDate());
   const [openingLotExpiry, setOpeningLotExpiry] = useState('');
 
   // Product form (Textile Yarn Multi-Unit)
