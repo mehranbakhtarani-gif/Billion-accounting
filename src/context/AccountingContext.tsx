@@ -2416,6 +2416,11 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       let cogsTotal = 0;
       const stockDeltas = new Map<string, number>();
       let workingLots = inventoryLots.map((lot) => ({ ...lot }));
+      const invoiceItems = payload.items.map((item) => ({ ...item }));
+      const currentOrderReservedLotQuantities = new Map<string, number>();
+      if (payload.salesOrderId) invoiceItems.forEach((item) => (item.lotAllocations || []).forEach((allocation) => {
+        currentOrderReservedLotQuantities.set(allocation.lotId, (currentOrderReservedLotQuantities.get(allocation.lotId) || 0) + allocation.quantity);
+      }));
       const reservedLotQuantities = new Map<string, number>();
       for (const job of subcontractJobs.filter((candidate) => candidate.status === 'sent')) {
         let reservations = job.rawLotAllocations || [];
@@ -2456,16 +2461,16 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         }
       }
       for (const lot of workingLots) {
-        const reservedQty = Math.max(lot.reservedQuantity || 0, reservedLotQuantities.get(lot.id) || 0);
-        if (reservedQty > lot.quantityRemaining + 0.0001) {
-          throw new Error('رزرو بچ‌های پیمانکاری با مانده واقعی دفتر بچ سازگار نیست؛ فروش متوقف شد.');
+        const currentOrderReserved = currentOrderReservedLotQuantities.get(lot.id) || 0;
+        const otherReserved = Math.max(Math.max(0, (lot.reservedQuantity || 0) - currentOrderReserved), reservedLotQuantities.get(lot.id) || 0);
+        if (otherReserved + currentOrderReserved > lot.quantityRemaining + 0.0001) {
+          throw new Error('رزروهای بچ با مانده واقعی دفتر بچ سازگار نیست؛ فروش متوقف شد.');
         }
-        if (reservedQty > 0) reservedLotQuantities.set(lot.id, reservedQty);
+        if (otherReserved > 0) reservedLotQuantities.set(lot.id, otherReserved);
       }
       const lotUpdates = new Map<string, InventoryLot>();
       const lotReceipts: InventoryLot[] = [];
       const lotMovementsToSave: InventoryLotMovement[] = [];
-      const invoiceItems = payload.items.map((item) => ({ ...item }));
       validateJalaliDate(payload.date, 'تاریخ فاکتور');
       const asOfDate = shamsiToGregorianIso(payload.date);
       if (payload.invoiceType !== 'proforma') {
