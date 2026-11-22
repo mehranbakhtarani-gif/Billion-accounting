@@ -2485,6 +2485,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
               item.lotAllocations = [{ lotId, lotNumber: lot.lotNumber, quantity: item.quantity, unitCost: lot.unitCost, totalCost: item.quantity * lot.unitCost }];
             }
             lotReceipts.push(lot);
+            if (payload.invoiceType === 'sale_return') cogsTotal += Math.round(item.quantity * lot.unitCost);
             lotMovementsToSave.push({
               id: generateSafeId('lotmove'), ownerId, lotId, productId: product.id,
               warehouse: lot.warehouse, movementType: payload.invoiceType === 'sale_return' ? 'return' : 'receipt',
