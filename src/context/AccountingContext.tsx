@@ -463,6 +463,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
            putAll('importDossiers', seed.importDossiers);
            putAll('salesOrders', seed.salesOrders);
            putAll('subcontractJobs', seed.subcontractJobs);
+           putAll('rbacOperators', seed.rbacOperators);
           await batch.commit();
           showToast('فضای کاری اولیه در Supabase ایجاد شد.');
         } else {
@@ -483,6 +484,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             ['importDossiers', extraSeed.importDossiers],
             ['salesOrders', extraSeed.salesOrders],
             ['subcontractJobs', extraSeed.subcontractJobs],
+            ['rbacOperators', extraSeed.rbacOperators],
           ] as const) {
             const existingRecords = await getDocs(query(collection(db, collectionName), where('ownerId', '==', uid)));
             if (existingRecords.empty && records.length) {
@@ -579,6 +581,8 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
          subscribeCol<ImportDossier>('importDossiers', setImportDossiers);
          subscribeCol<SalesOrder>('salesOrders', setSalesOrders);
          subscribeCol<SubcontractJob>('subcontractJobs', setSubcontractJobs);
+         subscribeCol<RbacOperator>('rbacOperators', setRbacOperators);
+         subscribeCol<AuditActivityLog>('auditLogs', setAuditLogs);
       })
       .catch((err) => {
         console.error(err);
@@ -3445,8 +3449,12 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         details,
       };
       setAuditLogs((prev) => [entry, ...prev].slice(0, 200));
+      if (user) {
+        void setDoc(doc(db, 'auditLogs', entry.id), { ...entry, createdAt: serverTimestamp() })
+          .catch((error) => console.error('Audit log cloud sync failed', error));
+      }
     },
-    [ownerId, activeOperator]
+    [ownerId, activeOperator, user]
   );
 
   // ---------------- IMPORT DOSSIERS & LANDED COST ----------------
@@ -3956,12 +3964,25 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   // ---------------- RBAC OPERATORS CRUD ----------------
   const addRbacOperator = useCallback(
     async (op: Omit<RbacOperator, 'id' | 'ownerId'>) => {
-      const full: RbacOperator = { ...op, id: generateSafeId('op'), ownerId };
+      const fullName = op.fullName.trim();
+      if (!fullName) throw new Error('نام اپراتور الزامی است.');
+      if (rbacOperators.some((existing) => existing.email.toLowerCase() === op.email.toLowerCase())) {
+        throw new Error('این ایمیل قبلاً برای اپراتور دیگری ثبت شده است.');
+      }
+      const full: RbacOperator = { ...op, fullName, id: generateSafeId('op'), ownerId };
+      if (user) {
+        try {
+          await setDoc(doc(db, 'rbacOperators', full.id), { ...full, createdAt: serverTimestamp(), updatedAt: serverTimestamp() });
+        } catch (error) {
+          handleSupabaseError(error, OperationType.CREATE, `rbacOperators/${full.id}`);
+          throw error;
+        }
+      }
       setRbacOperators((prev) => [...prev, full]);
       logActivity('مدیریت کاربران', `تعریف کاربر ${full.fullName}`, `نقش: ${full.role}`);
       showToast(`کاربر «${full.fullName}» به لیست اپراتورها اضافه شد.`);
     },
-    [ownerId, logActivity, showToast]
+    [ownerId, user, rbacOperators, logActivity, showToast]
   );
 
   const updateRbacOperator = useCallback(
@@ -3969,28 +3990,57 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       opId: string,
       patch: Partial<Pick<RbacOperator, 'fullName' | 'role' | 'email' | 'active' | 'permissions'>>
     ) => {
-      setRbacOperators((prev) => prev.map((o) => (o.id === opId ? { ...o, ...patch } : o)));
+      const existing = rbacOperators.find((operator) => operator.id === opId);
+      if (!existing) throw new Error('اپراتور موردنظر یافت نشد.');
+      const nextName = patch.fullName === undefined ? existing.fullName : patch.fullName.trim();
+      if (!nextName) throw new Error('نام اپراتور نمی‌تواند خالی باشد.');
+      const nextEmail = patch.email === undefined ? existing.email : patch.email.trim().toLowerCase();
+      if (rbacOperators.some((operator) => operator.id !== opId && operator.email.toLowerCase() === nextEmail)) {
+        throw new Error('این ایمیل قبلاً برای اپراتور دیگری ثبت شده است.');
+      }
+      if (user) {
+        try {
+          const payload: Record<string, unknown> = { updatedAt: serverTimestamp() };
+          if (patch.fullName !== undefined) payload.fullName = nextName.slice(0, 140);
+          if (patch.role !== undefined) payload.role = patch.role;
+          if (patch.email !== undefined) payload.email = nextEmail.slice(0, 180);
+          if (patch.active !== undefined) payload.active = Boolean(patch.active);
+          if (patch.permissions !== undefined) payload.permissions = patch.permissions;
+          await updateDoc(doc(db, 'rbacOperators', opId), payload);
+        } catch (error) {
+          handleSupabaseError(error, OperationType.UPDATE, `rbacOperators/${opId}`);
+          throw error;
+        }
+      }
+      setRbacOperators((prev) => prev.map((operator) => operator.id === opId ? { ...operator, ...patch, fullName: nextName, email: nextEmail } : operator));
       logActivity('مدیریت کاربران', 'ویرایش سطح دسترسی کاربر', `شناسه اپراتور: ${opId}`);
       showToast('سطح دسترسی کاربر به‌روزرسانی شد.');
     },
-    [logActivity, showToast]
+    [rbacOperators, user, logActivity, showToast]
   );
 
   const deleteRbacOperator = useCallback(
     async (opId: string) => {
-      if (rbacOperators.length <= 1) {
-        showToast('حداقل یک کاربر مدیر در سیستم باید باقی بماند.');
-        return;
+      if (rbacOperators.length <= 1) throw new Error('حداقل یک کاربر مدیر در سیستم باید باقی بماند.');
+      const target = rbacOperators.find((operator) => operator.id === opId);
+      if (!target) throw new Error('اپراتور موردنظر یافت نشد.');
+      if (user) {
+        try {
+          await deleteDoc(doc(db, 'rbacOperators', opId));
+        } catch (error) {
+          handleSupabaseError(error, OperationType.DELETE, `rbacOperators/${opId}`);
+          throw error;
+        }
       }
-      setRbacOperators((prev) => prev.filter((o) => o.id !== opId));
+      setRbacOperators((prev) => prev.filter((operator) => operator.id !== opId));
       if (activeOperatorId === opId) {
-        const next = rbacOperators.find((o) => o.id !== opId);
+        const next = rbacOperators.find((operator) => operator.id !== opId);
         if (next) setActiveOperatorId(next.id);
       }
       logActivity('مدیریت کاربران', 'حذف اپراتور', `شناسه اپراتور: ${opId}`);
       showToast('اپراتور حذف شد.');
     },
-    [rbacOperators, activeOperatorId, logActivity, showToast]
+    [rbacOperators, activeOperatorId, user, logActivity, showToast]
   );
 
   // ---------------- BACKUP & RESTORE ----------------
