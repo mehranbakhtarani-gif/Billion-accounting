@@ -36,7 +36,7 @@ import {
 import { createHolooSeedData } from '../data/holooSeed';
 import { getOrCreateLocalDeviceIdentity, loadLocalAccountingSnapshot, LocalDeviceIdentity, saveLocalAccountingSnapshot } from '../lib/localAccountingStore';
 import { FxRevaluationRow } from '../lib/enterpriseAccounting';
-import { assertSufficientStock, getChequeStatusTransitionError, validateJournalEntryPayload, validateTreasuryOperationPayload, validateTreasuryAccountSelection, validateTreasuryTransferAccounts, validateChequeDateRange, validatePartyTreasuryAccount, validateJalaliDate, validateImportLandedCostPayload, aggregateStockReservations, collectActiveStockReservations, validateSalesOrderDispatchQuantities, validateInvoicePaymentAllocations, buildInvoiceAllocationReversal, getInvoiceStockDirection, getInvoiceCancellationBlockReason, allocateStockFIFO, reconcileInventoryLotLedger } from '../lib/enterpriseControls';
+import { assertSufficientStock, getChequeStatusTransitionError, validateJournalEntryPayload, validateTreasuryOperationPayload, validateTreasuryAccountSelection, validateTreasuryTransferAccounts, validateChequeDateRange, validatePartyTreasuryAccount, validateJalaliDate, validateImportLandedCostPayload, aggregateStockReservations, collectActiveStockReservations, validateSalesOrderDispatchQuantities, validateInvoicePaymentAllocations, buildInvoiceAllocationReversal, getInvoiceStockDirection, getInvoiceCancellationBlockReason, allocateStockFIFO, reconcileInventoryLotLedger, calculateLotReturnableQuantity } from '../lib/enterpriseControls';
 import {
   AuditReport,
   buildInvoiceVoucherLines,
@@ -2470,21 +2470,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
                   candidate.warehouse === payload.warehouse && candidate.lotNumber === item.lotNumber)
               : undefined;
             if (returnedSourceLot) {
-              const previouslyReturned = inventoryLotMovements
-                .filter((movement) => movement.sourceLotId === returnedSourceLot.id)
-                .reduce((sum, movement) => sum +
-                  (movement.movementType === 'return' ? movement.quantity :
-                    movement.movementType === 'reversal' ? movement.quantity : 0), 0);
-              const sourceIssueIds = new Set(inventoryLotMovements
-                .filter((movement) => movement.lotId === returnedSourceLot.id && movement.movementType === 'issue')
-                .map((movement) => movement.id));
-              const netIssued = inventoryLotMovements
-                .filter((movement) =>
-                  (movement.lotId === returnedSourceLot.id && movement.movementType === 'issue') ||
-                  (movement.movementType === 'reversal' && movement.reversalOfMovementId && sourceIssueIds.has(movement.reversalOfMovementId)))
-                .reduce((sum, movement) => sum + movement.quantity, 0);
-              const soldFromSource = Math.max(0, -netIssued);
-              const returnable = Math.max(0, soldFromSource - previouslyReturned);
+              const returnable = calculateLotReturnableQuantity(returnedSourceLot.id, inventoryLotMovements);
               if (item.quantity > returnable + 0.0001) {
                 throw new Error(`مقدار برگشت از بچ ${returnedSourceLot.lotNumber} بیش از مقدار فروش خالص همان بچ است. حداکثر قابل برگشت: ${returnable}`);
               }
