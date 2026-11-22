@@ -1,5 +1,5 @@
 {
-  "fetchedAt": 1795339922000,
+  "fetchedAt": 1795342960000,
   "source": "بازار آزاد تهران (نرخ‌آرا)",
   "sourceUrl": "https://nerkhara.com/",
   "items": [
@@ -7,43 +7,43 @@
       "code": "USD",
       "name": "دلار آمریکا",
       "symbol": "$",
-      "priceIrr": 2682350,
+      "priceIrr": 2684825,
       "highIrr": 2689700,
       "lowIrr": 2679700,
       "changeIrr": 0,
-      "changePercent": -0.96,
+      "changePercent": -0.63,
       "direction": "down",
-      "updatedTime": "09:21"
+      "updatedTime": "10:21"
     },
     {
       "code": "CNY",
       "name": "یوان چین",
       "symbol": "¥",
-      "priceIrr": 400750,
+      "priceIrr": 401120,
       "changeIrr": 0,
-      "changePercent": -1.07,
+      "changePercent": -0.74,
       "direction": "down",
-      "updatedTime": "09:21"
+      "updatedTime": "10:21"
     },
     {
       "code": "AED",
       "name": "درهم امارات",
       "symbol": "د.إ",
-      "priceIrr": 730390,
+      "priceIrr": 731060,
       "changeIrr": 0,
-      "changePercent": -0.96,
+      "changePercent": -0.63,
       "direction": "down",
-      "updatedTime": "09:21"
+      "updatedTime": "10:21"
     },
     {
       "code": "EUR",
       "name": "یورو اروپا",
       "symbol": "€",
-      "priceIrr": 2943430,
+      "priceIrr": 2946150,
       "changeIrr": 0,
-      "changePercent": -0.98,
+      "changePercent": -0.65,
       "direction": "down",
-      "updatedTime": "09:21"
+      "updatedTime": "10:21"
     }
   ]
 }
