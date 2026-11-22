@@ -1,4 +1,5 @@
 import {
+  Account,
   CompanyProfile,
   CurrencyDefinition,
   Employee,
@@ -373,30 +374,74 @@ function roundAgingAmount(amount: number): number {
   return Math.round((amount + Number.EPSILON) * 100) / 100;
 }
 
+/**
+ * Computes party balances from permanent journal lines in the configured
+ * receivables/payables control-account subtree. Unrelated and cheque accounts
+ * are excluded; draft vouchers never affect the reported control balance.
+ */
+export function computePartyControlAccountBalances(
+  parties: Party[], accounts: Account[], vouchers: Voucher[], direction: 'receivable' | 'payable',
+): Map<string, number> {
+  const accountByCode = new Map(accounts.map((account) => [account.code, account]));
+  const balances = new Map<string, number>();
+  for (const party of parties) {
+    const account = accountByCode.get(party.accountCode);
+    if (!account) throw new Error('حساب تفصیلی طرف‌حساب ' + party.name + ' در سرفصل‌ها یافت نشد.');
+    let control = account;
+    const visited = new Set<string>();
+    while (control.level !== 'kol') {
+      if (!control.parentCode || visited.has(control.code)) {
+        throw new Error('حساب کنترل کل برای طرف‌حساب ' + party.name + ' قابل تشخیص نیست.');
+      }
+      visited.add(control.code);
+      const parent = accountByCode.get(control.parentCode);
+      if (!parent) throw new Error('سرفصل بالادستی حساب ' + party.name + ' ناقص است.');
+      control = parent;
+    }
+    const expectedCategory = direction === 'receivable' ? 'asset' : 'liability';
+    if (control.category !== expectedCategory) {
+      throw new Error('ماهیت حساب کنترل طرف‌حساب ' + party.name + ' با گزارش انتخابی سازگار نیست.');
+    }
+    const eligible = direction === 'receivable'
+      ? party.partyType === 'customer' || party.partyType === 'both'
+      : party.partyType === 'vendor' || party.partyType === 'both';
+    if (!eligible) continue;
+    let balance = 0;
+    for (const voucher of vouchers) {
+      if (voucher.status !== 'permanent') continue;
+      for (const line of voucher.lines) {
+        if (line.partyId !== party.id || !line.accountCode.startsWith(control.code)) continue;
+        const debit = Number(line.debit) || 0;
+        const credit = Number(line.credit) || 0;
+        balance += direction === 'receivable' ? debit - credit : credit - debit;
+      }
+    }
+    if (!Number.isFinite(balance)) throw new Error('مانده حساب کنترل طرف‌حساب ' + party.name + ' معتبر نیست.');
+    balances.set(party.id, roundAgingAmount(balance));
+  }
+  return balances;
+}
+
 export function computeReceivablesAging(
-  parties: Party[],
-  invoices: Invoice[],
-  partyBalances: Map<string, number>,
-  todayShamsi: string = getTodayShamsi()
+  parties: Party[], invoices: Invoice[], accounts: Account[], vouchers: Voucher[],
+  todayShamsi: string = getTodayShamsi(),
 ): AgingBucketRow[] {
+  const controlBalances = computePartyControlAccountBalances(parties, accounts, vouchers, 'receivable');
   const rows: AgingBucketRow[] = [];
   for (const party of parties) {
-    const rawLedgerBalance = partyBalances.get(party.id) ?? 0;
-    if (!Number.isFinite(rawLedgerBalance)) throw new Error(`مانده دفترکل مشتری ${party.name} معتبر نیست.`);
+    if (party.partyType !== 'customer' && party.partyType !== 'both') continue;
+    const rawLedgerBalance = controlBalances.get(party.id) ?? 0;
+    if (!Number.isFinite(rawLedgerBalance)) throw new Error('مانده حساب کنترل دریافتنی مشتری ' + party.name + ' معتبر نیست.');
     const ledgerBalance = Math.max(0, rawLedgerBalance);
     const openInvoices = collectAgingInvoices(invoices, party.id, 'sale', todayShamsi);
     const totalReceivable = roundAgingAmount(openInvoices.reduce((sum, item) => sum + item.outstanding, 0));
     if (totalReceivable <= 0 && ledgerBalance <= 0) continue;
-
     const buckets = { bucket0to30: 0, bucket31to60: 0, bucket61to90: 0, bucketOver90: 0 };
     let maxOverdueDays = 0;
     let oldestInvoiceDate: string | undefined;
     for (const item of openInvoices) {
       addAgingAmount(buckets, item.overdueDays, item.outstanding);
-      if (item.overdueDays > maxOverdueDays) {
-        maxOverdueDays = item.overdueDays;
-        oldestInvoiceDate = item.dueDate;
-      }
+      if (item.overdueDays > maxOverdueDays) { maxOverdueDays = item.overdueDays; oldestInvoiceDate = item.dueDate; }
     }
     rows.push({
       partyId: party.id, partyCode: party.code, partyName: party.name, phone: party.phone,
@@ -409,28 +454,27 @@ export function computeReceivablesAging(
   return rows.sort((a, b) => b.totalReceivable - a.totalReceivable);
 }
 
-/** Read-only supplier aging based on outstanding purchase invoices and their due dates. */
+/** Read-only supplier aging reconciled to the configured payable control account. */
 export function computePayablesAging(
-  parties: Party[], invoices: Invoice[], partyBalances: Map<string, number>, todayShamsi: string = getTodayShamsi(),
+  parties: Party[], invoices: Invoice[], accounts: Account[], vouchers: Voucher[],
+  todayShamsi: string = getTodayShamsi(),
 ): PayablesAgingRow[] {
+  const controlBalances = computePartyControlAccountBalances(parties, accounts, vouchers, 'payable');
   const rows: PayablesAgingRow[] = [];
   for (const party of parties) {
-    const rawLedgerBalance = partyBalances.get(party.id) ?? 0;
-    if (!Number.isFinite(rawLedgerBalance)) throw new Error(`مانده دفترکل تأمین‌کننده ${party.name} معتبر نیست.`);
-    const ledgerBalance = Math.abs(Math.min(0, rawLedgerBalance));
+    if (party.partyType !== 'vendor' && party.partyType !== 'both') continue;
+    const rawLedgerBalance = controlBalances.get(party.id) ?? 0;
+    if (!Number.isFinite(rawLedgerBalance)) throw new Error('مانده حساب کنترل پرداختنی تأمین‌کننده ' + party.name + ' معتبر نیست.');
+    const ledgerBalance = Math.max(0, rawLedgerBalance);
     const openInvoices = collectAgingInvoices(invoices, party.id, 'purchase', todayShamsi);
     const totalPayable = roundAgingAmount(openInvoices.reduce((sum, item) => sum + item.outstanding, 0));
     if (totalPayable <= 0 && ledgerBalance <= 0) continue;
-
     const buckets = { bucket0to30: 0, bucket31to60: 0, bucket61to90: 0, bucketOver90: 0 };
     let maxOverdueDays = 0;
     let oldestInvoiceDate: string | undefined;
     for (const item of openInvoices) {
       addAgingAmount(buckets, item.overdueDays, item.outstanding);
-      if (item.overdueDays > maxOverdueDays) {
-        maxOverdueDays = item.overdueDays;
-        oldestInvoiceDate = item.dueDate;
-      }
+      if (item.overdueDays > maxOverdueDays) { maxOverdueDays = item.overdueDays; oldestInvoiceDate = item.dueDate; }
     }
     rows.push({
       partyId: party.id, partyCode: party.code, partyName: party.name, phone: party.phone,
