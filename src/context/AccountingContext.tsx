@@ -2322,6 +2322,10 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       const lotMovementsToSave: InventoryLotMovement[] = [];
       const invoiceItems = payload.items.map((item) => ({ ...item }));
       const asOfDate = new Date().toISOString().slice(0, 10);
+      if (stockDirection === -1) {
+        const ledgerIssues = reconcileInventoryLotLedger(workingLots as any, inventoryLotMovements);
+        if (ledgerIssues.length) throw new Error('دفتر بچ با گردش‌های ثبت‌شده مغایرت دارد؛ تا رفع مغایرت، خروج کالا مجاز نیست.');
+      }
       if (payload.invoiceType !== 'proforma') {
         for (const item of invoiceItems) {
           const product = products.find((candidate) => candidate.id === item.productId);
@@ -2331,8 +2335,6 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           }
           const outgoing = stockDirection === -1;
           if (outgoing) {
-            const ledgerIssues = reconcileInventoryLotLedger(workingLots as any, inventoryLotMovements);
-            if (ledgerIssues.length) throw new Error('دفتر بچ با گردش‌های ثبت‌شده مغایرت دارد؛ تا رفع مغایرت، خروج کالا مجاز نیست.');
             const fifo = allocateStockFIFO(workingLots as any, item.quantity, {
               productId: product.id, warehouse: payload.warehouse, asOfDate,
             });
