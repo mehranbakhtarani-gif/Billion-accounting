@@ -1750,7 +1750,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       if (user) {
         const batch = writeBatch(db);
         batch.update(doc(db, 'products', productId), { warehouse: cleanWh, updatedAt: serverTimestamp() });
-        movedLots.forEach((lot) => batch.update(doc(db, 'inventoryLots', lot.id), {
+        sourceLots.forEach((lot) => batch.update(doc(db, 'inventoryLots', lot.id), {
           warehouse: cleanWh, updatedAt: serverTimestamp(),
         }));
         movements.forEach((movement) => batch.set(doc(db, 'inventoryLotMovements', movement.id), movement));
