@@ -158,6 +158,46 @@ export interface Voucher {
 export type InvoiceType = 'sale' | 'purchase' | 'proforma' | 'sale_return' | 'purchase_return' | 'waste';
 export type InvoiceStatus = 'issued' | 'settled' | 'cancelled';
 
+export interface InvoiceLotAllocation {
+  lotId: string;
+  lotNumber: string;
+  quantity: number;
+  unitCost: number;
+  totalCost: number;
+}
+
+export interface InventoryLot {
+  id: string;
+  ownerId: string;
+  productId: string;
+  warehouse: string;
+  lotNumber: string;
+  receivedDate: string;
+  expiryDate?: string;
+  quantityReceived: number;
+  quantityRemaining: number;
+  unitCost: number;
+  costBasis: 'documented' | 'estimated-opening' | 'estimated-return';
+  sourceInvoiceId?: string;
+  createdAt?: string;
+}
+
+export interface InventoryLotMovement {
+  id: string;
+  ownerId: string;
+  lotId: string;
+  productId: string;
+  warehouse: string;
+  movementType: 'receipt' | 'issue' | 'return' | 'waste' | 'transfer-in' | 'transfer-out' | 'adjustment' | 'reversal';
+  quantity: number;
+  unitCost: number;
+  referenceId: string;
+  referenceNumber?: string;
+  date: string;
+  reversalOfMovementId?: string;
+  notes?: string;
+}
+
 export interface InvoiceItem {
   productId: string;
   sku: string;
@@ -170,6 +210,8 @@ export interface InvoiceItem {
   bobbinUnit?: string; // بوبین / دوک
   bobbinCount?: number; // Total cones/bobbins
   lotNumber?: string; // شماره لات
+  lotAllocations?: InvoiceLotAllocation[];
+  receivedLotId?: string;
   unitPrice: number; // Unit price per kg (IRR)
   discount: number;
   vatAmount: number;
@@ -221,6 +263,7 @@ export interface Invoice {
   voucherId?: string;
   salesOrderId?: string;
   items: InvoiceItem[];
+  lotMovements?: string[];
 }
 
 export type ChequeDirection = 'receivable' | 'payable';
