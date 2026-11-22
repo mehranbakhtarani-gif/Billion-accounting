@@ -2818,9 +2818,11 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       if (patch.title !== undefined && !patch.title.trim()) throw new Error('شرح دارایی نمی‌تواند خالی باشد.');
       if (patch.purchaseDate !== undefined) validateJalaliDate(patch.purchaseDate, 'تاریخ خرید دارایی');
       const financialFieldsChanged =
-        patch.purchaseDate !== undefined || patch.purchaseCost !== undefined ||
-        patch.salvageValue !== undefined || patch.usefulLifeYears !== undefined ||
-        patch.accumulatedDepreciation !== undefined;
+        (patch.purchaseDate !== undefined && patch.purchaseDate !== existing.purchaseDate) ||
+        (patch.purchaseCost !== undefined && patch.purchaseCost !== existing.purchaseCost) ||
+        (patch.salvageValue !== undefined && patch.salvageValue !== existing.salvageValue) ||
+        (patch.usefulLifeYears !== undefined && patch.usefulLifeYears !== existing.usefulLifeYears) ||
+        (patch.accumulatedDepreciation !== undefined && patch.accumulatedDepreciation !== existing.accumulatedDepreciation);
       if (existing.accumulatedDepreciation > 0 && financialFieldsChanged) {
         throw new Error('دارایی دارای سابقه استهلاک است؛ تغییر مبانی مالی آن نیازمند سند اصلاحی و رسیدگی حسابداری است.');
       }
