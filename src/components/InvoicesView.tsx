@@ -76,6 +76,9 @@ interface DraftInvoiceRow {
   bobbinCount: number; // Tertiary unit count (bobbins/cones)
   unitPrice: number; // Rial per kg
   discount: number; // Rial
+  lotNumber?: string;
+  receivedDate?: string;
+  expiryDate?: string;
 }
 
 export const InvoicesView: React.FC<{ initialIntent?: string; clearIntent?: () => void }> = ({
@@ -185,6 +188,9 @@ export const InvoicesView: React.FC<{ initialIntent?: string; clearIntent?: () =
       bobbinCount: Math.round(defaultCartons * bobbinsPerCtn),
       unitPrice: price,
       discount: 0,
+      lotNumber: prod?.lotNumber || '',
+      receivedDate: new Date().toISOString().slice(0, 10),
+      expiryDate: '',
     };
   };
 
@@ -314,7 +320,9 @@ export const InvoicesView: React.FC<{ initialIntent?: string; clearIntent?: () =
               : {}),
             ...(prod.bobbinUnit ? { bobbinUnit: prod.bobbinUnit } : {}),
             ...(di.bobbinCount > 0 ? { bobbinCount: Math.round(di.bobbinCount) } : {}),
-            ...(prod.lotNumber ? { lotNumber: prod.lotNumber } : {}),
+            ...(di.lotNumber || prod.lotNumber ? { lotNumber: (di.lotNumber || prod.lotNumber) } : {}),
+            ...(di.receivedDate ? { receivedDate: di.receivedDate } : {}),
+            ...(di.expiryDate ? { expiryDate: di.expiryDate } : {}),
             unitPrice: irrUnit,
             discount: irrDisc,
             vatAmount: irrVat,
@@ -344,7 +352,9 @@ export const InvoicesView: React.FC<{ initialIntent?: string; clearIntent?: () =
             : {}),
           ...(prod.bobbinUnit ? { bobbinUnit: prod.bobbinUnit } : {}),
           ...(di.bobbinCount > 0 ? { bobbinCount: Math.round(di.bobbinCount) } : {}),
-          ...(prod.lotNumber ? { lotNumber: prod.lotNumber } : {}),
+          ...(di.lotNumber || prod.lotNumber ? { lotNumber: (di.lotNumber || prod.lotNumber) } : {}),
+          ...(di.receivedDate ? { receivedDate: di.receivedDate } : {}),
+          ...(di.expiryDate ? { expiryDate: di.expiryDate } : {}),
           unitPrice: Math.round(Math.max(0, di.unitPrice)),
           discount: safeDiscount,
           vatAmount: vat,
@@ -1234,6 +1244,18 @@ export const InvoicesView: React.FC<{ initialIntent?: string; clearIntent?: () =
                         <div className="text-[11px] text-rose-600 dark:text-rose-400 mt-0.5">
                           هشدار: وزن درخواستی بیشتر از موجودی ({formatWeight(prod.stock)}{' '}
                           {prod.unit}) است.
+                        </div>
+                      )}
+                      {(invoiceType === 'purchase' || invoiceType === 'sale_return') && (
+                        <div className="grid grid-cols-2 gap-1.5 mt-2">
+                          <label className="text-[10px] text-slate-500">شماره بچ
+                            <input value={row.lotNumber || ''} onChange={(e) => setDraftItems((prev) => prev.map((item, i) => i === idx ? { ...item, lotNumber: e.target.value } : item))} className="w-full mt-0.5 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-2 py-1.5" placeholder="شماره بچ خرید / بچ مرجوعی" />
+                          </label>
+                          {invoiceType === 'purchase' && (
+                            <label className="text-[10px] text-slate-500">تاریخ انقضا
+                              <input type="date" value={row.expiryDate || ''} onChange={(e) => setDraftItems((prev) => prev.map((item, i) => i === idx ? { ...item, expiryDate: e.target.value } : item))} className="w-full mt-0.5 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-2 py-1.5" />
+                            </label>
+                          )}
                         </div>
                       )}
                     </div>
