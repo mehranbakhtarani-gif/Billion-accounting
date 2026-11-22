@@ -2434,6 +2434,27 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           reservedLotQuantities.set(allocation.lotId, (reservedLotQuantities.get(allocation.lotId) || 0) + allocation.quantity);
         });
       }
+      for (const order of salesOrders.filter((candidate) => candidate.status === 'dispatched' && candidate.id !== payload.salesOrderId)) {
+        for (const item of order.items) {
+          let reservations = item.lotAllocations || [];
+          if (!reservations.length) {
+            const product = products.find((candidate) => candidate.id === item.productId);
+            if (!product) throw new Error('کالای یک حواله خروج باز یافت نشد؛ فروش متوقف شد.');
+            const quantity = item.actualWeighedKg > 0 ? item.actualWeighedKg : item.orderedWeightKg;
+            const availableForLegacyOrder = workingLots.map((lot) => ({
+              ...lot,
+              quantityRemaining: Math.max(0, lot.quantityRemaining - Math.max(lot.reservedQuantity || 0, reservedLotQuantities.get(lot.id) || 0)),
+            }));
+            reservations = allocateStockFIFO(availableForLegacyOrder as any, quantity, {
+              productId: product.id, warehouse: order.warehouse,
+              asOfDate: shamsiToGregorianIso(order.dispatchDate || order.date),
+            }).allocations;
+          }
+          reservations.forEach((allocation) => {
+            reservedLotQuantities.set(allocation.lotId, (reservedLotQuantities.get(allocation.lotId) || 0) + allocation.quantity);
+          });
+        }
+      }
       for (const lot of workingLots) {
         const reservedQty = Math.max(lot.reservedQuantity || 0, reservedLotQuantities.get(lot.id) || 0);
         if (reservedQty > lot.quantityRemaining + 0.0001) {
