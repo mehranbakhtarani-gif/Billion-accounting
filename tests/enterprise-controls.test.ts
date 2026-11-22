@@ -318,6 +318,55 @@ test('payables aging uses supplier balances, purchase invoices and due dates', (
   assert.equal(rows[0].bucket31to60, 200);
   assert.equal(rows[0].bucketOver90, 0);
 });
+test('aging uses the authoritative post-allocation invoice balance exactly once and excludes cancelled documents', () => {
+  const customer = { id: 'c-aging', ownerId: 'o1', code: 'C-AGE', name: 'مشتری سنی', partyType: 'customer' };
+  const partiallySettled = {
+    id: 'sale-aging', ownerId: 'o1', invoiceNumber: 'S-AGE-1', invoiceType: 'sale', date: '1405/08/01',
+    dueDate: '1405/08/01', partyId: 'c-aging', partyName: 'مشتری سنی', grandTotal: 500,
+    paidCash: 100, paidBank: 150, paidCheque: 0, creditAmount: 250, status: 'issued',
+    paymentAllocations: [{ id: 'alloc-1', voucherId: 'v-1', date: '1405/08/10', direction: 'receipt', amount: 150 }],
+    items: [],
+  };
+  const cancelled = { ...partiallySettled, id: 'cancelled', invoiceNumber: 'S-CANCEL', creditAmount: 900, status: 'cancelled' };
+  const rows = computeReceivablesAging(
+    [customer] as any, [partiallySettled, cancelled] as any, new Map([['c-aging', 250]]), '1405/09/01',
+  );
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].totalReceivable, 250);
+  assert.equal(rows[0].ledgerDifference, 0);
+  assert.equal(rows[0].bucket31to60, 250);
+});
+
+test('aging fails closed for invalid open-item balances and invalid due dates', () => {
+  const customer = { id: 'c-invalid', ownerId: 'o1', code: 'C-INV', name: 'مشتری نامعتبر', partyType: 'customer' };
+  const base = {
+    id: 'bad-invoice', ownerId: 'o1', invoiceNumber: 'BAD-1', invoiceType: 'sale', date: '1405/08/01',
+    dueDate: '1405/08/01', partyId: 'c-invalid', partyName: 'مشتری نامعتبر', grandTotal: 100,
+    paidCash: 0, paidBank: 0, paidCheque: 0, creditAmount: 50, status: 'issued', items: [],
+  };
+  assert.throws(
+    () => computeReceivablesAging([customer] as any, [{ ...base, creditAmount: -1 }] as any, new Map(), '1405/09/01'),
+    /مانده باز فاکتور BAD-1 معتبر نیست/,
+  );
+  assert.throws(
+    () => computeReceivablesAging([customer] as any, [{ ...base, dueDate: '1405/13/40' }] as any, new Map(), '1405/09/01'),
+    /تاریخ سررسید فاکتور BAD-1 معتبر نیست/,
+  );
+});
+
+test('aging classifies future due dates as current and reports control-account differences', () => {
+  const supplier = { id: 's-future', ownerId: 'o1', code: 'S-F', name: 'تأمین‌کننده آینده', partyType: 'supplier' };
+  const purchase = {
+    id: 'p-future', ownerId: 'o1', invoiceNumber: 'P-FUTURE', invoiceType: 'purchase', date: '1405/09/01',
+    dueDate: '1405/09/20', partyId: 's-future', partyName: 'تأمین‌کننده آینده', grandTotal: 400,
+    paidCash: 100, paidBank: 0, paidCheque: 0, creditAmount: 300, status: 'issued', items: [],
+  };
+  const rows = computePayablesAging([supplier] as any, [purchase] as any, new Map([['s-future', -350]]), '1405/09/01');
+  assert.equal(rows[0].bucket0to30, 300);
+  assert.equal(rows[0].bucket31to60, 0);
+  assert.equal(rows[0].ledgerDifference, 50);
+});
+
 test('atomic financial plan rejects unbalanced and duplicate side effects', () => {
   const valid = { operationId: 'op', idempotencyKey: 'idem', debitTotal: 100, creditTotal: 100,
     stockMovements: [{ id: 'move-1', productId: 'p1', quantityDelta: -2 }], documentIds: ['invoice-1'] };
