@@ -127,6 +127,28 @@ export const CorporateView: React.FC<CorporateViewProps> = ({ initialIntent, cle
     [payrollCalcs]
   );
 
+  const payrollPaymentSummary = useMemo(() => {
+    const month = payrollMonth.trim();
+    const postedVoucher = vouchers.find((voucher) =>
+      voucher.referenceId === `payroll:${month}` && voucher.status === 'permanent'
+    );
+    const payable = postedVoucher?.lines
+      .filter((line) => line.accountCode === '30401')
+      .reduce((sum, line) => sum + (Number(line.credit) || 0) - (Number(line.debit) || 0), 0) ?? 0;
+    const paymentPrefix = `payroll-payment:${month}:`;
+    const legacyDescriptionPrefix = `پرداخت خالص حقوق کارکنان ${month} از `;
+    const paid = vouchers
+      .filter((voucher) => voucher.status === 'permanent' && voucher.voucherType === 'payroll' &&
+        (voucher.referenceId?.startsWith(paymentPrefix) || voucher.description.startsWith(legacyDescriptionPrefix)))
+      .reduce((sum, voucher) => sum + voucher.lines
+        .filter((line) => line.accountCode === '30401')
+        .reduce((lineSum, line) => lineSum + (Number(line.debit) || 0) - (Number(line.credit) || 0), 0), 0);
+    return {
+      hasPostedPayroll: Boolean(postedVoucher),
+      outstanding: Math.max(0, payable - paid),
+    };
+  }, [vouchers, payrollMonth]);
+
   const costCenterPnLs = useMemo(
     () => computeCostCenterPnL(costCenters, vouchers),
     [costCenters, vouchers]
@@ -195,8 +217,9 @@ export const CorporateView: React.FC<CorporateViewProps> = ({ initialIntent, cle
                 <span>صدور سند حقوق {payrollMonth}</span>
               </button>
               <button
+                disabled={!payrollPaymentSummary.hasPostedPayroll || payrollPaymentSummary.outstanding <= 0}
                 onClick={() => setShowPaySalaryModal(true)}
-                className="inline-flex items-center gap-2 px-4 py-2 text-xs font-semibold border border-teal-700 text-teal-700 dark:text-teal-400 hover:bg-teal-50 dark:hover:bg-teal-950/40 rounded-lg whitespace-nowrap"
+                className="inline-flex items-center gap-2 px-4 py-2 text-xs font-semibold border border-teal-700 text-teal-700 dark:text-teal-400 hover:bg-teal-50 dark:hover:bg-teal-950/40 rounded-lg whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 <Banknote className="w-4 h-4" />
                 <span>پرداخت حقوق از بانک</span>
@@ -746,8 +769,12 @@ export const CorporateView: React.FC<CorporateViewProps> = ({ initialIntent, cle
           <form
             onSubmit={async (e) => {
               e.preventDefault();
-              await paySalariesVoucher(payrollMonth, payBankCode, payrollTotals.net);
-              setShowPaySalaryModal(false);
+              try {
+                await paySalariesVoucher(payrollMonth, payBankCode, payrollPaymentSummary.outstanding);
+                setShowPaySalaryModal(false);
+              } catch (error) {
+                showToast(error instanceof Error ? error.message : 'ثبت پرداخت حقوق ناموفق بود.');
+              }
             }}
             className="w-full max-w-md rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-5 space-y-4 text-xs"
           >
@@ -779,7 +806,7 @@ export const CorporateView: React.FC<CorporateViewProps> = ({ initialIntent, cle
             <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-950 flex justify-between font-bold">
               <span>مبلغ خالص قابل پرداخت:</span>
               <span className="font-code tabular-nums text-emerald-700 dark:text-emerald-400">
-                {formatMoney(payrollTotals.net, unit)}
+                {formatMoney(payrollPaymentSummary.outstanding, unit)}
               </span>
             </div>
             <div className="flex justify-end gap-2">
