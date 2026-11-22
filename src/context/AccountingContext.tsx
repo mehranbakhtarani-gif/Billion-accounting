@@ -2415,6 +2415,11 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       let cogsTotal = 0;
       const stockDeltas = new Map<string, number>();
       let workingLots = inventoryLots.map((lot) => ({ ...lot }));
+      const reservedLotQuantities = new Map<string, number>();
+      subcontractJobs.filter((job) => job.status === 'sent').forEach((job) =>
+        (job.rawLotAllocations || []).forEach((allocation) => {
+          reservedLotQuantities.set(allocation.lotId, (reservedLotQuantities.get(allocation.lotId) || 0) + allocation.quantity);
+        }));
       const lotUpdates = new Map<string, InventoryLot>();
       const lotReceipts: InventoryLot[] = [];
       const lotMovementsToSave: InventoryLotMovement[] = [];
@@ -2445,15 +2450,20 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           }
           const outgoing = stockDirection === -1;
           if (outgoing) {
-            const fifo = allocateStockFIFO(workingLots as any, item.quantity, {
+            const fifoAvailableLots = workingLots.map((lot) => ({
+              ...lot,
+              quantityRemaining: Math.max(0, lot.quantityRemaining - (reservedLotQuantities.get(lot.id) || 0)),
+            }));
+            const fifo = allocateStockFIFO(fifoAvailableLots as any, item.quantity, {
               productId: product.id, warehouse: payload.warehouse, asOfDate,
             });
             item.lotAllocations = fifo.allocations;
-            workingLots = fifo.remainingLots as unknown as InventoryLot[];
             fifo.allocations.forEach((allocation) => {
               const lot = workingLots.find((candidate) => candidate.id === allocation.lotId);
               if (!lot) throw new Error('بچ تخصیص‌یافته برای ثبت خروج یافت نشد.');
-              lotUpdates.set(lot.id, lot);
+              lot.quantityRemaining = Number((lot.quantityRemaining - allocation.quantity).toFixed(4));
+              if (lot.quantityRemaining < -0.0001) throw new Error('مقدار خروج از مانده واقعی بچ بیشتر است؛ عملیات متوقف شد.');
+              lotUpdates.set(lot.id, { ...lot });
               lotMovementsToSave.push({
                 id: generateSafeId('lotmove'), ownerId, lotId: lot.id, productId: product.id,
                 warehouse: lot.warehouse, movementType: payload.invoiceType === 'waste' ? 'waste' : payload.invoiceType === 'purchase_return' ? 'purchase-return' : 'issue',
