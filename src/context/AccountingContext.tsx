@@ -4545,6 +4545,8 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         accounts,
         parties,
         products,
+        inventoryLots,
+        inventoryLotMovements,
         vouchers,
         invoices,
         cheques,
