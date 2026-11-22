@@ -545,6 +545,7 @@ export function computeAuditReport(input: {
   let subReceivables = 0;
   let subPayables = 0;
   for (const v of vouchers) {
+    if (v.status !== 'permanent') continue;
     for (const l of v.lines) {
       if (l.accountCode === '10401' && l.partyId) {
         subReceivables += (Number(l.debit) || 0) - (Number(l.credit) || 0);
@@ -644,6 +645,15 @@ export function computeAuditReport(input: {
   // 9. Draft vouchers, bounced cheques & credit limit breaches
   const draftVouchers = vouchers.filter((v) => v.status === 'draft');
   const bouncedCheques = cheques.filter((c) => c.status === 'bounced');
+  const sayadiCounts = new Map<string, number>();
+  for (const cheque of cheques) {
+    const key = cheque.sayadiId.trim();
+    if (key) sayadiCounts.set(key, (sayadiCounts.get(key) ?? 0) + 1);
+  }
+  const duplicateSayadiIds = [...sayadiCounts.entries()].filter(([, count]) => count > 1).map(([id]) => id);
+  const invalidCheques = cheques.filter((cheque) =>
+    !cheque.sayadiId.trim() || !cheque.partyId || !Number.isFinite(cheque.amount) || cheque.amount <= 0
+  );
   const overLimitParties = parties.filter((p) => {
     const bal = partyBalances.get(p.id) ?? 0;
     return p.creditLimit > 0 && bal > p.creditLimit;
@@ -651,6 +661,8 @@ export function computeAuditReport(input: {
   const opDetails: string[] = [
     ...draftVouchers.map((v) => `سند موقت #${v.voucherNumber} (${v.date}) هنوز دائم نشده است.`),
     ...bouncedCheques.map((c) => `چک برگشتی صیادی ${c.sayadiId} — ${c.partyName}`),
+    ...duplicateSayadiIds.map((id) => `شناسه صیادی تکراری در پرونده چک‌ها: ${id}`),
+    ...invalidCheques.map((c) => `اطلاعات چک ${c.sayadiId || c.serial} ناقص است یا مبلغ معتبر ندارد.`),
     ...overLimitParties.map((p) => `عبور طرف‌حساب «${p.name}» از سقف اعتبار مصوب.`),
   ];
   checks.push({
@@ -663,7 +675,7 @@ export function computeAuditReport(input: {
         ? 'تمامی اسناد دائم هستند، چک برگشتی وجود ندارد و سقف اعتبار مشتریان رعایت شده است.'
         : `${opDetails.length} مورد نیازمند پیگیری حسابدار یا مدیر مالی شناسایی شد.`,
     details: opDetails,
-    targetModule: draftVouchers.length > 0 ? 'vouchers' : bouncedCheques.length > 0 ? 'treasury' : 'parties',
+    targetModule: draftVouchers.length > 0 ? 'vouchers' : (bouncedCheques.length > 0 || duplicateSayadiIds.length > 0 || invalidCheques.length > 0) ? 'treasury' : 'parties',
   });
 
   const passedCount = checks.filter((c) => c.status === 'pass').length;
