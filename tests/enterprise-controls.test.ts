@@ -21,6 +21,7 @@ import {
   validateAtomicFinancialPlan,
   validateSyncOperation,
   validateJournalEntryPayload,
+  validateSalesOrderDispatchQuantities,
 } from '../src/lib/enterpriseControls.ts';
 import { calculateLandedCostAllocation, computeReceivablesAging, computePayablesAging, computeFxRevaluationReport } from '../src/lib/enterpriseAccounting.ts';
 import { calculateEmployeePayroll, calculateMonthlyDepreciation, computeAccountLedger, computeAuditReport, computePartyBalances, computePartyLedger, computeTrialBalance } from '../src/lib/accountingEngine.ts';
@@ -546,4 +547,25 @@ test('journal validation uses exact Jalali month lengths and leap-year rules', (
   assert.doesNotThrow(() => validateJournalEntryPayload({ ...valid, date: '1403/12/30' }));
   assert.throws(() => validateJournalEntryPayload({ ...valid, date: '1405/12/30' }), /تاریخ سند حسابداری شمسی معتبر نیست/);
   assert.throws(() => validateJournalEntryPayload({ ...valid, date: '1405/07/31' }), /تاریخ سند حسابداری شمسی معتبر نیست/);
+});
+
+test('sales dispatch cannot exceed ordered weight or hide negative and invalid scale weights', () => {
+  const order = [
+    { productId: 'yarn-1', orderedWeightKg: 100, actualWeighedKg: 0 },
+    { productId: 'yarn-1', orderedWeightKg: 50, actualWeighedKg: 0 },
+    { productId: 'yarn-2', orderedWeightKg: 20, actualWeighedKg: 0 },
+  ];
+  assert.deepEqual(validateSalesOrderDispatchQuantities(order, [
+    { productId: 'yarn-1', orderedWeightKg: 80, actualWeighedKg: 80 },
+    { productId: 'yarn-1', orderedWeightKg: 70, actualWeighedKg: 0 },
+  ]), [{ productId: 'yarn-1', quantity: 150 }]);
+  assert.throws(() => validateSalesOrderDispatchQuantities(order, [
+    { productId: 'yarn-1', orderedWeightKg: 100, actualWeighedKg: 101 },
+  ]), /وزن حواله کالا از وزن سفارش بیشتر است/);
+  assert.throws(() => validateSalesOrderDispatchQuantities(order, [
+    { productId: 'yarn-1', orderedWeightKg: 100, actualWeighedKg: -1 },
+  ]), /وزن آن نامعتبر است/);
+  assert.throws(() => validateSalesOrderDispatchQuantities(order, [
+    { productId: 'unknown', orderedWeightKg: 1, actualWeighedKg: 1 },
+  ]), /با سفارش اصلی تطابق ندارد/);
 });
