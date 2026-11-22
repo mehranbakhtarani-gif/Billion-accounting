@@ -4386,7 +4386,11 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           quantityReceived: payload.returnedWeightKg, quantityRemaining: payload.returnedWeightKg,
           unitCost: finishedUnitCost, costBasis: 'documented', sourceInvoiceId: job.id, createdAt: serverTimestamp(),
         };
-        const rawUpdatedLots = new Map(fifo.remainingLots.map((lot: any) => [lot.id, lot as InventoryLot]));
+        const rawUpdatedLots = new Map(fifo.allocations.map((allocation) => {
+          const lot = fifo.remainingLots.find((candidate: any) => candidate.id === allocation.lotId);
+          if (!lot) throw new Error(`بچ ${allocation.lotNumber} برای مصرف پیمانکاری یافت نشد.`);
+          return [lot.id, lot as unknown as InventoryLot] as const;
+        }));
         const rawMovements: InventoryLotMovement[] = fifo.allocations.map((allocation) => ({
           id: generateSafeId('lotmove'), ownerId, lotId: allocation.lotId, productId: rawProduct.id,
           warehouse: rawProduct.warehouse, movementType: 'issue', quantity: -allocation.quantity,
