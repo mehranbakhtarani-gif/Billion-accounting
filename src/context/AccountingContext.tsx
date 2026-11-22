@@ -2423,6 +2423,18 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       if (stockDirection === -1) {
         const ledgerIssues = reconcileInventoryLotLedger(workingLots as any, inventoryLotMovements);
         if (ledgerIssues.length) throw new Error('دفتر بچ با گردش‌های ثبت‌شده مغایرت دارد؛ تا رفع مغایرت، خروج کالا مجاز نیست.');
+        for (const productId of new Set(invoiceItems.map((item) => item.productId))) {
+          const product = products.find((candidate) => candidate.id === productId);
+          if (!product) continue;
+          if (product.warehouse !== payload.warehouse) {
+            throw new Error(`انبار فاکتور با انبار تعریف‌شده برای کالای ${product.name} یکسان نیست؛ ابتدا حواله انتقال انبار را ثبت کنید.`);
+          }
+          const lotBalance = workingLots.filter((lot) => lot.productId === productId && lot.warehouse === payload.warehouse)
+            .reduce((sum, lot) => sum + lot.quantityRemaining, 0);
+          if (Math.abs(lotBalance - product.stock) > 0.01) {
+            throw new Error(`جمع مانده بچ‌های ${product.name} با موجودی کالا برابر نیست؛ ابتدا دفتر بچ را تطبیق دهید.`);
+          }
+        }
       }
       if (payload.invoiceType !== 'proforma') {
         for (const item of invoiceItems) {
