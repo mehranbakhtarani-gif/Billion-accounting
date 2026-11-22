@@ -5,6 +5,9 @@ import {
   assertSufficientStock,
   assertFiscalPeriodOpen,
   auditTreasuryVoucherLinks,
+  validateTreasuryOperationPayload,
+  validateTreasuryAccountSelection,
+  validateTreasuryTransferAccounts,
   getChequeStatusTransitionError,
   classifySyncOperation,
   computeOpenItemAging,
@@ -445,4 +448,24 @@ test('bank reconciliation validates input and prevents duplicate line identities
   assert.throws(() => reconcileBankLines(statement, [...ledger, ...ledger], 0, days), /شناسه تکراری/);
   assert.throws(() => reconcileBankLines(statement, ledger, -1, days), /عدد صحیح و نامنفی/);
   assert.throws(() => reconcileBankLines([{ ...statement[0], amount: Number.NaN }], ledger, 0, days), /معتبر نیست/);
+});
+
+
+test('treasury operation validation rejects invalid date, amount and description', () => {
+  const valid = { date: '1405/08/22', amount: 250, description: 'دریافت بابت فروش' };
+  assert.doesNotThrow(() => validateTreasuryOperationPayload(valid));
+  assert.throws(() => validateTreasuryOperationPayload({ ...valid, date: '1405/12/31' }), /تاریخ/);
+  assert.throws(() => validateTreasuryOperationPayload({ ...valid, amount: 0 }), /مبلغ/);
+  assert.throws(() => validateTreasuryOperationPayload({ ...valid, amount: Number.NaN }), /مبلغ/);
+  assert.throws(() => validateTreasuryOperationPayload({ ...valid, description: '  ' }), /شرح/);
+});
+
+test('treasury account validation requires an existing cash or bank moein account', () => {
+  assert.doesNotThrow(() => validateTreasuryAccountSelection({ code: '10201', level: 'moein' }));
+  assert.throws(() => validateTreasuryAccountSelection(undefined), /معتبر نیست/);
+  assert.throws(() => validateTreasuryAccountSelection({ code: '30101', level: 'moein' }), /صندوق\/بانک/);
+  assert.throws(() => validateTreasuryAccountSelection({ code: '10201', level: 'kol' }), /صندوق\/بانک/);
+  assert.throws(() => validateTreasuryTransferAccounts(
+    { code: '10201', level: 'moein' }, { code: '10201', level: 'moein' }
+  ), /متفاوت باشند/);
 });

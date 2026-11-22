@@ -536,3 +536,29 @@ export function validateTreasuryTransferAccounts(
     throw new Error('حساب مبدأ و مقصد انتقال باید متفاوت باشند.');
   }
 }
+
+
+export type TreasuryVoucherAuditIssue =
+  | { transactionId: string; kind: 'missing-voucher' }
+  | { transactionId: string; kind: 'duplicate-voucher' }
+  | { transactionId: string; kind: 'amount-mismatch' };
+
+export function auditTreasuryVoucherLinks(
+  transactions: Array<{ id: string; amount: number }>,
+  vouchers: Array<{ id: string; referenceId?: string; totalDebit: number; totalCredit: number }>,
+): TreasuryVoucherAuditIssue[] {
+  const issues: TreasuryVoucherAuditIssue[] = [];
+  for (const transaction of transactions) {
+    const linked = vouchers.filter((voucher) => voucher.referenceId === transaction.id);
+    if (linked.length === 0) {
+      issues.push({ transactionId: transaction.id, kind: 'missing-voucher' });
+    } else if (linked.length > 1) {
+      issues.push({ transactionId: transaction.id, kind: 'duplicate-voucher' });
+    } else if (!Number.isFinite(transaction.amount) ||
+      Math.abs(linked[0].totalDebit - transaction.amount) > 0.01 ||
+      Math.abs(linked[0].totalCredit - transaction.amount) > 0.01) {
+      issues.push({ transactionId: transaction.id, kind: 'amount-mismatch' });
+    }
+  }
+  return issues;
+}

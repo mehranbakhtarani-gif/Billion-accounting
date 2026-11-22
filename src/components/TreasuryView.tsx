@@ -22,7 +22,7 @@ import {
 import { addDaysToShamsi, diffShamsiDays, useChequeAlertPreferences } from '../lib/chequeAlerts';
 import { fuzzyFilterAndRank } from '../lib/fuzzySearch';
 import { numberToPersianWords } from '../lib/enterpriseAccounting';
-import { parseCsvRow, reconcileBankLines } from '../lib/enterpriseControls';
+import { parseCsvRow, reconcileBankLines, validateTreasuryOperationPayload, validateTreasuryAccountSelection, validateTreasuryTransferAccounts } from '../lib/enterpriseControls';
 import { computeFxRevaluationReport } from '../lib/enterpriseAccounting';
 import { SmartSearchCombobox, SmartSearchOption } from './SmartSearchCombobox';
 import { FuzzyTableOption, FuzzyTableSearch } from './FuzzyTableSearch';
@@ -518,39 +518,34 @@ export const TreasuryView: React.FC<TreasuryViewProps> = ({ initialIntent, clear
 
   const handleQuickTx = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (txAmount <= 0 || !txDesc.trim() || !txAccountCode) {
-      showToast('حساب خزانه، مبلغ و شرح دریافت/پرداخت را وارد کنید.');
-      return;
+    try {
+      validateTreasuryOperationPayload({ date: txDate, amount: txAmount, description: txDesc });
+      const selected = accounts.find((account) => account.code === txAccountCode);
+      validateTreasuryAccountSelection(selected ? { code: selected.code, level: selected.level } : undefined);
+      if (!parties.some((party) => party.id === txPartyId)) throw new Error('طرف‌حساب انتخاب‌شده معتبر نیست.');
+      await recordQuickTreasury({ direction: txDir, accountCode: txAccountCode, partyId: txPartyId, amount: txAmount, date: txDate, description: txDesc.trim() });
+      setTxDesc('');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'ثبت دریافت/پرداخت ناموفق بود.');
     }
-    await recordQuickTreasury({
-      direction: txDir,
-      accountCode: txAccountCode,
-      partyId: txPartyId,
-      amount: txAmount,
-      date: txDate,
-      description: txDesc.trim(),
-    });
-    setTxDesc('');
   };
 
   const handleTransfer = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!fromAccountCode || !toAccountCode || fromAccountCode === toAccountCode) {
-      showToast('حساب مبدأ و مقصد انتقال باید متفاوت باشند.');
-      return;
+    try {
+      const fromAccount = accounts.find((account) => account.code === fromAccountCode);
+      const toAccount = accounts.find((account) => account.code === toAccountCode);
+      validateTreasuryTransferAccounts(
+        fromAccount ? { code: fromAccount.code, level: fromAccount.level } : undefined,
+        toAccount ? { code: toAccount.code, level: toAccount.level } : undefined,
+      );
+      const description = transferDesc.trim() || 'انتقال وجه بین حساب‌های خزانه';
+      validateTreasuryOperationPayload({ date: transferDate, amount: transferAmount, description });
+      await recordBankTransfer({ fromAccountCode, toAccountCode, amount: transferAmount, date: transferDate, description });
+      setTransferDesc('');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'ثبت انتقال وجه ناموفق بود.');
     }
-    if (transferAmount <= 0) {
-      showToast('مبلغ انتقال باید بزرگ‌تر از صفر باشد.');
-      return;
-    }
-    await recordBankTransfer({
-      fromAccountCode,
-      toAccountCode,
-      amount: transferAmount,
-      date: transferDate,
-      description: transferDesc.trim() || 'انتقال وجه بین حساب‌های خزانه',
-    });
-    setTransferDesc('');
   };
 
   const receivableTotal = cheques

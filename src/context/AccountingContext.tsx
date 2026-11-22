@@ -34,7 +34,7 @@ import {
 import { createHolooSeedData } from '../data/holooSeed';
 import { getOrCreateLocalDeviceIdentity, loadLocalAccountingSnapshot, LocalDeviceIdentity, saveLocalAccountingSnapshot } from '../lib/localAccountingStore';
 import { FxRevaluationRow } from '../lib/enterpriseAccounting';
-import { assertSufficientStock, getChequeStatusTransitionError, validateJournalEntryPayload } from '../lib/enterpriseControls';
+import { assertSufficientStock, getChequeStatusTransitionError, validateJournalEntryPayload, validateTreasuryOperationPayload, validateTreasuryAccountSelection, validateTreasuryTransferAccounts } from '../lib/enterpriseControls';
 import {
   AuditReport,
   buildInvoiceVoucherLines,
@@ -1969,11 +1969,13 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       date: string;
       description: string;
     }) => {
+      validateTreasuryOperationPayload(payload);
       const party = parties.find((p) => p.id === payload.partyId);
-      if (!party) return;
+      if (!party) throw new Error('طرف‌حساب انتخاب‌شده معتبر نیست.');
       const cashAcc = accounts.find((a) => a.code === payload.accountCode);
-      const cashCode = cashAcc?.code || '10201';
-      const cashTitle = cashAcc?.title || 'بانک ملت — حساب جاری شرکتی';
+      validateTreasuryAccountSelection(cashAcc ? { code: cashAcc.code, level: cashAcc.level } : undefined);
+      const cashCode = cashAcc!.code;
+      const cashTitle = cashAcc!.title;
       const partyCode = party.accountCode || (party.partyType === 'vendor' ? '30101' : '10401');
       const partyTitle =
         partyCode === '30101' ? 'بستانکاران و تأمین‌کنندگان' : 'بدهکاران تجاری و مشتریان';
@@ -2036,13 +2038,13 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       date: string;
       description: string;
     }) => {
-      if (payload.fromAccountCode === payload.toAccountCode) {
-        showToast('حساب مبدأ و مقصد انتقال وجه نمی‌تواند یکسان باشد.');
-        return;
-      }
+      validateTreasuryOperationPayload(payload);
       const fromAcc = accounts.find((a) => a.code === payload.fromAccountCode);
       const toAcc = accounts.find((a) => a.code === payload.toAccountCode);
-      if (!fromAcc || !toAcc || payload.amount <= 0) return;
+      validateTreasuryTransferAccounts(
+        fromAcc ? { code: fromAcc.code, level: fromAcc.level } : undefined,
+        toAcc ? { code: toAcc.code, level: toAcc.level } : undefined,
+      );
 
       await createVoucher({
         date: payload.date,
@@ -2067,7 +2069,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         ],
       });
     },
-    [accounts, createVoucher, showToast]
+    [accounts, createVoucher]
   );
 
   // ---------------- INVOICES CRUD & COMMERCIAL OPS ----------------
