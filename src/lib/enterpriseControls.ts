@@ -518,7 +518,7 @@ export function validateTreasuryOperationPayload(payload: { date: string; amount
 
 export function validateChequeDateRange(issueDate: string, dueDate: string): void {
   const isValidDate = (date: string) => {
-    if (typeof date !== 'string' || !/^14\\d{2}\\/\\d{2}\\/\\d{2}$/.test(date)) return false;
+    if (typeof date !== 'string' || !/^14\d{2}\/\d{2}\/\d{2}$/.test(date)) return false;
     const [year, month, day] = date.split('/').map(Number);
     return month >= 1 && month <= 12 && day >= 1 && day <= getJalaliMonthLength(year, month);
   };
