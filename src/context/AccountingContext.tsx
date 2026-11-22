@@ -48,7 +48,7 @@ import {
   computePartyBalances,
   computeTrialBalance,
 } from '../lib/accountingEngine';
-import { getLocalIsoDate, generateSafeId, getTodayShamsi } from '../lib/format';
+import { getLocalIsoDate, generateSafeId, getTodayShamsi, shamsiToGregorianIso } from '../lib/format';
 import {
   annotateVoucherLinesWithCurrency,
   BASE_CURRENCY_CODE,
@@ -2430,7 +2430,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       const lotReceipts: InventoryLot[] = [];
       const lotMovementsToSave: InventoryLotMovement[] = [];
       const invoiceItems = payload.items.map((item) => ({ ...item }));
-      const asOfDate = getLocalIsoDate();
+      const asOfDate = shamsiToGregorianIso(payload.date);
       if (stockDirection === -1) {
         const ledgerIssues = reconcileInventoryLotLedger(workingLots as any, inventoryLotMovements);
         if (ledgerIssues.length) throw new Error('دفتر بچ با گردش‌های ثبت‌شده مغایرت دارد؛ تا رفع مغایرت، خروج کالا مجاز نیست.');
@@ -2505,7 +2505,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             const documentedUnitCost = Math.max(0, grossLineCost - Math.min(grossLineCost, item.discount || 0)) / item.quantity;
             const lot: InventoryLot = {
               id: lotId, ownerId, productId: product.id, warehouse: payload.warehouse,
-              lotNumber: lotNumber.slice(0, 80), receivedDate: item.receivedDate || asOfDate,
+              lotNumber: lotNumber.slice(0, 80), receivedDate: payload.invoiceType === 'sale_return' ? asOfDate : (item.receivedDate || asOfDate),
               ...(item.expiryDate ? { expiryDate: item.expiryDate } : returnedSourceLot?.expiryDate ? { expiryDate: returnedSourceLot.expiryDate } : {}),
               quantityReceived: item.quantity, quantityRemaining: item.quantity,
               unitCost: returnedSourceLot?.unitCost ?? (payload.invoiceType === 'sale_return' ? product.buyPrice : documentedUnitCost),
@@ -2522,7 +2522,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
               id: generateSafeId('lotmove'), ownerId, lotId, productId: product.id,
               warehouse: lot.warehouse, movementType: payload.invoiceType === 'sale_return' ? 'return' : 'receipt',
               quantity: item.quantity, unitCost: lot.unitCost, referenceId: id,
-              referenceNumber: payload.invoiceNumber, date: asOfDate,
+              referenceNumber: payload.invoiceNumber, date: lot.receivedDate,
               ...(returnedSourceLot ? { sourceLotId: returnedSourceLot.id } : {}),
               ...(payload.invoiceType === 'sale_return' && !returnedSourceLot ? { notes: 'بهای برگشت فروش بر مبنای قیمت خرید فعلی برآورد شده است؛ شماره بچ اصلی تطبیق داده نشد.' } : {}),
             });
@@ -4356,7 +4356,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         ...lot,
         quantityRemaining: Math.max(0, lot.quantityRemaining - (reservedLots.get(lot.id) || 0)),
       }));
-      const asOfDate = getLocalIsoDate();
+      const asOfDate = shamsiToGregorianIso(job.date);
       const fifoReservation = allocateStockFIFO(availableLots as any, job.sentWeightKg, {
         productId: rawProduct.id, warehouse: rawProduct.warehouse, asOfDate,
       });
@@ -4415,7 +4415,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       if (Math.abs(rawLotBalance - rawProduct.stock) > 0.01) {
         throw new Error('مانده بچ‌های نخ خام با موجودی کالا برابر نیست؛ ابتدا دفتر بچ را تطبیق دهید.');
       }
-      const movementDate = getLocalIsoDate();
+      const movementDate = shamsiToGregorianIso(payload.completionDate);
       let rawLotAllocations = job.rawLotAllocations || [];
       if (!rawLotAllocations.length) {
         const reservedLots = new Map<string, number>();
