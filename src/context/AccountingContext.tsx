@@ -3271,6 +3271,24 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   // ---------------- DYEING / WEAVING SUBCONTRACTING ----------------
   const addSubcontractJob = useCallback(
     async (job: Omit<SubcontractJob, 'id' | 'ownerId'>) => {
+      const rawProduct = products.find((product) => product.id === job.rawProductId);
+      if (!job.jobNumber.trim() || subcontractJobs.some((item) => item.jobNumber.trim() === job.jobNumber.trim())) {
+        throw new Error('شماره حواله پیمانکاری خالی یا تکراری است.');
+      }
+      if (!rawProduct || !parties.some((party) => party.id === job.contractorPartyId) ||
+          !Number.isFinite(job.sentWeightKg) || job.sentWeightKg <= 0 ||
+          !Number.isFinite(job.rawUnitCostIrr) || job.rawUnitCostIrr < 0 ||
+          !Number.isFinite(job.serviceFeePerKgIrr) || job.serviceFeePerKgIrr < 0 ||
+          !Number.isFinite(job.expectedLossPct) || job.expectedLossPct < 0 || job.expectedLossPct >= 100) {
+        throw new Error('کالای خام، پیمانکار، وزن، بهای مواد یا نرخ اجرت پیمانکاری معتبر نیست.');
+      }
+      const reservedByOtherJobs = subcontractJobs
+        .filter((item) => item.status === 'sent' && item.rawProductId === job.rawProductId)
+        .reduce((sum, item) => sum + item.sentWeightKg, 0);
+      const availableForSubcontract = rawProduct.stock - reservedByOtherJobs;
+      if (!Number.isFinite(rawProduct.stock) || availableForSubcontract + 1e-9 < job.sentWeightKg) {
+        throw new Error('موجودی قابل تخصیص پس از کسر حواله‌های باز پیمانکاری کافی نیست.');
+      }
       const full: SubcontractJob = {
         ...job,
         id: generateSafeId('sub'),
@@ -3284,7 +3302,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       );
       showToast(`حواله پیمانکاری ${full.jobNumber} ثبت شد.`);
     },
-    [ownerId, logActivity, showToast]
+    [ownerId, products, parties, subcontractJobs, logActivity, showToast]
   );
 
   const completeSubcontractJob = useCallback(
@@ -3294,7 +3312,13 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       if (vouchers.some((voucher) => voucher.referenceId === job.id)) throw new Error('برای این عملیات پیمانکاری قبلاً سند ثبت شده است.');
       const rawProduct = products.find((product) => product.id === job.rawProductId);
       if (!rawProduct) throw new Error(`کالای خام ${job.rawProductName} در انبار یافت نشد.`);
-      if (!Number.isFinite(job.sentWeightKg) || job.sentWeightKg <= 0 || !Number.isFinite(rawProduct.stock) || rawProduct.stock < job.sentWeightKg) throw new Error('موجودی نخ خام برای تکمیل پیمانکاری کافی نیست.');
+      const reservedByOtherJobs = subcontractJobs
+        .filter((item) => item.id !== jobId && item.status === 'sent' && item.rawProductId === job.rawProductId)
+        .reduce((sum, item) => sum + item.sentWeightKg, 0);
+      if (!Number.isFinite(job.sentWeightKg) || job.sentWeightKg <= 0 || !Number.isFinite(rawProduct.stock) ||
+          rawProduct.stock - job.sentWeightKg + 1e-9 < reservedByOtherJobs) {
+        throw new Error('موجودی نخ خام برای تکمیل این حواله، پس از حفظ موجودی رزروشده سایر پیمانکاری‌ها کافی نیست.');
+      }
       if (!Number.isFinite(payload.returnedWeightKg) || payload.returnedWeightKg <= 0 || !payload.finishedLotNumber.trim()) throw new Error('وزن برگشتی یا شماره لات محصول تکمیل‌شده معتبر نیست.');
       if (!Number.isFinite(job.rawUnitCostIrr) || job.rawUnitCostIrr < 0 || !Number.isFinite(job.serviceFeePerKgIrr) || job.serviceFeePerKgIrr < 0) throw new Error('بهای مواد اولیه یا اجرت پیمانکاری نامعتبر است.');
       const rawTotalCost = Math.round(job.sentWeightKg * job.rawUnitCostIrr);
