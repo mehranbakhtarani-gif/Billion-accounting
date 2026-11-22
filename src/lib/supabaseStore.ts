@@ -383,7 +383,7 @@ export async function flushLocalSyncOutbox(): Promise<{ synced: number; failed: 
           const appliedRevisions = await changesAlreadyApplied(companyId, payload.changes);
           if (appliedRevisions) {
             await cacheLocalRecordRevisions(Object.entries(appliedRevisions).map(([key, revision]) => {
-              const [recordType, recordId] = key.split('\\u0000');
+              const [recordType, recordId] = key.split('\u0000');
               return { key, recordType, recordId, revision };
             }));
             await rebaseQueuedLocalSyncOperations(companyId, appliedRevisions);
