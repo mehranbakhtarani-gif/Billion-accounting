@@ -3310,6 +3310,12 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       }
       const order = salesOrders.find((o) => o.id === orderId);
       if (!order || order.status === 'invoiced') return;
+      if (order.status !== 'dispatched' || !order.dispatchNumber) {
+        throw new Error('صدور فاکتور فقط پس از ثبت حواله خروج و توزین نهایی مجاز است.');
+      }
+      if (order.invoiceId || invoices.some((invoice) => invoice.id === order.invoiceId)) {
+        throw new Error('برای این سفارش قبلاً فاکتور صادر شده است.');
+      }
 
       const invItems = order.items.map((it) => {
         const prod = products.find((p) => p.id === it.productId);
