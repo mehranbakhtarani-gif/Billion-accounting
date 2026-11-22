@@ -537,6 +537,46 @@ export function validateChequeDateRange(issueDate: string, dueDate: string): voi
   }
 }
 
+export interface ImportLandedCostPayload {
+  totalForeignAmount: number;
+  exchangeRate: number;
+  totalFobIrr: number;
+  totalLandedCostsIrr: number;
+  grandTotalLandedIrr: number;
+  costs: Array<{ amountIrr: number }>;
+  items: Array<{ weightKg: number; finalUnitCostIrr: number }>;
+}
+
+export function validateImportLandedCostPayload(payload: ImportLandedCostPayload): void {
+  if (!Number.isFinite(payload.totalForeignAmount) || payload.totalForeignAmount <= 0 ||
+      !Number.isFinite(payload.exchangeRate) || payload.exchangeRate <= 0 ||
+      !Number.isFinite(payload.totalFobIrr) || payload.totalFobIrr <= 0 ||
+      !Number.isFinite(payload.totalLandedCostsIrr) || payload.totalLandedCostsIrr < 0 ||
+      !Number.isFinite(payload.grandTotalLandedIrr) || payload.grandTotalLandedIrr <= 0 ||
+      !payload.items.length ||
+      payload.items.some((item) => !Number.isFinite(item.weightKg) || item.weightKg <= 0 ||
+        !Number.isFinite(item.finalUnitCostIrr) || item.finalUnitCostIrr < 0) ||
+      payload.costs.some((cost) => !Number.isFinite(cost.amountIrr) || cost.amountIrr < 0)) {
+    throw new Error('مقادیر ارزی، هزینه‌ها یا اقلام بهای تمام‌شده واردات معتبر نیستند.');
+  }
+  const expectedFob = Math.round(payload.totalForeignAmount * payload.exchangeRate);
+  if (Math.abs(expectedFob - Math.round(payload.totalFobIrr)) > 1) {
+    throw new Error('بهای ریالی پروفرما با مبلغ ارزی و نرخ تبدیل مطابقت ندارد.');
+  }
+  const costsTotal = payload.costs.reduce((sum, cost) => sum + Math.round(cost.amountIrr), 0);
+  const landedTotal = Math.round(payload.totalFobIrr) + costsTotal;
+  if (Math.abs(costsTotal - Math.round(payload.totalLandedCostsIrr)) > 0 ||
+      Math.abs(landedTotal - Math.round(payload.grandTotalLandedIrr)) > 0) {
+    throw new Error('جمع هزینه‌های جانبی و بهای تمام‌شده پرونده با یکدیگر مطابقت ندارند.');
+  }
+  const itemValueTotal = payload.items.reduce(
+    (sum, item) => sum + Math.round(item.weightKg * item.finalUnitCostIrr), 0,
+  );
+  if (Math.abs(itemValueTotal - landedTotal) > Math.max(1, payload.items.length)) {
+    throw new Error('ارزش ریالی اقلام و بهای تمام‌شده کل محموله با یکدیگر تطابق ندارند.');
+  }
+}
+
 export interface TreasuryAccountIdentity {
   code: string;
   level: string;

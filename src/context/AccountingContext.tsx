@@ -34,7 +34,7 @@ import {
 import { createHolooSeedData } from '../data/holooSeed';
 import { getOrCreateLocalDeviceIdentity, loadLocalAccountingSnapshot, LocalDeviceIdentity, saveLocalAccountingSnapshot } from '../lib/localAccountingStore';
 import { FxRevaluationRow } from '../lib/enterpriseAccounting';
-import { assertSufficientStock, getChequeStatusTransitionError, validateJournalEntryPayload, validateTreasuryOperationPayload, validateTreasuryAccountSelection, validateTreasuryTransferAccounts, validateChequeDateRange, validatePartyTreasuryAccount, validateJalaliDate } from '../lib/enterpriseControls';
+import { assertSufficientStock, getChequeStatusTransitionError, validateJournalEntryPayload, validateTreasuryOperationPayload, validateTreasuryAccountSelection, validateTreasuryTransferAccounts, validateChequeDateRange, validatePartyTreasuryAccount, validateJalaliDate, validateImportLandedCostPayload } from '../lib/enterpriseControls';
 import {
   AuditReport,
   buildInvoiceVoucherLines,
@@ -3487,17 +3487,18 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         lotByProduct.set(item.productId, item.lotNumber.trim());
       }
       if (dossier.costs.some((cost) => !Number.isFinite(cost.amountIrr) || cost.amountIrr < 0 ||
-          !accounts.some((account) => account.code === cost.accountCode && (account.category === 'asset' || account.category === 'liability')))) {
+          !accounts.some((account) => account.code === cost.accountCode && account.level === 'moein' && (account.code.startsWith('101') || account.code.startsWith('102') || account.code.startsWith('301')) && (account.category === 'asset' || account.category === 'liability')))) {
         throw new Error('حساب تسویه هزینه‌های جانبی باید حساب دارایی (بانک/صندوق) یا بدهی (بستانکاران) باشد و مبلغ آن معتبر باشد.');
       }
-      const costsTotal = dossier.costs.reduce((sum, cost) => sum + Math.round(cost.amountIrr), 0);
-      if (!Number.isFinite(dossier.totalForeignAmount) || dossier.totalForeignAmount <= 0 ||
-          !Number.isFinite(dossier.totalFobIrr) || dossier.totalFobIrr <= 0 ||
-          !Number.isFinite(dossier.totalLandedCostsIrr) || dossier.totalLandedCostsIrr !== costsTotal ||
-          !Number.isFinite(dossier.grandTotalLandedIrr) ||
-          dossier.grandTotalLandedIrr !== dossier.totalFobIrr + dossier.totalLandedCostsIrr) {
-        throw new Error('جمع بهای تمام‌شده پرونده با ارزش ارزی و هزینه‌های جانبی سازگار نیست.');
-      }
+      validateImportLandedCostPayload({
+        totalForeignAmount: dossier.totalForeignAmount,
+        exchangeRate: dossier.exchangeRate,
+        totalFobIrr: dossier.totalFobIrr,
+        totalLandedCostsIrr: dossier.totalLandedCostsIrr,
+        grandTotalLandedIrr: dossier.grandTotalLandedIrr,
+        costs: dossier.costs,
+        items: dossier.items,
+      });
       const full: ImportDossier = {
         ...dossier,
         id: generateSafeId('imp'),
@@ -3551,16 +3552,24 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         if (!Number.isFinite(product.stock) || product.stock < 0 || !Number.isFinite(product.buyPrice) || product.buyPrice < 0) throw new Error(`موجودی یا بهای میانگین کالای ${item.productName} معتبر نیست.`);
         return { item, product };
       });
-      const costTotal = dossier.costs.reduce((sum, cost) => {
-        if (!Number.isFinite(cost.amountIrr) || cost.amountIrr < 0 || !cost.accountCode.trim() || !accounts.some((account) => account.code === cost.accountCode && (account.category === 'asset' || account.category === 'liability'))) throw new Error('حساب تسویه هزینه جانبی باید دارایی یا بدهی باشد و مبلغ آن معتبر باشد.');
-        return sum + Math.round(cost.amountIrr);
-      }, 0);
+      validateJalaliDate(dossier.date, 'تاریخ پرونده واردات');
+      if (dossier.costs.some((cost) => !cost.accountCode.trim() ||
+          !accounts.some((account) => account.code === cost.accountCode && account.level === 'moein' &&
+            (account.code.startsWith('101') || account.code.startsWith('102') || account.code.startsWith('301')) &&
+            (account.category === 'asset' || account.category === 'liability')))) {
+        throw new Error('حساب تسویه هزینه جانبی باید معین صندوق، بانک یا بستانکاران باشد.');
+      }
+      validateImportLandedCostPayload({
+        totalForeignAmount: dossier.totalForeignAmount,
+        exchangeRate: dossier.exchangeRate,
+        totalFobIrr: dossier.totalFobIrr,
+        totalLandedCostsIrr: dossier.totalLandedCostsIrr,
+        grandTotalLandedIrr: dossier.grandTotalLandedIrr,
+        costs: dossier.costs,
+        items: dossier.items,
+      });
       const fobTotal = Math.round(dossier.totalFobIrr);
       const landedTotal = Math.round(dossier.grandTotalLandedIrr);
-      const expectedLanded = fobTotal + costTotal;
-      if (!Number.isFinite(dossier.totalFobIrr) || !Number.isFinite(dossier.grandTotalLandedIrr) || Math.abs(expectedLanded - landedTotal) > 0) {
-        throw new Error('جمع بهای تمام‌شده پرونده با بهای ارزی و هزینه‌های جانبی هم‌خوانی ندارد.');
-      }
       const lines: VoucherLine[] = [
         { accountCode: '10501', accountTitle: 'موجودی انبار نخ و کالای وارداتی', description: `ورود محموله ترخیص‌شده پرونده ${dossier.dossierNumber} با سرشکن هزینه‌ها`, debit: landedTotal, credit: 0 },
         { accountCode: '30101', accountTitle: 'بستانکاران و تأمین‌کنندگان واردات نخ', partyId: dossier.supplierId, partyName: dossier.supplierName, description: `بهای ارزی پروفرما ${dossier.proformaNumber} (${dossier.totalForeignAmount} ${dossier.currencyCode})`, debit: 0, credit: fobTotal },

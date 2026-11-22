@@ -11,6 +11,7 @@ import {
   validateChequeDateRange,
   validateJalaliDate,
   validatePartyTreasuryAccount,
+  validateImportLandedCostPayload,
   getChequeStatusTransitionError,
   classifySyncOperation,
   computeOpenItemAging,
@@ -483,6 +484,22 @@ test('cheque dates validate Jalali leap days and issue-before-due ordering', () 
   assert.doesNotThrow(() => validateChequeDateRange('1403/12/30', '1404/01/02'));
   assert.throws(() => validateChequeDateRange('1405/12/30', '1406/01/02'), /شمسی معتبر نیست/);
   assert.throws(() => validateChequeDateRange('1405/08/10', '1405/08/09'), /قبل از تاریخ صدور/);
+});
+
+test('import landed cost ties foreign value, settlement costs and inventory item values', () => {
+  const valid = {
+    totalForeignAmount: 100,
+    exchangeRate: 500000,
+    totalFobIrr: 50000000,
+    totalLandedCostsIrr: 5000000,
+    grandTotalLandedIrr: 55000000,
+    costs: [{ amountIrr: 3000000 }, { amountIrr: 2000000 }],
+    items: [{ weightKg: 1000, finalUnitCostIrr: 55000 }],
+  };
+  assert.doesNotThrow(() => validateImportLandedCostPayload(valid));
+  assert.throws(() => validateImportLandedCostPayload({ ...valid, totalFobIrr: 49000000 }), /نرخ تبدیل/);
+  assert.throws(() => validateImportLandedCostPayload({ ...valid, grandTotalLandedIrr: 56000000 }), /هزینه‌های جانبی/);
+  assert.throws(() => validateImportLandedCostPayload({ ...valid, items: [{ weightKg: 1000, finalUnitCostIrr: 54000 }] }), /ارزش ریالی اقلام/);
 });
 
 test('party treasury postings require a valid debtor or creditor moein account', () => {
