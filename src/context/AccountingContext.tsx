@@ -1297,7 +1297,8 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const adjustProductStockWithVoucher = useCallback(
     async (productId: string, countedStock: number, reason: string) => {
       const prod = products.find((p) => p.id === productId);
-      if (!prod) return;
+      if (!prod) throw new Error(`کالای موردنظر برای انبارگردانی یافت نشد: ${productId}`);
+      if (!Number.isFinite(countedStock) || countedStock < 0) throw new Error('موجودی شمارش‌شده باید عددی معتبر و غیرمنفی باشد.');
       const cleanCounted = Math.max(0, Number(countedStock.toFixed(2)));
       const diffQty = Number((cleanCounted - prod.stock).toFixed(2));
       if (diffQty === 0) {
@@ -1358,6 +1359,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             await adjustProductStock(productId, prod.stock);
           } catch (rollbackError) {
             console.error('Inventory adjustment rollback failed:', rollbackError);
+            throw new Error(`ثبت سند انبارگردانی ناموفق بود و برگشت موجودی کالا ${prod.sku} نیز شکست خورد؛ مغایرت موجودی نیازمند رسیدگی دستی است. علت ثبت سند: ${error instanceof Error ? error.message : String(error)}؛ علت برگشت: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`);
           }
           throw error;
         }
@@ -1373,11 +1375,16 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       const voucherLines: VoucherLine[] = [];
       const changedProducts: Array<{ productId: string; previousStock: number }> = [];
       let changedCount = 0;
+      const requestedIds = items.map((entry) => entry.productId);
+      if (new Set(requestedIds).size !== requestedIds.length) throw new Error('در فهرست انبارگردانی، یک کالا بیش از یک بار تکرار شده است.');
+      for (const entry of items) {
+        if (!Number.isFinite(entry.countedStock) || entry.countedStock < 0) throw new Error(`موجودی شمارش‌شده برای کالا ${entry.productId} معتبر نیست.`);
+        if (!products.some((product) => product.id === entry.productId)) throw new Error(`کالای انبارگردانی یافت نشد: ${entry.productId}`);
+      }
 
       try {
       for (const entry of items) {
-        const prod = products.find((p) => p.id === entry.productId);
-        if (!prod) continue;
+        const prod = products.find((p) => p.id === entry.productId)!;
         const safeCounted = Math.max(0, Number(entry.countedStock.toFixed(2)));
         const diffQty = Number((safeCounted - prod.stock).toFixed(2));
         if (diffQty === 0) continue;
@@ -1447,11 +1454,15 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         const rollbackResults = await Promise.allSettled(
           changedProducts.map((entry) => adjustProductStock(entry.productId, entry.previousStock)),
         );
-        rollbackResults.forEach((result) => {
-          if (result.status === 'rejected') {
-            console.error('Bulk stocktake rollback failed:', result.reason);
-          }
-        });
+        const rollbackFailures = rollbackResults.flatMap((result, index) =>
+          result.status === 'rejected'
+            ? [`${changedProducts[index].productId}: ${result.reason instanceof Error ? result.reason.message : String(result.reason)}`]
+            : [],
+        );
+        if (rollbackFailures.length > 0) {
+          console.error('Bulk stocktake rollback failures:', rollbackFailures);
+          throw new Error(`ثبت سند انبارگردانی تجمیعی ناموفق بود و برگشت موجودی ${rollbackFailures.length} کالا نیز شکست خورد؛ مغایرت این کالاها نیازمند رسیدگی دستی است: ${rollbackFailures.join(' | ')}. علت اولیه: ${error instanceof Error ? error.message : String(error)}`);
+        }
         throw error;
       }
     },
