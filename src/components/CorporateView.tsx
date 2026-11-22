@@ -342,7 +342,7 @@ export const CorporateView: React.FC<CorporateViewProps> = ({ initialIntent, cle
               e.preventDefault();
               try {
                 const nextPersonnelNumber = employees.reduce((max, employee) => {
-                  const match = /^P-(\\d+)$/i.exec(employee.personnelCode.trim());
+                  const match = /^P-(\d+)$/i.exec(employee.personnelCode.trim());
                   return match ? Math.max(max, Number(match[1])) : max;
                 }, 100) + 1;
                 await addEmployee({
