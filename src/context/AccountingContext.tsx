@@ -1939,9 +1939,9 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             }
           }
           handleSupabaseError(err, OperationType.UPDATE, 'cheques/' + chequeId);
-          const originalFailure = err instanceof Error ? err.message : String(err);
+          const originalFailure = String(err);
           if (compensationFailure) {
-            throw new Error(`تغییر وضعیت چک ${chq.sayadiId} ثبت نشد و سند معکوس خودکار نیز ناموفق بود؛ رسیدگی دستی لازم است. خطای ثبت: ${originalFailure}. خطای جبران: ${compensationFailure}`);
+            throw new Error(`تغییر وضعیت چک ${chq?.sayadiId ?? chequeId} ثبت نشد و سند معکوس خودکار نیز ناموفق بود؛ رسیدگی دستی لازم است. خطای ثبت: ${originalFailure}. خطای جبران: ${compensationFailure}`);
           }
           throw err;
         }
