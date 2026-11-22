@@ -1604,7 +1604,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     const product = products.find((item) => item.id === payload.productId);
     if (!product) throw new Error('کالای موردنظر برای ایجاد بچ افتتاحیه یافت نشد.');
     if (!payload.lotNumber.trim() || !/^\d{4}-\d{2}-\d{2}$/.test(payload.receivedDate) ||
-        (payload.expiryDate && !/^\d{4}-\d{2}-\d{2}$/.test(payload.expiryDate)) ||
+        (payload.expiryDate && (!/^\d{4}-\d{2}-\d{2}$/.test(payload.expiryDate) || payload.expiryDate < payload.receivedDate)) ||
         !Number.isFinite(payload.quantity) || payload.quantity <= 0 ||
         !Number.isFinite(payload.unitCost) || payload.unitCost < 0) {
       throw new Error('شماره بچ، تاریخ، مقدار یا بهای واحد معتبر نیست.');
@@ -2476,7 +2476,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
               }
             }
             if (item.receivedDate && !/^\d{4}-\d{2}-\d{2}$/.test(item.receivedDate)) throw new Error('تاریخ ورود بچ در ردیف فاکتور معتبر نیست.');
-            if (item.expiryDate && !/^\d{4}-\d{2}-\d{2}$/.test(item.expiryDate)) throw new Error('تاریخ انقضای بچ در ردیف فاکتور معتبر نیست.');
+            if (item.expiryDate && (!/^\d{4}-\d{2}-\d{2}$/.test(item.expiryDate) || item.expiryDate < (item.receivedDate || asOfDate))) throw new Error('تاریخ انقضای بچ باید معتبر و بعد از تاریخ ورود باشد.');
             const lot: InventoryLot = {
               id: lotId, ownerId, productId: product.id, warehouse: payload.warehouse,
               lotNumber: lotNumber.slice(0, 80), receivedDate: item.receivedDate || asOfDate,
