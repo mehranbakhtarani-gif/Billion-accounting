@@ -438,6 +438,7 @@ export interface SubcontractJob {
   rawProductId: string;
   rawProductName: string;
   sentWeightKg: number;
+  rawLotAllocations?: InvoiceLotAllocation[];
   rawUnitCostIrr: number;
   expectedLossPct: number; // درصد افت مجاز
   returnedWeightKg: number;
