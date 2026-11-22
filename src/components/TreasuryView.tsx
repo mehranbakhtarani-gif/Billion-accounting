@@ -257,14 +257,24 @@ export const TreasuryView: React.FC<TreasuryViewProps> = ({ initialIntent, clear
     }));
     const parsedBankRows = bankCsvText.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).map((line, idx) => {
       const parts = parseCsvRow(line);
-      const date = parts[0] || getTodayShamsi();
-      const desc = parts[1] || `تراکنش بانکی ${idx + 1}`;
-      const deposit = Number((parts[2] || '0').replace(/[^\d.-]/g, '')) || 0;
-      const withdrawal = Number((parts[3] || '0').replace(/[^\d.-]/g, '')) || 0;
-      return { id: `bk_${idx}`, date, desc, deposit, withdrawal, reference: parts[4] || undefined, amount: deposit - withdrawal };
+      const date = (parts[0] || '').trim();
+      const desc = (parts[1] || '').trim() || ('تراکنش بانکی ' + (idx + 1));
+      const parseAmount = (raw: string | undefined) => {
+        if (!raw?.trim()) return 0;
+        const normalized = raw.replace(/[،٬,\s]/g, '');
+        return /^-?\d+(\.\d+)?$/.test(normalized) ? Number(normalized) : Number.NaN;
+      };
+      const deposit = parseAmount(parts[2]);
+      const withdrawal = parseAmount(parts[3]);
+      let validationError: string | undefined;
+      if (!/^14\d{2}\/\d{2}\/\d{2}$/.test(date) || diffShamsiDays(date, date) !== 0) validationError = 'تاریخ شمسی معتبر نیست.';
+      else if (!Number.isFinite(deposit) || !Number.isFinite(withdrawal) || deposit < 0 || withdrawal < 0) validationError = 'مبلغ واریز یا برداشت معتبر نیست.';
+      else if ((deposit > 0 && withdrawal > 0) || (deposit === 0 && withdrawal === 0)) validationError = 'هر ردیف باید فقط یک مبلغ مثبت در ستون واریز یا برداشت داشته باشد.';
+      return { id: 'bk_' + idx, date, desc, deposit, withdrawal, reference: parts[4]?.trim() || undefined, amount: deposit - withdrawal, validationError };
     });
+    const validBankRows = parsedBankRows.filter((row) => !row.validationError);
     const matching = reconcileBankLines(
-      parsedBankRows.map((row) => ({ id: row.id, accountId: reconBankCode, date: row.date, amount: row.amount, reference: row.reference })),
+      validBankRows.map((row) => ({ id: row.id, accountId: reconBankCode, date: row.date, amount: row.amount, reference: row.reference })),
       ledgerTx.map((tx) => ({ id: tx.id, accountId: reconBankCode, date: tx.date, amount: tx.amount, reference: tx.reference })),
       2, (from, to) => diffShamsiDays(from, to) ?? Number.POSITIVE_INFINITY,
     );
@@ -273,7 +283,8 @@ export const TreasuryView: React.FC<TreasuryViewProps> = ({ initialIntent, clear
     const bankRows = parsedBankRows.map((row) => ({ ...row, matched: ledgerTx.find((tx) => tx.id === matchByStatement.get(row.id)), ambiguous: ambiguousIds.has(row.id) }));
     return {
       ledgerTx, bankRows, matchedCount: matching.matches.length,
-      unmatchedRows: bankRows.filter((row) => !row.matched && !row.ambiguous),
+      unmatchedRows: bankRows.filter((row) => !row.validationError && !row.matched && !row.ambiguous),
+      invalidCount: bankRows.filter((row) => row.validationError).length,
       ambiguousCount: matching.ambiguousStatementIds.length, unmatchedLedgerCount: matching.unmatchedLedgerIds.length,
     };
   }, [bankCsvText, reconBankCode, vouchers]);
@@ -284,14 +295,26 @@ export const TreasuryView: React.FC<TreasuryViewProps> = ({ initialIntent, clear
     deposit: number;
     withdrawal: number;
   }) => {
-    const bankAcc = accounts.find((a) => a.code === reconBankCode);
-    const bankTitle = bankAcc?.title || 'حساب بانکی شرکت';
+    const bankAcc = accounts.find((a) => a.code === reconBankCode && a.level === 'moein' && a.code.startsWith('102'));
+    if (!bankAcc) throw new Error('حساب بانکی انتخاب‌شده معتبر نیست.');
+    if (!/^14\d{2}\/\d{2}\/\d{2}$/.test(row.date) || diffShamsiDays(row.date, row.date) !== 0 ||
+        !Number.isFinite(row.deposit) || !Number.isFinite(row.withdrawal) || row.deposit < 0 || row.withdrawal < 0 ||
+        (row.deposit > 0 && row.withdrawal > 0) || (row.deposit === 0 && row.withdrawal === 0)) {
+      throw new Error('ردیف صورت‌حساب بانک دارای تاریخ یا مبلغ نامعتبر است.');
+    }
+    const bankTitle = bankAcc.title;
+    const referenceId = 'bank-recon:' + reconBankCode + ':' + row.date + ':' + row.id + ':' + row.deposit + ':' + row.withdrawal;
+    if (vouchers.some((voucher) => voucher.referenceId === referenceId)) {
+      showToast('برای این ردیف صورت‌حساب قبلاً سند مغایرت ثبت شده است.');
+      return;
+    }
     if (row.withdrawal > 0) {
       await createVoucher({
         date: row.date,
         description: `سند مغایرت‌گیری بانکی (کارمزد/برداشت): ${row.desc}`,
         voucherType: 'treasury',
         status: 'permanent',
+        referenceId,
         lines: [
           {
             accountCode: '80901',
@@ -315,6 +338,7 @@ export const TreasuryView: React.FC<TreasuryViewProps> = ({ initialIntent, clear
         description: `سند مغایرت‌گیری بانکی (سود/واریزی): ${row.desc}`,
         voucherType: 'treasury',
         status: 'permanent',
+        referenceId,
         lines: [
           {
             accountCode: reconBankCode,
@@ -1349,6 +1373,10 @@ export const TreasuryView: React.FC<TreasuryViewProps> = ({ initialIntent, clear
                   {toPersianDigits(reconResult.unmatchedRows.length)}
                 </strong>
               <div>
+                <span className="text-rose-700 dark:text-rose-400">ردیف‌های نامعتبر فایل:</span>{' '}
+                <strong className="font-code text-rose-700 dark:text-rose-400">{toPersianDigits(reconResult.invalidCount)}</strong>
+              </div>
+              <div>
                 <span className="text-amber-700 dark:text-amber-400">تطبیق‌های مبهم (نیازمند بررسی):</span>{' '}
                 <strong className="font-code text-amber-700 dark:text-amber-400">{toPersianDigits(reconResult.ambiguousCount)}</strong>
               </div>
@@ -1383,7 +1411,9 @@ export const TreasuryView: React.FC<TreasuryViewProps> = ({ initialIntent, clear
                         {row.withdrawal > 0 ? formatMoney(row.withdrawal, unit, false) : '—'}
                       </td>
                       <td className="py-2.5 px-3">
-                        {row.matched ? (
+                        {row.validationError ? (
+                          <span className="text-rose-700 dark:text-rose-400 font-semibold">{row.validationError}</span>
+                        ) : row.matched ? (
                           <span className="text-emerald-700 dark:text-emerald-400 font-semibold">
                             تطبیق یکتای سند #{toPersianDigits(row.matched.voucherNumber)}
                           </span>
@@ -1394,7 +1424,7 @@ export const TreasuryView: React.FC<TreasuryViewProps> = ({ initialIntent, clear
                         )}
                       </td>
                       <td className="py-2.5 px-3 text-left">
-                        {!row.matched && !row.ambiguous ? (
+                        {!row.validationError && !row.matched && !row.ambiguous ? (
                           <button
                             type="button"
                             onClick={() => handlePostBankAdjustment(row)}
