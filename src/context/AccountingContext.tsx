@@ -4,7 +4,7 @@ import {
   auth, db, collection, deleteDoc, doc, getDoc, getDocs, onAuthStateChanged,
   onSnapshot, query, serverTimestamp, setDoc, updateDoc, where, writeBatch,
   handleSupabaseError, isSupabaseOfflineError, OperationType, signOutAccount,
-  testSupabaseConnection, setActiveCompanyId,
+  testSupabaseConnection, setActiveCompanyId, flushLocalSyncOutbox,
 } from '../lib/supabaseStore';
 import { ensurePasswordlessSession, getBillionMembership, acceptBillionInvite, bootstrapBillionCompany, createBillionInvite } from '../lib/supabaseEnrollment';
 import {
@@ -417,6 +417,9 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           return;
         }
         setActiveCompanyId(membership.company_id);
+        const offlineSync = await flushLocalSyncOutbox();
+        if (offlineSync.synced > 0) showToast(`${offlineSync.synced} عملیات آفلاین با موفقیت همگام شد.`);
+        if (offlineSync.failed > 0) showToast(`${offlineSync.failed} عملیات آفلاین به‌دلیل تعارض یا خطای داده نیازمند بررسی است؛ اطلاعات دستگاه دیگر بازنویسی نشد.`);
         const uid = supabaseUser.id;
         const profileRef = doc(db, 'users', uid);
         const profileSnap = await getDoc(profileRef);
@@ -594,6 +597,20 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       unsubs.forEach((u) => u());
     };
   }, [authReady, user, ensureCloudSeed]);
+
+  useEffect(() => {
+    if (!authReady || !user || typeof window === 'undefined') return;
+    const handleReconnect = () => {
+      void flushLocalSyncOutbox().then((result) => {
+        if (result.synced > 0) showToast(`${result.synced} عملیات ذخیره‌شده پس از اتصال اینترنت همگام شد.`);
+        if (result.failed > 0) showToast(`${result.failed} عملیات آفلاین نیازمند بررسی است؛ از بازنویسی تغییرات دستگاه دیگر جلوگیری شد.`);
+      }).catch((error) => {
+        console.error('Offline accounting sync failed:', error);
+      });
+    };
+    window.addEventListener('online', handleReconnect);
+    return () => window.removeEventListener('online', handleReconnect);
+  }, [authReady, user, showToast]);
 
   const ownerId = user?.id ?? DEMO_OWNER;
   const isCloudMode = !!user;
