@@ -360,6 +360,114 @@ export function computeProductProfitability(
   return Array.from(acc.values()).sort((a, b) => b.grossProfit - a.grossProfit);
 }
 
+export interface InventoryValuationRow {
+  productId: string;
+  sku: string;
+  productName: string;
+  category: string;
+  warehouse: string;
+  currentStock: number;
+  averageUnitCost: number;
+  inventoryValue: number;
+  purchasedQty: number;
+  soldQty: number;
+  returnedQty: number;
+  wasteQty: number;
+  estimatedCogs: number;
+  netSalesRevenue: number;
+  grossProfit: number;
+  grossMarginPct: number;
+  reconciliationQty: number;
+}
+
+export function computeInventoryValuation(
+  products: Product[],
+  invoices: Invoice[],
+): InventoryValuationRow[] {
+  return products.map((product) => {
+    const movements = invoices
+      .filter((invoice) => invoice.status !== 'cancelled' && invoice.invoiceType !== 'proforma')
+      .flatMap((invoice) => invoice.items
+        .filter((item) => item.productId === product.id)
+        .map((item) => ({ invoice, item })))
+      .sort((a, b) => a.invoice.date.localeCompare(b.invoice.date) ||
+        a.invoice.invoiceNumber.localeCompare(b.invoice.invoiceNumber));
+
+    const netMovement = movements.reduce((total, { invoice, item }) => {
+      if (invoice.invoiceType === 'purchase' || invoice.invoiceType === 'sale_return') return total + item.quantity;
+      return total - item.quantity;
+    }, 0);
+    const openingQty = Math.max(0, Number((product.stock - netMovement).toFixed(2)));
+    let quantity = openingQty;
+    let averageUnitCost = Math.max(0, Number(product.buyPrice) || 0);
+    let inventoryValue = Math.round(quantity * averageUnitCost);
+    let purchasedQty = 0;
+    let soldQty = 0;
+    let returnedQty = 0;
+    let wasteQty = 0;
+    let estimatedCogs = 0;
+    let netSalesRevenue = 0;
+
+    for (const { invoice, item } of movements) {
+      const qty = Math.max(0, Number(item.quantity) || 0);
+      if (!qty) continue;
+      if (invoice.invoiceType === 'purchase') {
+        const discountPerUnit = item.discount > 0 ? item.discount / qty : 0;
+        const acquisitionCost = Math.max(0, item.unitPrice - discountPerUnit);
+        const incomingValue = Math.round(qty * acquisitionCost);
+        quantity += qty;
+        inventoryValue += incomingValue;
+        averageUnitCost = quantity > 0 ? Math.round(inventoryValue / quantity) : averageUnitCost;
+        purchasedQty += qty;
+      } else if (invoice.invoiceType === 'sale_return') {
+        const returnedCost = Math.round(qty * averageUnitCost);
+        quantity += qty;
+        inventoryValue += returnedCost;
+        averageUnitCost = quantity > 0 ? Math.round(inventoryValue / quantity) : averageUnitCost;
+        returnedQty += qty;
+        estimatedCogs -= returnedCost;
+        netSalesRevenue -= Math.max(0, Math.round(qty * item.unitPrice) - (item.discount || 0));
+      } else if (invoice.invoiceType === 'sale') {
+        const cost = Math.round(qty * averageUnitCost);
+        quantity = Math.max(0, Number((quantity - qty).toFixed(2)));
+        inventoryValue = Math.max(0, inventoryValue - cost);
+        estimatedCogs += cost;
+        netSalesRevenue += Math.max(0, Math.round(qty * item.unitPrice) - (item.discount || 0));
+        soldQty += qty;
+      } else if (invoice.invoiceType === 'purchase_return' || invoice.invoiceType === 'waste') {
+        const cost = Math.round(qty * averageUnitCost);
+        quantity = Math.max(0, Number((quantity - qty).toFixed(2)));
+        inventoryValue = Math.max(0, inventoryValue - cost);
+        if (invoice.invoiceType === 'waste') wasteQty += qty;
+      }
+    }
+
+    const reconciliationQty = Number((product.stock - quantity).toFixed(2));
+    const finalAverageCost = quantity > 0 ? averageUnitCost : Math.max(0, Number(product.buyPrice) || 0);
+    const finalInventoryValue = Math.round(Math.max(0, product.stock) * finalAverageCost);
+    const grossProfit = netSalesRevenue - estimatedCogs;
+    return {
+      productId: product.id,
+      sku: product.sku,
+      productName: product.name,
+      category: product.category,
+      warehouse: product.warehouse,
+      currentStock: product.stock,
+      averageUnitCost: finalAverageCost,
+      inventoryValue: finalInventoryValue,
+      purchasedQty,
+      soldQty,
+      returnedQty,
+      wasteQty,
+      estimatedCogs,
+      netSalesRevenue,
+      grossProfit,
+      grossMarginPct: netSalesRevenue > 0 ? (grossProfit / netSalesRevenue) * 100 : 0,
+      reconciliationQty,
+    };
+  }).sort((a, b) => b.inventoryValue - a.inventoryValue);
+}
+
 export interface CostCenterPnLRow {
   costCenter: CostCenter;
   revenue: number;

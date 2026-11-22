@@ -83,6 +83,32 @@ test('sale and purchase returns create balanced reversal-side accounting entries
   assert.equal(purchaseReturn.reduce((sum, line) => sum + line.debit, 0), purchaseReturn.reduce((sum, line) => sum + line.credit, 0));
 });
 
+test('inventory valuation uses moving weighted average and reconciles current stock', () => {
+  const product = {
+    id: 'p-1', ownerId: 'u-1', sku: 'YARN-1', name: 'نخ آزمایشی', category: 'نخ',
+    warehouse: 'انبار مرکزی', unit: 'کیلوگرم', buyPrice: 100, sellPrice: 300,
+    stock: 15, reorderPoint: 0, vatExempt: false,
+  };
+  const base = {
+    ownerId: 'u-1', date: '1405/01/01', dueDate: '1405/01/01', partyId: 'v-1',
+    partyName: 'تأمین‌کننده', warehouse: 'انبار مرکزی', subtotal: 0, discount: 0,
+    vatAmount: 0, grandTotal: 0, paidCash: 0, paidBank: 0, paidCheque: 0,
+    creditAmount: 0, status: 'issued', items: [],
+  };
+  const invoices = [
+    { ...base, id: 'i-1', invoiceNumber: '1', invoiceType: 'purchase', items: [{ productId: 'p-1', sku: 'YARN-1', productName: 'نخ آزمایشی', unit: 'کیلوگرم', quantity: 10, unitPrice: 200, discount: 0, vatAmount: 0, lineTotal: 2000 }] },
+    { ...base, id: 'i-2', invoiceNumber: '2', invoiceType: 'sale', date: '1405/01/02', items: [{ productId: 'p-1', sku: 'YARN-1', productName: 'نخ آزمایشی', unit: 'کیلوگرم', quantity: 5, unitPrice: 300, discount: 0, vatAmount: 0, lineTotal: 1500 }] },
+  ] as any;
+  const [row] = computeInventoryValuation([product], invoices);
+  assert.equal(row.currentStock, 15);
+  assert.equal(row.averageUnitCost, 150);
+  assert.equal(row.inventoryValue, 2250);
+  assert.equal(row.estimatedCogs, 750);
+  assert.equal(row.netSalesRevenue, 1500);
+  assert.equal(row.grossProfit, 750);
+  assert.equal(row.reconciliationQty, 0);
+});
+
 test('fiscal period rejects closed periods and overlapping ranges', () => {
   assert.throws(() => assertFiscalPeriodOpen('2026-03-20', [
     { id: 'p1', startDate: '2026-03-01', endDate: '2026-03-31', status: 'closed' },

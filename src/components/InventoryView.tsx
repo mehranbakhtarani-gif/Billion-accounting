@@ -25,6 +25,7 @@ import {
 import { fuzzyFilterAndRank } from '../lib/fuzzySearch';
 import { FuzzyTableOption, FuzzyTableSearch } from './FuzzyTableSearch';
 import { code39Svg, normalizeCode39 } from '../lib/barcode';
+import { computeInventoryValuation } from '../lib/accountingEngine';
 
 const YARN_CATEGORIES = [
   'نخ پلی‌استر DTY',
@@ -267,6 +268,18 @@ export const InventoryView: React.FC<{ initialIntent?: string; clearIntent?: () 
     }
     return { totalValue, totalKg, totalCartons };
   }, [products]);
+
+  const inventoryValuation = useMemo(
+    () => computeInventoryValuation(products, invoices),
+    [products, invoices],
+  );
+  const inventoryValuationTotals = useMemo(() => inventoryValuation.reduce((totals, row) => ({
+    inventoryValue: totals.inventoryValue + row.inventoryValue,
+    estimatedCogs: totals.estimatedCogs + row.estimatedCogs,
+    netSalesRevenue: totals.netSalesRevenue + row.netSalesRevenue,
+    grossProfit: totals.grossProfit + row.grossProfit,
+    unreconciledItems: totals.unreconciledItems + (Math.abs(row.reconciliationQty) > 0.01 ? 1 : 0),
+  }), { inventoryValue: 0, estimatedCogs: 0, netSalesRevenue: 0, grossProfit: 0, unreconciledItems: 0 }), [inventoryValuation]);
 
   const selectedProduct = products.find((p) => p.id === selectedProductId) ?? products[0];
 
@@ -588,6 +601,78 @@ export const InventoryView: React.FC<{ initialIntent?: string; clearIntent?: () 
           </button>
         </div>
       </div>
+
+      <section className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 space-y-3">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <div>
+            <h2 className="text-sm font-bold text-slate-900 dark:text-white">گزارش ارزش موجودی و بهای تمام‌شده</h2>
+            <p className="text-[11px] text-slate-500 mt-1">روش محاسبه: میانگین موزون متحرک بر اساس گردش خرید، فروش و برگشت‌ها</p>
+          </div>
+          <button
+            onClick={() => exportToCsv('billion-inventory-cost-report.csv',
+              ['SKU', 'کالا', 'دسته', 'انبار', 'موجودی فعلی', 'میانگین بهای واحد', 'ارزش موجودی', 'بهای تمام‌شده فروش', 'فروش خالص', 'سود ناخالص', 'اختلاف تطبیق'],
+              inventoryValuation.map((row) => [row.sku, row.productName, row.category, row.warehouse, row.currentStock, row.averageUnitCost, row.inventoryValue, row.estimatedCogs, row.netSalesRevenue, row.grossProfit, row.reconciliationQty]))}
+            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800"
+          >
+            <Download className="w-4 h-4" /> خروجی گزارش انبار (CSV)
+          </button>
+        </div>
+        <div className="grid grid-cols-2 xl:grid-cols-4 gap-2">
+          <div className="rounded-lg bg-slate-50 dark:bg-slate-950 p-3">
+            <div className="text-[10px] text-slate-500">ارزش برآوردی موجودی</div>
+            <div className="font-bold font-code text-sm mt-1">{formatMoney(inventoryValuationTotals.inventoryValue, unit, false)}</div>
+          </div>
+          <div className="rounded-lg bg-slate-50 dark:bg-slate-950 p-3">
+            <div className="text-[10px] text-slate-500">بهای تمام‌شده فروش</div>
+            <div className="font-bold font-code text-sm mt-1">{formatMoney(inventoryValuationTotals.estimatedCogs, unit, false)}</div>
+          </div>
+          <div className="rounded-lg bg-slate-50 dark:bg-slate-950 p-3">
+            <div className="text-[10px] text-slate-500">سود ناخالص برآوردی</div>
+            <div className="font-bold font-code text-sm mt-1">{formatMoney(inventoryValuationTotals.grossProfit, unit, false)}</div>
+          </div>
+          <div className="rounded-lg bg-slate-50 dark:bg-slate-950 p-3">
+            <div className="text-[10px] text-slate-500">اقلام نیازمند تطبیق</div>
+            <div className={`font-bold font-code text-sm mt-1 ${inventoryValuationTotals.unreconciledItems ? 'text-amber-700 dark:text-amber-400' : 'text-emerald-700 dark:text-emerald-400'}`}>{toPersianDigits(inventoryValuationTotals.unreconciledItems)} قلم</div>
+          </div>
+        </div>
+        <div className="overflow-x-auto max-h-80 rounded-lg border border-slate-100 dark:border-slate-800">
+          <table className="w-full min-w-[900px] text-[11px]">
+            <thead className="sticky top-0 bg-slate-50 dark:bg-slate-950 text-slate-500">
+              <tr>
+                <th className="text-right p-2">کالا / SKU</th>
+                <th className="text-right p-2">انبار</th>
+                <th className="text-left p-2">موجودی</th>
+                <th className="text-left p-2">میانگین بهای واحد</th>
+                <th className="text-left p-2">ارزش موجودی</th>
+                <th className="text-left p-2">بهای تمام‌شده فروش</th>
+                <th className="text-left p-2">سود ناخالص</th>
+                <th className="text-left p-2">اختلاف تطبیق</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+              {inventoryValuation.map((row) => (
+                <tr key={row.productId}>
+                  <td className="p-2">
+                    <div className="font-semibold text-slate-800 dark:text-slate-100">{row.productName}</div>
+                    <div className="text-[10px] text-slate-500 font-code">{row.sku}</div>
+                  </td>
+                  <td className="p-2">{row.warehouse}</td>
+                  <td className="p-2 text-left font-code">{formatWeight(row.currentStock)}</td>
+                  <td className="p-2 text-left font-code">{formatMoney(row.averageUnitCost, unit, false)}</td>
+                  <td className="p-2 text-left font-code">{formatMoney(row.inventoryValue, unit, false)}</td>
+                  <td className="p-2 text-left font-code">{formatMoney(row.estimatedCogs, unit, false)}</td>
+                  <td className="p-2 text-left font-code">{formatMoney(row.grossProfit, unit, false)}</td>
+                  <td className={`p-2 text-left font-code ${Math.abs(row.reconciliationQty) > 0.01 ? 'text-amber-700 dark:text-amber-400 font-bold' : 'text-emerald-700 dark:text-emerald-400'}`}>{formatWeight(row.reconciliationQty)}</td>
+                </tr>
+              ))}
+              {!inventoryValuation.length && <tr><td colSpan={8} className="p-5 text-center text-slate-500">کالایی برای گزارش وجود ندارد.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+        <p className="text-[10px] leading-5 text-amber-700 dark:text-amber-400">
+          نکته حسابداری: بهای موجودی اول دوره در صورت نبود سند افتتاحیه مقداری، با نرخ خرید فعلی کالا برآورد می‌شود. اختلاف مقدار محاسباتی با موجودی ثبت‌شده جداگانه نمایش داده شده است؛ برای گزارش قطعی بهای تمام‌شده، موجودی اول دوره و اسناد تعدیل باید ثبت و تطبیق شوند.
+        </p>
+      </section>
 
       {/* Global Fuzzy Search Bar for Textile Yarn Inventory */}
       <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4 space-y-3">
