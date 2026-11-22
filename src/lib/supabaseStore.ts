@@ -23,6 +23,49 @@ export function setActiveCompanyId(companyId: string | null) {
   activeCompanyId = companyId;
 }
 
+export type BillionDeviceSyncStatus = {
+  devices: Array<{
+    device_id: string;
+    device_label: string;
+    platform: string;
+    status: 'active' | 'revoked';
+    last_seen_at: string | null;
+    last_sequence: number;
+  }>;
+  operations: Array<{
+    operation_id: string;
+    device_id: string;
+    device_sequence: number;
+    operation_type: string;
+    summary: string;
+    client_created_at: string;
+    server_applied_at: string;
+  }>;
+};
+
+export async function getBillionDeviceSyncStatus(): Promise<BillionDeviceSyncStatus> {
+  const companyId = requireCompany();
+  const [devices, operations] = await Promise.all([
+    supabase
+      .from('billion_company_devices')
+      .select('device_id,device_label,platform,status,last_seen_at,last_sequence')
+      .eq('company_id', companyId)
+      .order('last_seen_at', { ascending: false }),
+    supabase
+      .from('billion_operation_log')
+      .select('operation_id,device_id,device_sequence,operation_type,summary,client_created_at,server_applied_at')
+      .eq('company_id', companyId)
+      .order('server_applied_at', { ascending: false })
+      .limit(50),
+  ]);
+  if (devices.error) handleSupabaseError(devices.error, OperationType.LIST, 'billion_company_devices');
+  if (operations.error) handleSupabaseError(operations.error, OperationType.LIST, 'billion_operation_log');
+  return {
+    devices: (devices.data ?? []) as BillionDeviceSyncStatus['devices'],
+    operations: (operations.data ?? []) as BillionDeviceSyncStatus['operations'],
+  };
+}
+
 export async function touchBillionDevice(deviceId: string): Promise<void> {
   const companyId = requireCompany();
   const { error } = await supabase.rpc('billion_touch_device', {
