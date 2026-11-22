@@ -27,6 +27,8 @@ export function validateJournalEntryPayload(payload: {
   if (!Array.isArray(payload.lines) || payload.lines.length < 2 || payload.lines.length > 100) {
     throw new Error('سند باید بین ۲ تا ۱۰۰ ردیف حسابداری داشته باشد.');
   }
+  let totalDebit = 0;
+  let totalCredit = 0;
   for (const line of payload.lines) {
     const debit = Number(line.debit);
     const credit = Number(line.credit);
@@ -35,6 +37,11 @@ export function validateJournalEntryPayload(payload: {
         (debit === 0 && credit === 0)) {
       throw new Error('کد حساب یا مبلغ بدهکار/بستانکار یکی از ردیف‌های سند معتبر نیست.');
     }
+    totalDebit += debit;
+    totalCredit += credit;
+  }
+  if (Math.abs(totalDebit - totalCredit) > 0.000001) {
+    throw new Error('سند حسابداری تراز نیست؛ جمع بدهکار و بستانکار باید برابر باشد.');
   }
 }
 
