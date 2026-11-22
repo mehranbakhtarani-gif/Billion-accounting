@@ -3,6 +3,7 @@ import {
   AlertTriangle,
   ArrowLeft,
   CheckCircle2,
+  Download,
   ListOrdered,
   Printer,
   ShieldCheck,
@@ -10,7 +11,7 @@ import {
 } from 'lucide-react';
 import { useAccounting } from '../context/AccountingContext';
 import { ActiveModule } from '../types/accounting';
-import { formatMoney, toPersianDigits } from '../lib/format';
+import { exportToCsv, formatMoney, toPersianDigits } from '../lib/format';
 
 export const AuditView: React.FC<{
   onNavigate: (mod: ActiveModule, intent?: string) => void;
@@ -68,6 +69,24 @@ export const AuditView: React.FC<{
           >
             <ListOrdered className="w-4 h-4 text-teal-700 dark:text-teal-400" />
             <span>مرتب‌سازی و شماره‌گذاری مجدد اسناد</span>
+          </button>
+          <button
+            onClick={() => exportToCsv(
+              \`billion-audit-report-\${profile.fiscalYear}.csv\`,
+              ['شناسه کنترل', 'حوزه', 'عنوان کنترل', 'وضعیت', 'خلاصه', 'جزئیات'],
+              auditReport.checks.map((check) => [
+                check.id,
+                check.category,
+                check.title,
+                check.status === 'pass' ? 'تأیید' : check.status === 'warning' ? 'هشدار' : 'خطا',
+                check.summary,
+                check.details.join(' | '),
+              ])
+            )}
+            className="inline-flex items-center gap-2 px-3.5 py-2 text-xs font-medium rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 whitespace-nowrap"
+          >
+            <Download className="w-4 h-4" />
+            <span>خروجی حسابرسی (CSV)</span>
           </button>
           <button
             onClick={() => window.print()}
