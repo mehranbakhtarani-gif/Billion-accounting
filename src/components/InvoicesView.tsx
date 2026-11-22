@@ -14,6 +14,7 @@ import {
   X,
 } from 'lucide-react';
 import { useAccounting } from '../context/AccountingContext';
+import { calculateLotReturnableQuantity } from '../lib/enterpriseControls';
 import { Invoice, InvoiceItem, InvoiceType } from '../types/accounting';
 import { buildMoadianInvoiceJson, PRICING_TIER_LABELS } from '../lib/enterpriseAccounting';
 import {
@@ -91,6 +92,7 @@ export const InvoicesView: React.FC<{ initialIntent?: string; clearIntent?: () =
     parties,
     products,
     inventoryLots,
+    inventoryLotMovements,
     costCenters,
     currencies,
     exchangeRates,
@@ -1255,7 +1257,7 @@ export const InvoicesView: React.FC<{ initialIntent?: string; clearIntent?: () =
                         <div className="grid grid-cols-2 gap-1.5 mt-2">
                           <label className="text-[10px] text-slate-500">شماره بچ
                             <input list={invoiceType === 'sale_return' ? `return-lots-${idx}` : undefined} value={row.lotNumber || ''} onChange={(e) => setDraftItems((prev) => prev.map((item, i) => i === idx ? { ...item, lotNumber: e.target.value } : item))} className="w-full mt-0.5 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-2 py-1.5" placeholder="شماره بچ خرید / بچ مرجوعی" />
-                            {invoiceType === 'sale_return' && <datalist id={`return-lots-${idx}`}>{inventoryLots.filter((lot) => lot.productId === prod?.id && lot.warehouse === prod?.warehouse).map((lot) => <option key={lot.id} value={lot.lotNumber}>{`مانده ${lot.quantityRemaining} — بهای ${lot.unitCost}`}</option>)}</datalist>}
+                            {invoiceType === 'sale_return' && <datalist id={`return-lots-${idx}`}>{inventoryLots.filter((lot) => lot.productId === prod?.id && lot.warehouse === prod?.warehouse && calculateLotReturnableQuantity(lot.id, inventoryLotMovements) > 0).map((lot) => <option key={lot.id} value={lot.lotNumber}>{`مانده ${lot.quantityRemaining} — بهای ${lot.unitCost}`}</option>)}</datalist>}
                           </label>
                           {invoiceType === 'purchase' && (
                             <label className="text-[10px] text-slate-500">تاریخ ورود
