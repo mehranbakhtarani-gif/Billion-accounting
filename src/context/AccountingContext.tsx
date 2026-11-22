@@ -1635,6 +1635,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           throw error;
         }
       }
+      return full;
     },
     [ownerId, user, cheques, createVoucher]
   );
@@ -2062,6 +2063,10 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     async (payload: Omit<Invoice, 'id' | 'ownerId' | 'voucherId'>): Promise<Invoice> => {
       const id = generateSafeId('inv');
       let voucherId: string | undefined;
+      let createdVoucher: Voucher | undefined;
+      let createdCheque: Cheque | undefined;
+      let invoicePersistenceAttempted = false;
+      const appliedStock: Array<{ productId: string; previousStock: number }> = [];
 
       const isStockOut = ['sale', 'purchase_return', 'waste'].includes(payload.invoiceType);
       if (isStockOut) {
@@ -2077,114 +2082,186 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       }
 
       let cogsTotal = 0;
+      const stockDeltas = new Map<string, number>();
       if (payload.invoiceType !== 'proforma') {
-        const stockDeltas = new Map<string, number>();
         for (const item of payload.items) {
           const product = products.find((candidate) => candidate.id === item.productId);
           if (!product) throw new Error(`کالای ردیف فاکتور یافت نشد: ${item.productName || item.productId}`);
-          if (!Number.isFinite(item.quantity) || item.quantity <= 0) throw new Error(`مقدار کالا در فاکتور معتبر نیست: ${item.productName || item.productId}`);
+          if (!Number.isFinite(item.quantity) || item.quantity <= 0) {
+            throw new Error(`مقدار کالا در فاکتور معتبر نیست: ${item.productName || item.productId}`);
+          }
           cogsTotal += Math.round(product.buyPrice * item.quantity);
           const outgoing = ['sale', 'purchase_return', 'waste'].includes(payload.invoiceType);
           stockDeltas.set(product.id, (stockDeltas.get(product.id) ?? 0) + (outgoing ? -item.quantity : item.quantity));
-        }
-        const appliedStock: Array<{ productId: string; previousStock: number }> = [];
-        let createdVoucher: Voucher | undefined;
-        try {
-          for (const [productId, delta] of stockDeltas) {
-            const product = products.find((candidate) => candidate.id === productId);
-            if (!product) throw new Error(`کالای فاکتور یافت نشد: ${productId}`);
-            const nextStock = Number((product.stock + delta).toFixed(2));
-            if (!Number.isFinite(nextStock) || nextStock < -1e-9) throw new Error(`موجودی کالا برای ثبت فاکتور کافی نیست: ${product.name}`);
-            await adjustProductStock(product.id, Math.max(0, nextStock));
-            appliedStock.push({ productId, previousStock: product.stock });
-          }
-          const rawLines = buildInvoiceVoucherLines(payload, cogsTotal);
-          const isFx = isForeignCurrency(payload.currencyCode) && Number(payload.exchangeRate) > 0;
-          const fxCode = isFx ? normalizeCurrencyCode(payload.currencyCode) : undefined;
-          const fxRate = isFx ? Number(payload.exchangeRate) : undefined;
-          const fxCurDef = fxCode ? currencies.find((currency) => normalizeCurrencyCode(currency.code) === fxCode) : undefined;
-          const lines = isFx && fxRate ? annotateVoucherLinesWithCurrency(rawLines, fxRate, fxCurDef?.decimalPlaces ?? 2) : rawLines;
-          if (lines.length >= 2) {
-            const voucherType: VoucherType = payload.invoiceType === 'purchase' || payload.invoiceType === 'purchase_return' ? 'purchase' : payload.invoiceType === 'waste' ? 'general' : 'sales';
-            const fxSuffix = isFx && fxCode && fxRate ? ` (ارزی ${fxCode} @ نرخ ${fxRate.toLocaleString('en-US')})` : '';
-            createdVoucher = await createVoucher({ date: payload.date, description: `سند اتوماتیک فاکتور ${payload.invoiceNumber} — ${payload.partyName}${fxSuffix}`, voucherType, status: 'permanent', lines, referenceId: id, ...(isFx && fxCode && fxRate ? { currencyCode: fxCode, exchangeRate: fxRate } : {}) });
-            voucherId = createdVoucher.id;
-          }
-          if (payload.paidCheque > 0 && (payload.invoiceType === 'sale' || payload.invoiceType === 'purchase')) {
-            await addCheque({ sayadiId: `SYD${Math.floor(1000000000000 + Math.random() * 8999999999999)}`, serial: `INV-${payload.invoiceNumber.slice(-3)}`, direction: payload.invoiceType === 'sale' ? 'receivable' : 'payable', partyId: payload.partyId, partyName: payload.partyName, bankName: 'بانک ملت', branch: 'ثبت خودکار از فاکتور', amount: payload.paidCheque, issueDate: payload.date, dueDate: payload.date, status: 'in_box', notes: `ثبت خودکار بابت فاکتور ${payload.invoiceNumber}` }, true);
-          }
-        } catch (error) {
-          for (const snapshot of appliedStock.reverse()) {
-            const product = products.find((candidate) => candidate.id === snapshot.productId);
-            if (!product) continue;
-            try { await adjustProductStock(snapshot.productId, snapshot.previousStock); }
-            catch (rollbackError) { console.error('Invoice stock rollback failed', snapshot.productId, rollbackError); }
-          }
-          if (createdVoucher) {
-            try { await createVoucher({ date: getTodayShamsi(), description: `سند معکوس خودکار بابت عدم تکمیل فاکتور ${payload.invoiceNumber}`, voucherType: 'general', status: 'permanent', referenceId: `invoice-compensation:${id}`, lines: createdVoucher.lines.map((line) => ({ ...line, description: `برگشت سند فاکتور #${createdVoucher!.voucherNumber}: ${line.description}`, debit: line.credit, credit: line.debit, foreignDebit: line.foreignCredit, foreignCredit: line.foreignDebit })) }); }
-            catch (reversalError) { console.error('Invoice voucher compensation failed', createdVoucher.id, reversalError); }
-          }
-          throw new Error(`ثبت فاکتور کامل نشد؛ تلاش برای برگشت موجودی و سند انجام شد. علت: ${error instanceof Error ? error.message : String(error)}`);
         }
       }
 
       const isFxInv = isForeignCurrency(payload.currencyCode) && Number(payload.exchangeRate) > 0;
       const full: Invoice = { ...payload, id, ownerId, voucherId };
+      try {
+        if (payload.invoiceType !== 'proforma') {
+          for (const [productId, delta] of stockDeltas) {
+            const product = products.find((candidate) => candidate.id === productId);
+            if (!product) throw new Error(`کالای فاکتور یافت نشد: ${productId}`);
+            const nextStock = Number((product.stock + delta).toFixed(2));
+            if (!Number.isFinite(nextStock) || nextStock < -1e-9) {
+              throw new Error(`موجودی کالا برای ثبت فاکتور کافی نیست: ${product.name}`);
+            }
+            await adjustProductStock(product.id, Math.max(0, nextStock));
+            appliedStock.push({ productId, previousStock: product.stock });
+          }
 
-      if (user) {
-        try {
+          const rawLines = buildInvoiceVoucherLines(payload, cogsTotal);
+          const isFx = isForeignCurrency(payload.currencyCode) && Number(payload.exchangeRate) > 0;
+          const fxCode = isFx ? normalizeCurrencyCode(payload.currencyCode) : undefined;
+          const fxRate = isFx ? Number(payload.exchangeRate) : undefined;
+          const fxCurDef = fxCode
+            ? currencies.find((currency) => normalizeCurrencyCode(currency.code) === fxCode)
+            : undefined;
+          const lines = isFx && fxRate
+            ? annotateVoucherLinesWithCurrency(rawLines, fxRate, fxCurDef?.decimalPlaces ?? 2)
+            : rawLines;
+          if (lines.length >= 2) {
+            const voucherType: VoucherType =
+              payload.invoiceType === 'purchase' || payload.invoiceType === 'purchase_return'
+                ? 'purchase'
+                : payload.invoiceType === 'waste' ? 'general' : 'sales';
+            const fxSuffix = isFx && fxCode && fxRate
+              ? ` (ارزی ${fxCode} @ نرخ ${fxRate.toLocaleString('en-US')})`
+              : '';
+            createdVoucher = await createVoucher({
+              date: payload.date,
+              description: `سند اتوماتیک فاکتور ${payload.invoiceNumber} — ${payload.partyName}${fxSuffix}`,
+              voucherType,
+              status: 'permanent',
+              lines,
+              referenceId: id,
+              ...(isFx && fxCode && fxRate ? { currencyCode: fxCode, exchangeRate: fxRate } : {}),
+            });
+            voucherId = createdVoucher.id;
+          }
+
+          if (payload.paidCheque > 0 && (payload.invoiceType === 'sale' || payload.invoiceType === 'purchase')) {
+            createdCheque = await addCheque({
+              sayadiId: `SYD${Math.floor(1000000000000 + Math.random() * 8999999999999)}`,
+              serial: `INV-${payload.invoiceNumber.slice(-3)}`,
+              direction: payload.invoiceType === 'sale' ? 'receivable' : 'payable',
+              partyId: payload.partyId,
+              partyName: payload.partyName,
+              bankName: 'بانک ملت',
+              branch: 'ثبت خودکار از فاکتور',
+              amount: payload.paidCheque,
+              issueDate: payload.date,
+              dueDate: payload.date,
+              status: 'in_box',
+              notes: `ثبت خودکار بابت فاکتور ${payload.invoiceNumber}`,
+            }, true);
+          }
+        }
+
+        const persistedInvoice: Invoice = { ...full, ...(voucherId ? { voucherId } : {}) };
+        if (user) {
+          invoicePersistenceAttempted = true;
           await setDoc(doc(db, 'invoices', id), {
             ownerId,
-            invoiceNumber: full.invoiceNumber.slice(0, 48),
-            ...(full.taxSerial ? { taxSerial: full.taxSerial.slice(0, 64) } : {}),
-            invoiceType: full.invoiceType,
-            date: full.date.slice(0, 20),
-            partyId: full.partyId.slice(0, 128),
-            partyName: full.partyName.slice(0, 160),
-            ...(full.intermediaryId ? { intermediaryId: full.intermediaryId.slice(0, 128) } : {}),
-            ...(full.intermediaryName ? { intermediaryName: full.intermediaryName.slice(0, 160) } : {}),
-            warehouse: full.warehouse.slice(0, 80),
-            ...(full.costCenterId ? { costCenterId: full.costCenterId.slice(0, 128) } : {}),
-            ...(isFxInv && full.currencyCode && full.exchangeRate
+            invoiceNumber: persistedInvoice.invoiceNumber.slice(0, 48),
+            ...(persistedInvoice.taxSerial ? { taxSerial: persistedInvoice.taxSerial.slice(0, 64) } : {}),
+            invoiceType: persistedInvoice.invoiceType,
+            date: persistedInvoice.date.slice(0, 20),
+            partyId: persistedInvoice.partyId.slice(0, 128),
+            partyName: persistedInvoice.partyName.slice(0, 160),
+            ...(persistedInvoice.intermediaryId ? { intermediaryId: persistedInvoice.intermediaryId.slice(0, 128) } : {}),
+            ...(persistedInvoice.intermediaryName ? { intermediaryName: persistedInvoice.intermediaryName.slice(0, 160) } : {}),
+            warehouse: persistedInvoice.warehouse.slice(0, 80),
+            ...(persistedInvoice.costCenterId ? { costCenterId: persistedInvoice.costCenterId.slice(0, 128) } : {}),
+            ...(isFxInv && persistedInvoice.currencyCode && persistedInvoice.exchangeRate
               ? {
-                  currencyCode: normalizeCurrencyCode(full.currencyCode).slice(0, 10),
-                  exchangeRate: Number(full.exchangeRate),
-                  foreignSubtotal: Number(full.foreignSubtotal ?? 0),
-                  foreignDiscount: Number(full.foreignDiscount ?? 0),
-                  foreignVatAmount: Number(full.foreignVatAmount ?? 0),
-                  foreignGrandTotal: Number(full.foreignGrandTotal ?? 0),
+                  currencyCode: normalizeCurrencyCode(persistedInvoice.currencyCode).slice(0, 10),
+                  exchangeRate: Number(persistedInvoice.exchangeRate),
+                  foreignSubtotal: Number(persistedInvoice.foreignSubtotal ?? 0),
+                  foreignDiscount: Number(persistedInvoice.foreignDiscount ?? 0),
+                  foreignVatAmount: Number(persistedInvoice.foreignVatAmount ?? 0),
+                  foreignGrandTotal: Number(persistedInvoice.foreignGrandTotal ?? 0),
                 }
               : {}),
-            subtotal: full.subtotal,
-            discount: full.discount,
-            vatAmount: full.vatAmount,
-            grandTotal: full.grandTotal,
-            paidCash: full.paidCash,
-            paidBank: full.paidBank,
-            paidCheque: full.paidCheque,
-            creditAmount: full.creditAmount,
-            status: full.status,
+            subtotal: persistedInvoice.subtotal,
+            discount: persistedInvoice.discount,
+            vatAmount: persistedInvoice.vatAmount,
+            grandTotal: persistedInvoice.grandTotal,
+            paidCash: persistedInvoice.paidCash,
+            paidBank: persistedInvoice.paidBank,
+            paidCheque: persistedInvoice.paidCheque,
+            creditAmount: persistedInvoice.creditAmount,
+            status: persistedInvoice.status,
             ...(voucherId ? { voucherId } : {}),
-            items: full.items.slice(0, 100),
+            items: persistedInvoice.items.slice(0, 100),
             createdAt: serverTimestamp(),
             updatedAt: serverTimestamp(),
           });
-        } catch (err) {
-          handleSupabaseError(err, OperationType.CREATE, `invoices/${id}`);
-          throw new Error(`ذخیره فاکتور در فضای ابری ناموفق بود؛ فاکتور صادرشده تلقی نمی‌شود. علت: ${String(err)}`);
+        } else {
+          setInvoices((prev) => [persistedInvoice, ...prev]);
         }
-      } else {
-        setInvoices((prev) => [full, ...prev]);
-      }
 
-      showToast(
-        payload.invoiceType === 'proforma'
-          ? `پیش‌فاکتور ${full.invoiceNumber} صادر شد (بدون تأثیر بر انبار و سند تا زمان تبدیل به فاکتور فروش).`
-          : isFxInv && full.currencyCode
-            ? `فاکتور ارزی ${full.invoiceNumber} (${full.currencyCode}) صادر و سند معادل ریالی آن ثبت شد.`
-            : `فاکتور ${full.invoiceNumber} صادر و سند حسابداری آن ثبت شد.`
-      );
-      return full;
+        showToast(
+          payload.invoiceType === 'proforma'
+            ? `پیش‌فاکتور ${persistedInvoice.invoiceNumber} صادر شد (بدون تأثیر بر انبار و سند تا زمان تبدیل به فاکتور فروش).`
+            : isFxInv && persistedInvoice.currencyCode
+              ? `فاکتور ارزی ${persistedInvoice.invoiceNumber} (${persistedInvoice.currencyCode}) صادر و سند معادل ریالی آن ثبت شد.`
+              : `فاکتور ${persistedInvoice.invoiceNumber} صادر و سند حسابداری آن ثبت شد.`
+        );
+        return persistedInvoice;
+      } catch (error) {
+        const compensationFailures: string[] = [];
+        if (invoicePersistenceAttempted && user) {
+          try {
+            await deleteDoc(doc(db, 'invoices', id));
+          } catch (cleanupError) {
+            compensationFailures.push(`پاک‌سازی فاکتور نیمه‌ثبت‌شده ${id} ناموفق بود: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`);
+          }
+        }
+        if (createdCheque) {
+          try {
+            if (user) await deleteDoc(doc(db, 'cheques', createdCheque.id));
+            else setCheques((prev) => prev.filter((cheque) => cheque.id !== createdCheque!.id));
+          } catch (cleanupError) {
+            compensationFailures.push(`حذف چک خودکار ${createdCheque.id} ناموفق بود: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`);
+          }
+        }
+        for (const snapshot of appliedStock.reverse()) {
+          try {
+            await adjustProductStock(snapshot.productId, snapshot.previousStock);
+          } catch (rollbackError) {
+            compensationFailures.push(`برگشت موجودی کالای ${snapshot.productId} ناموفق بود: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`);
+          }
+        }
+        if (createdVoucher) {
+          try {
+            await createVoucher({
+              date: getTodayShamsi(),
+              description: `سند معکوس خودکار بابت عدم تکمیل فاکتور ${payload.invoiceNumber}`,
+              voucherType: 'general',
+              status: 'permanent',
+              referenceId: `invoice-compensation:${id}`,
+              lines: createdVoucher.lines.map((line) => ({
+                ...line,
+                description: `برگشت سند فاکتور #${createdVoucher!.voucherNumber}: ${line.description}`,
+                debit: line.credit,
+                credit: line.debit,
+                foreignDebit: line.foreignCredit,
+                foreignCredit: line.foreignDebit,
+              })),
+            });
+          } catch (reversalError) {
+            compensationFailures.push(`صدور سند معکوس ${createdVoucher.id} ناموفق بود: ${reversalError instanceof Error ? reversalError.message : String(reversalError)}`);
+          }
+        }
+        const reason = error instanceof Error ? error.message : String(error);
+        const compensation = compensationFailures.length
+          ? ` جبران کامل نشد؛ رسیدگی دستی لازم است: ${compensationFailures.join(' | ')}`
+          : ' عملیات جبرانی با موفقیت انجام شد.';
+        handleSupabaseError(error, OperationType.CREATE, `invoices/${id}`);
+        throw new Error(`ثبت فاکتور ${payload.invoiceNumber} کامل نشد. علت: ${reason}.${compensation}`);
+      }
     },
     [products, subcontractJobs, currencies, adjustProductStock, createVoucher, addCheque, ownerId, user, showToast]
   );
