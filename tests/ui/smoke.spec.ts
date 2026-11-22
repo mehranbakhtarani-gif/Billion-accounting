@@ -34,15 +34,16 @@ test('F1 opens and closes the keyboard shortcut guide', async ({ page }) => {
   await page.keyboard.press('F1');
   const dialogTitle = page.getByRole('heading', { name: 'کلیدهای میانبر استاندارد هلو شرکتی Apex' });
   await expect(dialogTitle).toBeVisible();
-  await page.getByRole('button', { name: 'بستن' }).click();
+  await page.getByRole('button', { name: 'بستن', exact: true }).click();
   await expect(dialogTitle).not.toBeVisible();
 });
 
 test('audit center is reachable from the main navigation and exposes CSV export', async ({ page }) => {
   await page.goto('/');
   const navigation = page.getByRole('navigation', { name: 'منوی اصلی بیلیون' });
-  await navigation.getByRole('button', { name: 'عملیات حسابداری و حسابرسی' }).click();
-  await navigation.getByRole('button', { name: 'مرکز حسابرسی و کنترل اسناد' }).click();
+  const auditEntry = navigation.getByRole('button', { name: 'مرکز حسابرسی و کنترل اسناد' });
+  await expect(auditEntry).toBeVisible();
+  await auditEntry.click();
   await expect(page.getByRole('button', { name: 'خروجی حسابرسی (CSV)' })).toBeVisible();
 });
 
