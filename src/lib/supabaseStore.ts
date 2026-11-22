@@ -315,7 +315,7 @@ async function applyChanges(
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (message.includes('BILLION_CONCURRENCY_CONFLICT')) {
-      throw new Error('این رکورد روی دستگاه دیگری تغییر کرده است. اطلاعات تازه را دریافت و تغییر خود را دوباره اعمال کنید؛ دادهٔ دستگاه دیگر بازنویسی نشد.');
+      throw new Error('این رکورد روی دستگاه دیگری تغییر کرده است. صفحه را تازه‌سازی کنید، رکورد را دوباره باز کنید و سپس تغییر را اعمال کنید؛ دادهٔ دستگاه دیگر بازنویسی نشد.');
     }
     if (options.allowQueue !== false && isSupabaseOfflineError(error)) {
       await queueOfflineChanges(companyId, changes, expectedRevisions);
