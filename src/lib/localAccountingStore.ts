@@ -224,6 +224,46 @@ export async function listLocalSyncOutbox(
   }
 }
 
+/** Advances later queued operations after an earlier local operation is confirmed committed. */
+export async function rebaseQueuedLocalSyncOperations(
+  companyId: string,
+  revisionUpdates: Record<string, number>,
+): Promise<void> {
+  const keys = Object.keys(revisionUpdates);
+  if (!keys.length) return;
+  const database = await openDatabase();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const transaction = database.transaction(OUTBOX_STORE, 'readwrite');
+      const store = transaction.objectStore(OUTBOX_STORE);
+      const request = store.getAll();
+      request.onsuccess = () => {
+        const rows = request.result as LocalSyncOutboxRecord<any>[];
+        rows.forEach((record) => {
+          if (record.state !== 'queued' || record.payload?.companyId !== companyId) return;
+          let changed = false;
+          const expectedRevisions = { ...(record.payload.expectedRevisions ?? {}) };
+          for (const key of keys) {
+            const belongsToOperation = (record.payload.changes ?? []).some((change: any) =>
+              String(change.record_type) + '\\u0000' + String(change.legacy_record_id) === key);
+            if (belongsToOperation) {
+              expectedRevisions[key] = revisionUpdates[key];
+              changed = true;
+            }
+          }
+          if (changed) store.put({ ...record, payload: { ...record.payload, expectedRevisions } });
+        });
+      };
+      request.onerror = () => reject(request.error ?? new Error('خواندن صف برای تنظیم نسخه عملیات‌های بعدی ناموفق بود.'));
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error ?? new Error('تنظیم نسخه عملیات‌های بعدی ناموفق بود.'));
+      transaction.onabort = () => reject(transaction.error ?? new Error('تنظیم نسخه عملیات‌های بعدی لغو شد.'));
+    });
+  } finally {
+    database.close();
+  }
+}
+
 export async function markLocalSyncOperationFailed(
   idempotencyKey: string,
   errorMessage: string,
