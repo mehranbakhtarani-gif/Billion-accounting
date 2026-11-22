@@ -70,6 +70,8 @@ export const TreasuryView: React.FC<TreasuryViewProps> = ({ initialIntent, clear
 
   // Bank Reconciliation state
   const [reconBankCode, setReconBankCode] = useState('10201');
+  const [reconWithdrawalOffsetCode, setReconWithdrawalOffsetCode] = useState('80901');
+  const [reconDepositOffsetCode, setReconDepositOffsetCode] = useState('60301');
   const [bankCsvText, setBankCsvText] = useState(
     '1405/08/18,واریز تسویه فاکتور فروش نخ,12500000000,0\n1405/08/22,کارمزد صدور ضمانت‌نامه و حواله ساتنا,0,18500000\n1405/08/25,سود سپرده کوتاه‌مدت ماهانه,42000000,0'
   );
@@ -313,6 +315,9 @@ export const TreasuryView: React.FC<TreasuryViewProps> = ({ initialIntent, clear
       throw new Error('ردیف صورت‌حساب بانک دارای تاریخ یا مبلغ نامعتبر است.');
     }
     const bankTitle = bankAcc.title;
+    const offsetCode = row.withdrawal > 0 ? reconWithdrawalOffsetCode : reconDepositOffsetCode;
+    const offsetAccount = accounts.find((account) => account.code === offsetCode && account.level === 'moein' && !account.code.startsWith('102'));
+    if (!offsetAccount) throw new Error('برای ثبت سند مغایرت، حساب طرف مقابل معتبر را انتخاب کنید.');
     const referenceId = 'bank-recon:' + reconBankCode + ':' + row.date + ':' + row.id + ':' + row.deposit + ':' + row.withdrawal;
     if (vouchers.some((voucher) => voucher.referenceId === referenceId)) {
       showToast('برای این ردیف صورت‌حساب قبلاً سند مغایرت ثبت شده است.');
@@ -327,8 +332,8 @@ export const TreasuryView: React.FC<TreasuryViewProps> = ({ initialIntent, clear
         referenceId,
         lines: [
           {
-            accountCode: '80901',
-            accountTitle: 'زیان تسعیر ارز و کارمزد خدمات بانکی',
+            accountCode: offsetAccount.code,
+            accountTitle: offsetAccount.title,
             description: row.desc,
             debit: row.withdrawal,
             credit: 0,
@@ -358,8 +363,8 @@ export const TreasuryView: React.FC<TreasuryViewProps> = ({ initialIntent, clear
             credit: 0,
           },
           {
-            accountCode: '60301',
-            accountTitle: 'اضافی انبارگردانی و درآمدهای متفرقه',
+            accountCode: offsetAccount.code,
+            accountTitle: offsetAccount.title,
             description: `درآمد بانکی — ${row.desc}`,
             debit: 0,
             credit: row.deposit,
@@ -1339,6 +1344,18 @@ export const TreasuryView: React.FC<TreasuryViewProps> = ({ initialIntent, clear
                     </option>
                   ))}
                 </select>
+                <label className="flex items-center gap-2 text-[11px] text-slate-500">
+                  حساب طرف مقابل برداشت
+                  <select value={reconWithdrawalOffsetCode} onChange={(e) => setReconWithdrawalOffsetCode(e.target.value)} className="max-w-44 px-2 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950">
+                    {accounts.filter((account) => account.level === 'moein' && !account.code.startsWith('102')).map((account) => <option key={account.id} value={account.code}>{account.code} — {account.title}</option>)}
+                  </select>
+                </label>
+                <label className="flex items-center gap-2 text-[11px] text-slate-500">
+                  حساب طرف مقابل واریز
+                  <select value={reconDepositOffsetCode} onChange={(e) => setReconDepositOffsetCode(e.target.value)} className="max-w-44 px-2 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950">
+                    {accounts.filter((account) => account.level === 'moein' && !account.code.startsWith('102')).map((account) => <option key={account.id} value={account.code}>{account.code} — {account.title}</option>)}
+                  </select>
+                </label>
                 <label className="cursor-pointer px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 font-medium">
                   <span>بارگذاری فایل CSV بانک</span>
                   <input
