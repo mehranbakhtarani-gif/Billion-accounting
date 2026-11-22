@@ -337,7 +337,17 @@ export function shamsiToGregorianIso(shamsiDate: string): string {
     gd -= monthDays[gm];
     gm++;
   }
-  return `${gy}-${String(gm).padStart(2, '0')}-${String(gd).padStart(2, '0')}`;
+  const isoDate = `${gy}-${String(gm).padStart(2, '0')}-${String(gd).padStart(2, '0')}`;
+  const checkParts = new Intl.DateTimeFormat('en-US-u-ca-persian', {
+    year: 'numeric', month: 'numeric', day: 'numeric', timeZone: 'UTC',
+  }).formatToParts(new Date(`${isoDate}T12:00:00Z`));
+  const checkYear = Number(checkParts.find((part) => part.type === 'year')?.value);
+  const checkMonth = Number(checkParts.find((part) => part.type === 'month')?.value);
+  const checkDay = Number(checkParts.find((part) => part.type === 'day')?.value);
+  if (checkYear !== jy || checkMonth !== jm || checkDay !== jd) {
+    throw new Error('تاریخ شمسی واردشده در تقویم معتبر نیست.');
+  }
+  return isoDate;
 }
 
 export function getLocalIsoDate(value: Date = new Date()): string {
