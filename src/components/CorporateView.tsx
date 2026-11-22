@@ -214,7 +214,13 @@ export const CorporateView: React.FC<CorporateViewProps> = ({ initialIntent, cle
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <button
-                onClick={() => postMonthlyPayrollVoucher(payrollMonth)}
+                onClick={async () => {
+                  try {
+                    await postMonthlyPayrollVoucher(payrollMonth);
+                  } catch (error) {
+                    showToast(error instanceof Error ? error.message : 'صدور سند حقوق ناموفق بود.');
+                  }
+                }}
                 className="inline-flex items-center gap-2 px-4 py-2 text-xs font-semibold text-white bg-teal-700 hover:bg-teal-800 rounded-lg whitespace-nowrap"
               >
                 <CheckCircle2 className="w-4 h-4" />
@@ -299,7 +305,13 @@ export const CorporateView: React.FC<CorporateViewProps> = ({ initialIntent, cle
                             <Edit3 className="w-3.5 h-3.5" />
                           </button>
                           <button
-                            onClick={() => deleteEmployee(c.employee.id)}
+                            onClick={async () => {
+                              try {
+                                await deleteEmployee(c.employee.id);
+                              } catch (error) {
+                                showToast(error instanceof Error ? error.message : 'حذف پرسنل ناموفق بود.');
+                              }
+                            }}
                             title="حذف پرسنل"
                             className="p-1.5 rounded-lg text-slate-500 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40"
                           >
@@ -992,18 +1004,22 @@ export const CorporateView: React.FC<CorporateViewProps> = ({ initialIntent, cle
           <form
             onSubmit={async (e) => {
               e.preventDefault();
-              await updateEmployee(editingEmp.id, {
-                fullName: editingEmp.fullName,
-                department: editingEmp.department,
-                baseSalary: editingEmp.baseSalary,
-                housingAllowance: editingEmp.housingAllowance,
-                foodAllowance: editingEmp.foodAllowance,
-                childrenCount: editingEmp.childrenCount,
-                overtimeHours: editingEmp.overtimeHours,
-                costCenterId: editingEmp.costCenterId,
-                active: editingEmp.active,
-              });
-              setEditingEmp(null);
+              try {
+                await updateEmployee(editingEmp.id, {
+                  fullName: editingEmp.fullName,
+                  department: editingEmp.department,
+                  baseSalary: editingEmp.baseSalary,
+                  housingAllowance: editingEmp.housingAllowance,
+                  foodAllowance: editingEmp.foodAllowance,
+                  childrenCount: editingEmp.childrenCount,
+                  overtimeHours: editingEmp.overtimeHours,
+                  costCenterId: editingEmp.costCenterId,
+                  active: editingEmp.active,
+                });
+                setEditingEmp(null);
+              } catch (error) {
+                showToast(error instanceof Error ? error.message : 'ویرایش حکم پرسنل ناموفق بود.');
+              }
             }}
             className="w-full max-w-lg rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-5 space-y-4 text-xs"
           >
