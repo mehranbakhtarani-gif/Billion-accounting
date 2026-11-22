@@ -587,6 +587,39 @@ export function aggregateStockReservations(reservations: readonly StockReservati
   return totals;
 }
 
+export interface SalesOrderReservationSource {
+  id: string;
+  status: string;
+  items: readonly { productId: string; actualWeighedKg: number; orderedWeightKg: number }[];
+}
+
+export interface SubcontractReservationSource {
+  id: string;
+  status: string;
+  rawProductId: string;
+  sentWeightKg: number;
+}
+
+/** Collect active sales-dispatch and subcontract reservations, with optional operation exclusions. */
+export function collectActiveStockReservations(
+  salesOrders: readonly SalesOrderReservationSource[],
+  subcontractJobs: readonly SubcontractReservationSource[],
+  exclusions: { salesOrderId?: string; subcontractJobId?: string } = {},
+): Map<string, number> {
+  const reservations: StockReservation[] = [
+    ...salesOrders
+      .filter((order) => order.status === 'dispatched' && order.id !== exclusions.salesOrderId)
+      .flatMap((order) => order.items.map((item) => ({
+        productId: item.productId,
+        quantity: item.actualWeighedKg > 0 ? item.actualWeighedKg : item.orderedWeightKg,
+      }))),
+    ...subcontractJobs
+      .filter((job) => job.status === 'sent' && job.id !== exclusions.subcontractJobId)
+      .map((job) => ({ productId: job.rawProductId, quantity: job.sentWeightKg })),
+  ];
+  return aggregateStockReservations(reservations);
+}
+
 export interface ImportLandedCostPayload {
   totalForeignAmount: number;
   exchangeRate: number;
