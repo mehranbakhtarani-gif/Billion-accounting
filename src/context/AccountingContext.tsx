@@ -638,7 +638,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       const lotDiscrepancies = reconcileInventoryLotLedger(inventoryLots, inventoryLotMovements);
       inventoryLotReconciliationIssues = lotDiscrepancies
         .filter((row) => Math.abs(row.difference) > 0.0001)
-        .map((row) => \`بچ \${row.lotId}: مانده مورد انتظار \${row.expectedRemaining}، مانده ثبت‌شده \${row.actualRemaining}\`);
+        .map((row) => `بچ ${row.lotId}: مانده مورد انتظار ${row.expectedRemaining}، مانده ثبت‌شده ${row.actualRemaining}`);
     } catch (error) {
       inventoryLotReconciliationIssues = [error instanceof Error ? error.message : String(error)];
     }
