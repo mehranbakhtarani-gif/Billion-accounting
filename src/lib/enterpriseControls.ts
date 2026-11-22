@@ -341,7 +341,7 @@ export function assertSufficientStock(
 export function allocateStockFIFO(
   lots: StockLot[],
   requestedQuantity: number,
-  options: { productId: string; warehouse: string; asOfDate: string },
+  options: { productId: string; warehouse: string; asOfDate: string; allowExpired?: boolean },
 ): FifoResult {
   if (!Number.isFinite(requestedQuantity) || requestedQuantity <= 0) {
     throw new Error('مقدار خروج کالا باید عددی مثبت باشد.');
@@ -377,7 +377,7 @@ export function allocateStockFIFO(
       lot.warehouse === options.warehouse &&
       lot.receivedDate <= options.asOfDate &&
       lot.quantityRemaining > 0 &&
-      (!lot.expiryDate || lot.expiryDate >= options.asOfDate)
+      (options.allowExpired || !lot.expiryDate || lot.expiryDate >= options.asOfDate)
     )
     .sort((a, b) => a.receivedDate.localeCompare(b.receivedDate) || a.id.localeCompare(b.id));
 
