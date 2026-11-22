@@ -2503,29 +2503,76 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           }
           const outgoing = stockDirection === -1;
           if (outgoing) {
-            const fifoAvailableLots = workingLots.map((lot) => ({
-              ...lot,
-              quantityRemaining: Math.max(0, lot.quantityRemaining - Math.max(lot.reservedQuantity || 0, reservedLotQuantities.get(lot.id) || 0)),
-            }));
-            const fifo = allocateStockFIFO(fifoAvailableLots as any, item.quantity, {
-              productId: product.id, warehouse: payload.warehouse, asOfDate,
-              allowExpired: payload.invoiceType === 'waste',
-            });
-            item.lotAllocations = fifo.allocations;
-            fifo.allocations.forEach((allocation) => {
-              const lot = workingLots.find((candidate) => candidate.id === allocation.lotId);
-              if (!lot) throw new Error('بچ تخصیص‌یافته برای ثبت خروج یافت نشد.');
-              lot.quantityRemaining = Number((lot.quantityRemaining - allocation.quantity).toFixed(4));
-              if (lot.quantityRemaining < -0.0001) throw new Error('مقدار خروج از مانده واقعی بچ بیشتر است؛ عملیات متوقف شد.');
-              lotUpdates.set(lot.id, { ...lot });
-              lotMovementsToSave.push({
-                id: generateSafeId('lotmove'), ownerId, lotId: lot.id, productId: product.id,
-                warehouse: lot.warehouse, movementType: payload.invoiceType === 'waste' ? 'waste' : payload.invoiceType === 'purchase_return' ? 'purchase-return' : 'issue',
-                quantity: -allocation.quantity, unitCost: allocation.unitCost,
-                referenceId: id, referenceNumber: payload.invoiceNumber, date: asOfDate,
+            if (payload.salesOrderId && item.lotAllocations?.length) {
+              const allocatedQuantity = item.lotAllocations.reduce((sum, allocation) => sum + allocation.quantity, 0);
+              if (Math.abs(allocatedQuantity - item.quantity) > 0.0001) {
+                throw new Error('جمع تخصیص بچ‌های حواله با مقدار فاکتور برابر نیست.');
+              }
+              const normalizedAllocations: InvoiceLotAllocation[] = [];
+              for (const allocation of item.lotAllocations) {
+                const lot = workingLots.find((candidate) => candidate.id === allocation.lotId);
+                if (!lot || lot.productId !== product.id || lot.warehouse !== payload.warehouse) {
+                  throw new Error(`بچ تخصیص‌یافته ${allocation.lotNumber} با کالا یا انبار فاکتور سازگار نیست.`);
+                }
+                if (lot.receivedDate > asOfDate || (lot.expiryDate && lot.expiryDate < asOfDate)) {
+                  throw new Error(`بچ ${lot.lotNumber} در تاریخ حواله قابل خروج نیست.`);
+                }
+                const currentOrderRemaining = currentOrderReservedLotQuantities.get(lot.id) || 0;
+                if (currentOrderRemaining + 0.0001 < allocation.quantity) {
+                  throw new Error(`رزرو بچ ${lot.lotNumber} برای حواله جاری کافی نیست.`);
+                }
+                const otherReserved = reservedLotQuantities.get(lot.id) || 0;
+                const effectiveReserved = Math.max(lot.reservedQuantity || 0, otherReserved + currentOrderRemaining);
+                if (effectiveReserved - otherReserved + 0.0001 < allocation.quantity ||
+                    lot.quantityRemaining + 0.0001 < allocation.quantity) {
+                  throw new Error(`مانده آزاد بچ ${lot.lotNumber} برای ثبت فاکتور کافی نیست.`);
+                }
+                lot.quantityRemaining = Number((lot.quantityRemaining - allocation.quantity).toFixed(4));
+                lot.reservedQuantity = Number(Math.max(otherReserved, effectiveReserved - allocation.quantity).toFixed(4));
+                currentOrderReservedLotQuantities.set(lot.id, Number((currentOrderRemaining - allocation.quantity).toFixed(4)));
+                const totalCost = allocation.quantity * lot.unitCost;
+                normalizedAllocations.push({
+                  lotId: lot.id, lotNumber: lot.lotNumber, quantity: allocation.quantity,
+                  unitCost: lot.unitCost, totalCost,
+                });
+                lotUpdates.set(lot.id, { ...lot });
+                lotMovementsToSave.push({
+                  id: generateSafeId('lotmove'), ownerId, lotId: lot.id, productId: product.id,
+                  warehouse: lot.warehouse, movementType: payload.invoiceType === 'waste' ? 'waste' : payload.invoiceType === 'purchase_return' ? 'purchase-return' : 'issue',
+                  quantity: -allocation.quantity, unitCost: lot.unitCost,
+                  referenceId: id, referenceNumber: payload.invoiceNumber, date: asOfDate,
+                });
+                cogsTotal += Math.round(totalCost);
+              }
+              item.lotAllocations = normalizedAllocations;
+            } else {
+              const fifoAvailableLots = workingLots.map((lot) => ({
+                ...lot,
+                quantityRemaining: Math.max(0, lot.quantityRemaining - Math.max(
+                  lot.reservedQuantity || 0,
+                  (reservedLotQuantities.get(lot.id) || 0) + (currentOrderReservedLotQuantities.get(lot.id) || 0),
+                )),
+              }));
+              const fifo = allocateStockFIFO(fifoAvailableLots as any, item.quantity, {
+                productId: product.id, warehouse: payload.warehouse, asOfDate,
+                allowExpired: payload.invoiceType === 'waste',
               });
-            });
-            cogsTotal += Math.round(fifo.totalCost);
+              item.lotAllocations = fifo.allocations;
+              fifo.allocations.forEach((allocation) => {
+                const lot = workingLots.find((candidate) => candidate.id === allocation.lotId);
+                if (!lot) throw new Error('بچ تخصیص‌یافته برای ثبت خروج یافت نشد.');
+                lot.quantityRemaining = Number((lot.quantityRemaining - allocation.quantity).toFixed(4));
+                if (lot.quantityRemaining < -0.0001) throw new Error('مقدار خروج از مانده واقعی بچ بیشتر است؛ عملیات متوقف شد.');
+                lotUpdates.set(lot.id, { ...lot });
+                lotMovementsToSave.push({
+                  id: generateSafeId('lotmove'), ownerId, lotId: lot.id, productId: product.id,
+                  warehouse: lot.warehouse, movementType: payload.invoiceType === 'waste' ? 'waste' : payload.invoiceType === 'purchase_return' ? 'purchase-return' : 'issue',
+                  quantity: -allocation.quantity, unitCost: allocation.unitCost,
+                  referenceId: id, referenceNumber: payload.invoiceNumber, date: asOfDate,
+                });
+              });
+              cogsTotal += Math.round(fifo.totalCost);
+            }
           } else {
             const lotId = generateSafeId('lot');
             const lotNumber = (item.lotNumber || product.lotNumber || `${payload.invoiceNumber}-${lotId.slice(-6)}`).trim();
