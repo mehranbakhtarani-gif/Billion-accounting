@@ -2323,7 +2323,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       const invoiceItems = payload.items.map((item) => ({ ...item }));
       const asOfDate = new Date().toISOString().slice(0, 10);
       if (payload.invoiceType !== 'proforma') {
-        for (const item of payload.items) {
+        for (const item of invoiceItems) {
           const product = products.find((candidate) => candidate.id === item.productId);
           if (!product) throw new Error(`کالای ردیف فاکتور یافت نشد: ${item.productName || item.productId}`);
           if (!Number.isFinite(item.quantity) || item.quantity <= 0) {
