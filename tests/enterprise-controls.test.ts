@@ -181,7 +181,7 @@ test('FIFO allocates oldest eligible lots and excludes expired lots', () => {
 
 test('sales returns cannot exceed net sold quantity of the source lot', () => {
   const movements = [
-    { id: 'sale-issue', lotId: 'lot-a', movementType: 'issue', quantity: -5 },
+    { id: 'sale-issue', lotId: 'lot-a', movementType: 'issue', referenceId: 'inv_sale_1', quantity: -5 },
     { id: 'return-in', lotId: 'return-lot-1', movementType: 'return', quantity: 2, sourceLotId: 'lot-a' },
   ];
   assert.equal(calculateLotReturnableQuantity('lot-a', movements), 3);
@@ -194,7 +194,7 @@ test('sales returns cannot exceed net sold quantity of the source lot', () => {
     { id: 'sale-reversal', lotId: 'lot-a', movementType: 'reversal', quantity: 5, reversalOfMovementId: 'sale-issue' },
   ]), 0);
   assert.equal(calculateLotReturnableQuantity('lot-a', [
-    { id: 'sale-issue', lotId: 'lot-a', movementType: 'issue', quantity: -5 },
+    { id: 'sale-issue', lotId: 'lot-a', movementType: 'issue', referenceId: 'inv_sale_1', quantity: -5 },
     { id: 'return-in', lotId: 'return-lot-1', movementType: 'return', quantity: 5, sourceLotId: 'lot-a' },
   ]), 0);
 });
