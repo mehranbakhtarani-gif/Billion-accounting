@@ -3473,13 +3473,40 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           kgPerCarton: rawProduct.kgPerCarton || 25, lotNumber: payload.finishedLotNumber, originCountry: 'تکمیل داخلی',
           buyPrice: finishedUnitCost, sellPrice: Math.round(finishedUnitCost * 1.18), stock: payload.returnedWeightKg, reorderPoint: 100, vatExempt: false });
       } catch (error) {
+        const compensationFailures: string[] = [];
         if (rawStockUpdated) {
-          try { await updateProduct(rawProduct.id, { stock: rawProduct.stock }); }
-          catch (rollbackError) { console.error('Subcontract raw stock rollback failed', rawProduct.id, rollbackError); }
+          try {
+            await updateProduct(rawProduct.id, { stock: rawProduct.stock });
+          } catch (rollbackError) {
+            console.error('Subcontract raw stock rollback failed', rawProduct.id, rollbackError);
+            compensationFailures.push(`برگشت موجودی کالای خام (${rawProduct.id}) ناموفق بود: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`);
+          }
         }
-        try { await createVoucher({ date: getTodayShamsi(), description: `سند معکوس خودکار تکمیل ناموفق پیمانکاری ${job.jobNumber}`, voucherType: 'general', status: 'permanent', referenceId: `subcontract-reversal:${job.id}`, lines: voucher.lines.map((line) => ({ ...line, description: `برگشت سند پیمانکاری #${voucher.voucherNumber}: ${line.description}`, debit: line.credit, credit: line.debit, foreignDebit: line.foreignCredit, foreignCredit: line.foreignDebit })) }); }
-        catch (reversalError) { console.error('Subcontract voucher compensation failed', voucher.id, reversalError); }
-        throw new Error(`تکمیل پیمانکاری کامل نشد؛ تلاش برای برگشت سند و موجودی انجام شد. علت: ${error instanceof Error ? error.message : String(error)}`);
+        try {
+          await createVoucher({
+            date: getTodayShamsi(),
+            description: `سند معکوس خودکار تکمیل ناموفق پیمانکاری ${job.jobNumber}`,
+            voucherType: 'general',
+            status: 'permanent',
+            referenceId: `subcontract-reversal:${job.id}`,
+            lines: voucher.lines.map((line) => ({
+              ...line,
+              description: `برگشت سند پیمانکاری #${voucher.voucherNumber}: ${line.description}`,
+              debit: line.credit,
+              credit: line.debit,
+              foreignDebit: line.foreignCredit,
+              foreignCredit: line.foreignDebit,
+            })),
+          });
+        } catch (reversalError) {
+          console.error('Subcontract voucher compensation failed', voucher.id, reversalError);
+          compensationFailures.push(`صدور سند معکوس برای سند #${voucher.voucherNumber} ناموفق بود: ${reversalError instanceof Error ? reversalError.message : String(reversalError)}`);
+        }
+        const originalMessage = error instanceof Error ? error.message : String(error);
+        const compensationMessage = compensationFailures.length > 0
+          ? ` برگشت خودکار کامل نشد و رسیدگی دستی لازم است: ${compensationFailures.join(' | ')}`
+          : ' سند معکوس و برگشت موجودی با موفقیت ثبت شد.';
+        throw new Error(`تکمیل پیمانکاری ${job.jobNumber} انجام نشد. علت: ${originalMessage}.${compensationMessage}`);
       }
       setSubcontractJobs((prev) => prev.map((item) => item.id === jobId ? { ...item, status: 'completed', completionDate: payload.completionDate, returnedWeightKg: payload.returnedWeightKg, finishedLotNumber: payload.finishedLotNumber, totalServiceFeeIrr: serviceFeeTotal, finishedUnitCostIrr: finishedUnitCost, voucherId: voucher.id } : item));
       logActivity('پیمانکاری رنگرزی/بافندگی', `اتمام و ورود محصول ${job.jobNumber}`, `بازگشت ${payload.returnedWeightKg} کیلوگرم با لات ${payload.finishedLotNumber} و ثبت سند #${voucher.voucherNumber}`);
