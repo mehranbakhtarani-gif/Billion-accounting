@@ -177,7 +177,7 @@ export interface InventoryLot {
   quantityReceived: number;
   quantityRemaining: number;
   unitCost: number;
-  costBasis: 'documented' | 'estimated-opening' | 'estimated-return';
+  costBasis: 'documented' | 'estimated-opening' | 'estimated-return' | 'estimated-adjustment';
   sourceInvoiceId?: string;
   createdAt?: string;
 }
