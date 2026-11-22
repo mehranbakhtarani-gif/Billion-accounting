@@ -13,7 +13,7 @@ import {
   validateSyncOperation,
 } from '../src/lib/enterpriseControls.ts';
 import { calculateLandedCostAllocation, computeReceivablesAging, computePayablesAging, computeFxRevaluationReport } from '../src/lib/enterpriseAccounting.ts';
-import { calculateEmployeePayroll, calculateMonthlyDepreciation } from '../src/lib/accountingEngine.ts';
+import { calculateEmployeePayroll, calculateMonthlyDepreciation, computeAccountLedger, computePartyBalances, computePartyLedger, computeTrialBalance } from '../src/lib/accountingEngine.ts';
 
 test('CSV parser preserves quoted commas and escaped quotes', () => {
   assert.deepEqual(parseCsvRow('1405/09/01,"کارمزد، انتقال, فوری","شناسه ""ABC""",1250,0'), ['1405/09/01', 'کارمزد، انتقال, فوری', 'شناسه "ABC"', '1250', '0']);
@@ -324,4 +324,22 @@ test('import landed-cost allocation reconciles exact overhead and rejects malfor
   assert.throws(() => calculateLandedCostAllocation(items as any, costs as any, 0, 'weight'), /نرخ تبدیل/);
   assert.throws(() => calculateLandedCostAllocation([{ ...items[0], weightKg: -1 }] as any, costs as any, 500_000, 'weight'), /وزن/);
   assert.throws(() => calculateLandedCostAllocation(items as any, [{ ...costs[0], amountIrr: -1 }] as any, 500_000, 'weight'), /هزینه‌های جانبی/);
+});
+
+
+test('draft vouchers never affect posted trial balance, general ledger or party balances', () => {
+  const voucher = (id: string, status: 'draft' | 'permanent', amount: number) => ({
+    id, ownerId: 'o1', voucherNumber: id === 'draft' ? 2 : 1, date: '1405/08/01',
+    description: id, voucherType: 'general', status, totalDebit: amount, totalCredit: amount,
+    lines: [
+      { accountCode: '10201', accountTitle: 'بانک', description: id, debit: amount, credit: 0 },
+      { accountCode: '10401', accountTitle: 'مشتری', partyId: 'p1', partyName: 'مشتری', description: id, debit: 0, credit: amount },
+    ],
+  });
+  const vouchers = [voucher('posted', 'permanent', 100), voucher('draft', 'draft', 900)] as any;
+  const trial = computeTrialBalance([], vouchers);
+  assert.equal(trial.find((row) => row.accountCode === '10201')?.periodDebit, 100);
+  assert.equal(computeAccountLedger('10201', vouchers).length, 1);
+  assert.equal(computePartyLedger('p1', vouchers).length, 1);
+  assert.equal(computePartyBalances([{ id: 'p1' }] as any, vouchers).get('p1'), -100);
 });
