@@ -661,14 +661,14 @@ test('allocated treasury voucher reversal restores invoice balances and removes 
   const invoices = [
     { id: 'i1', creditAmount: 400, paidCash: 600, paidBank: 0, status: 'issued',
       paymentAllocations: [{ id: 'a1', voucherId: 'v1', date: '1405/08/01', direction: 'receipt', amount: 200 }, { id: 'a2', voucherId: 'v2', date: '1405/08/02', direction: 'receipt', amount: 100 }] },
-    { id: 'i2', creditAmount: 300, paidCash: 0, paidBank: 200, status: 'settled',
+    { id: 'i2', creditAmount: 300, paidCash: 200, paidBank: 0, status: 'settled',
       paymentAllocations: [{ id: 'a3', voucherId: 'v1', date: '1405/08/01', direction: 'receipt', amount: 200 }] },
   ];
   const cash = buildInvoiceAllocationReversal(invoices as any, 'v1', '10101');
   assert.deepEqual(cash, [
     { invoiceId: 'i1', creditAmount: 600, paidCash: 400, paidBank: 0, status: 'issued',
       paymentAllocations: [{ id: 'a2', voucherId: 'v2', date: '1405/08/02', direction: 'receipt', amount: 100 }] },
-    { invoiceId: 'i2', creditAmount: 500, paidCash: 0, paidBank: 200, status: 'issued',
+    { invoiceId: 'i2', creditAmount: 500, paidCash: 0, paidBank: 0, status: 'issued',
       paymentAllocations: [] },
   ]);
   const bank = buildInvoiceAllocationReversal([{
