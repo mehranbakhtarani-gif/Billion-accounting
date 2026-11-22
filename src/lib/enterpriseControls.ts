@@ -228,6 +228,34 @@ export interface InventoryLotLedgerMovement {
   quantity: number;
 }
 
+/** Remaining quantity that can be returned against a specific source lot. */
+export function calculateLotReturnableQuantity(
+  sourceLotId: string,
+  movements: Array<{
+    id: string;
+    lotId: string;
+    movementType: string;
+    quantity: number;
+    sourceLotId?: string;
+    reversalOfMovementId?: string;
+  }>,
+): number {
+  const issueMovements = movements.filter((movement) =>
+    movement.lotId === sourceLotId && movement.movementType === 'issue');
+  const issueIds = new Set(issueMovements.map((movement) => movement.id));
+  const netIssued = movements
+    .filter((movement) =>
+      (movement.lotId === sourceLotId && movement.movementType === 'issue') ||
+      (movement.movementType === 'reversal' && movement.reversalOfMovementId && issueIds.has(movement.reversalOfMovementId)))
+    .reduce((sum, movement) => sum + movement.quantity, 0);
+  const netReturned = movements
+    .filter((movement) =>
+      movement.sourceLotId === sourceLotId &&
+      (movement.movementType === 'return' || movement.movementType === 'reversal'))
+    .reduce((sum, movement) => sum + movement.quantity, 0);
+  return Number(Math.max(0, -netIssued - netReturned).toFixed(4));
+}
+
 export interface InventoryLotReconciliation {
   lotId: string;
   expectedRemaining: number;
