@@ -537,6 +537,15 @@ export interface TreasuryAccountIdentity {
   level: string;
 }
 
+export function validatePartyTreasuryAccount(
+  account: TreasuryAccountIdentity | undefined,
+): void {
+  if (!account || account.level !== 'moein' ||
+      !(account.code.startsWith('104') || account.code.startsWith('301'))) {
+    throw new Error('حساب معین تفصیلی طرف‌حساب معتبر نیست؛ حساب بدهکاران یا بستانکاران را بررسی کنید.');
+  }
+}
+
 export function validateTreasuryAccountSelection(
   account: TreasuryAccountIdentity | undefined,
   label = 'حساب خزانه',
