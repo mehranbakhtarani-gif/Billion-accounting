@@ -2904,9 +2904,14 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         showToast('دارایی قابل استهلاک برای این دوره وجود ندارد.');
         return;
       }
+      const validCostCenterIds = new Set(costCenters.map((center) => center.id));
+      const fallbackCostCenterId = validCostCenterIds.has('cc_hq') ? 'cc_hq' : costCenters[0]?.id;
+      if (!fallbackCostCenterId) throw new Error('برای ثبت هزینه استهلاک، حداقل یک مرکز هزینه معتبر لازم است.');
       const expenseByCostCenter = new Map<string, number>();
       for (const row of allocations) {
-        const key = row.asset.costCenterId || 'cc_hq';
+        const key = row.asset.costCenterId && validCostCenterIds.has(row.asset.costCenterId)
+          ? row.asset.costCenterId
+          : fallbackCostCenterId;
         expenseByCostCenter.set(key, (expenseByCostCenter.get(key) || 0) + row.amount);
       }
       const expenseLines: VoucherLine[] = [...expenseByCostCenter.entries()].map(([costCenterId, debit]) => ({
@@ -2951,34 +2956,43 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       }
       showToast(`سند استهلاک دوره «${normalizedPeriod}» با شماره ${voucher.voucherNumber} صادر شد.`);
     },
-    [assets, vouchers, user, createVoucher, showToast]
+    [assets, costCenters, vouchers, user, createVoucher, showToast]
   );
 
   const addCostCenter = useCallback(
     async (cc: Omit<CostCenter, 'id' | 'ownerId'>) => {
+      const code = cc.code.trim();
+      const name = cc.name.trim();
+      if (!code || !name || !Number.isFinite(cc.budget) || cc.budget < 0) {
+        throw new Error('کد، نام و بودجه مرکز هزینه باید معتبر باشند.');
+      }
+      if (costCenters.some((center) => center.code.trim().toLowerCase() === code.toLowerCase())) {
+        throw new Error('کد مرکز هزینه واردشده قبلاً ثبت شده است.');
+      }
       const id = generateSafeId('cc');
-      const full: CostCenter = { ...cc, id, ownerId };
+      const full: CostCenter = { ...cc, code, name, id, ownerId };
       if (user) {
         try {
           await setDoc(doc(db, 'costCenters', id), {
             ownerId,
-            code: cc.code.slice(0, 32),
-            name: cc.name.trim().slice(0, 140),
-            budget: Math.max(0, Number(cc.budget) || 0),
-            ...(cc.manager ? { manager: cc.manager.slice(0, 120) } : {}),
+            code: code.slice(0, 32),
+            name: name.slice(0, 140),
+            budget: cc.budget,
+            ...(cc.manager ? { manager: cc.manager.trim().slice(0, 120) } : {}),
             active: cc.active,
             createdAt: serverTimestamp(),
             updatedAt: serverTimestamp(),
           });
         } catch (err) {
           handleSupabaseError(err, OperationType.CREATE, `costCenters/${id}`);
+          throw err;
         }
       } else {
         setCostCenters((prev) => [...prev, full]);
       }
-      showToast(`مرکز هزینه «${cc.name}» ایجاد شد.`);
+      showToast(`مرکز هزینه «${name}» ایجاد شد.`);
     },
-    [ownerId, user, showToast]
+    [ownerId, user, costCenters, showToast]
   );
 
   const updateCostCenter = useCallback(
@@ -3004,18 +3018,26 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
   const deleteCostCenter = useCallback(
     async (ccId: string) => {
+      const existing = costCenters.find((center) => center.id === ccId);
+      if (!existing) throw new Error('مرکز هزینه موردنظر یافت نشد.');
+      if (ccId === 'cc_hq') throw new Error('مرکز هزینه اصلی شرکت قابل حذف نیست.');
+      if (employees.some((employee) => employee.costCenterId === ccId) ||
+          assets.some((asset) => asset.costCenterId === ccId)) {
+        throw new Error('این مرکز هزینه به پرسنل یا دارایی ثابت متصل است؛ ابتدا تخصیص‌ها را منتقل کنید.');
+      }
       if (user) {
         try {
           await deleteDoc(doc(db, 'costCenters', ccId));
         } catch (err) {
           handleSupabaseError(err, OperationType.DELETE, `costCenters/${ccId}`);
+          throw err;
         }
       } else {
-        setCostCenters((prev) => prev.filter((c) => c.id !== ccId));
+        setCostCenters((prev) => prev.filter((center) => center.id !== ccId));
       }
       showToast('مرکز هزینه حذف شد.');
     },
-    [user, showToast]
+    [costCenters, employees, assets, user, showToast]
   );
 
   const runYearEndClosing = useCallback(async () => {
