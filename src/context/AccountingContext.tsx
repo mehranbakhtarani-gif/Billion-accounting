@@ -3119,78 +3119,170 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   );
 
   const runYearEndClosing = useCallback(async () => {
-    const closingReference = `year-end-closing:${profile.fiscalYear}`;
-    if (vouchers.some((voucher) => voucher.referenceId === closingReference || (voucher.voucherType === 'closing' && voucher.date.startsWith(`${profile.fiscalYear}/`)))) throw new Error(`دوره مالی ${profile.fiscalYear} قبلاً بسته شده است.`);
-    const draftCount = vouchers.filter((voucher) => voucher.status === 'draft' && voucher.date.startsWith(`${profile.fiscalYear}/`)).length;
-    if (draftCount > 0) throw new Error(`برای بستن سال مالی ابتدا ${draftCount} سند پیش‌نویس را تعیین تکلیف کنید.`);
-    const fiscalYearVouchers = vouchers.filter((voucher) =>
-      voucher.status === 'permanent' &&
-      voucher.date.startsWith(`${profile.fiscalYear}/`) &&
-      voucher.voucherType !== 'opening'
+    const fiscalYear = profile.fiscalYear;
+    const yearEndDate = getShamsiYearEndDate(fiscalYear);
+    const nextFiscalYear = String(Number(fiscalYear) + 1);
+    const openingDate = `${nextFiscalYear}/01/01`;
+    const closingReference = `year-end-closing:${fiscalYear}`;
+    const openingReference = `year-end-opening:${fiscalYear}`;
+    if (vouchers.some((voucher) => voucher.referenceId === closingReference || (voucher.voucherType === 'closing' && voucher.date.startsWith(`${fiscalYear}/`)))) {
+      throw new Error(`دوره مالی ${fiscalYear} قبلاً بسته شده است.`);
+    }
+    if (vouchers.some((voucher) => voucher.referenceId === openingReference)) {
+      throw new Error(`سند افتتاحیه سال مالی ${nextFiscalYear} قبلاً ایجاد شده است.`);
+    }
+    const draftCount = vouchers.filter((voucher) =>
+      voucher.status === 'draft' && voucher.date <= yearEndDate
+    ).length;
+    if (draftCount > 0) throw new Error(`برای بستن سال مالی ابتدا ${draftCount} سند پیش‌نویس تا پایان دوره را تعیین تکلیف کنید.`);
+
+    // Include every permanent posting through year-end so prior opening balances
+    // and previously closed periods remain part of the carried-forward balance.
+    const postedThroughYearEnd = vouchers.filter((voucher) =>
+      voucher.status === 'permanent' && voucher.date <= yearEndDate
     );
-    const fiscalYearTrialBalance = computeTrialBalance(accounts, fiscalYearVouchers);
-    const tempRows = fiscalYearTrialBalance.filter(
-      (r) =>
-        (r.category === 'revenue' || r.category === 'cogs' || r.category === 'expense') &&
-        (r.balanceDebit > 0 || r.balanceCredit > 0)
+    const trialRows = computeTrialBalance(accounts, postedThroughYearEnd);
+    const temporaryRows = trialRows.filter((row) =>
+      (row.category === 'revenue' || row.category === 'cogs' || row.category === 'expense') &&
+      (row.balanceDebit > 0 || row.balanceCredit > 0)
     );
-    if (tempRows.length === 0) {
-      showToast('تمامی حساب‌های موقت قبلاً بسته شده‌اند.');
-      return;
+    if (temporaryRows.length === 0) {
+      throw new Error('حساب موقت دارای مانده‌ای برای بستن وجود ندارد؛ برای جلوگیری از ثبت افتتاحیه بدون سند اختتامیه، عملیات متوقف شد.');
     }
 
-    const lines: VoucherLine[] = [];
+    const closingLines: VoucherLine[] = [];
     let netCreditToSummary = 0;
-
-    for (const r of tempRows) {
-      if (r.balanceCredit > 0) {
-        lines.push({
-          accountCode: r.accountCode,
-          accountTitle: r.accountTitle,
+    for (const row of temporaryRows) {
+      if (row.balanceCredit > 0) {
+        closingLines.push({
+          accountCode: row.accountCode, accountTitle: row.accountTitle,
           description: 'بستن حساب موقت درآمدی به خلاصه سود و زیان',
-          debit: r.balanceCredit,
-          credit: 0,
+          debit: row.balanceCredit, credit: 0,
         });
-        netCreditToSummary += r.balanceCredit;
-      } else if (r.balanceDebit > 0) {
-        lines.push({
-          accountCode: r.accountCode,
-          accountTitle: r.accountTitle,
+        netCreditToSummary += row.balanceCredit;
+      } else if (row.balanceDebit > 0) {
+        closingLines.push({
+          accountCode: row.accountCode, accountTitle: row.accountTitle,
           description: 'بستن حساب موقت هزینه‌ای/بهای تمام‌شده',
-          debit: 0,
-          credit: r.balanceDebit,
+          debit: 0, credit: row.balanceDebit,
         });
-        netCreditToSummary -= r.balanceDebit;
+        netCreditToSummary -= row.balanceDebit;
+      }
+    }
+    const retainedEarnings = accounts.find((account) => account.code === '50201');
+    if (!retainedEarnings || retainedEarnings.category !== 'equity') {
+      throw new Error('حساب سود و زیان انباشته 50201 با ماهیت حقوق صاحبان سهام یافت نشد؛ بستن سال مالی متوقف شد.');
+    }
+    if (Math.abs(netCreditToSummary) > 0.000001) {
+      closingLines.push({
+        accountCode: retainedEarnings.code,
+        accountTitle: retainedEarnings.title,
+        description: netCreditToSummary > 0
+          ? 'انتقال سود خالص دوره به سود و زیان انباشته'
+          : 'انتقال زیان خالص دوره به سود و زیان انباشته',
+        debit: netCreditToSummary < 0 ? Math.abs(netCreditToSummary) : 0,
+        credit: netCreditToSummary > 0 ? netCreditToSummary : 0,
+      });
+    }
+    const closingDescription = `سند بستن حساب‌های موقت و انتقال سود سال مالی ${fiscalYear}`;
+    validateJournalEntryPayload({ date: yearEndDate, description: closingDescription, lines: closingLines });
+
+    // Reconstruct opening subsidiary balances party-by-party. If the party
+    // subledger does not reconcile to its control account, refuse to close.
+    const partyBalancesAtClose = computePartyBalances(parties, postedThroughYearEnd);
+    const partiesByAccount = new Map<string, Party[]>();
+    for (const party of parties) {
+      if (!party.accountCode) continue;
+      const group = partiesByAccount.get(party.accountCode) ?? [];
+      group.push(party);
+      partiesByAccount.set(party.accountCode, group);
+    }
+    const partyAccountCodes = new Set(partiesByAccount.keys());
+    for (const [accountCode, group] of partiesByAccount) {
+      const account = accounts.find((candidate) => candidate.code === accountCode);
+      if (!account || !['asset', 'liability', 'equity'].includes(account.category)) {
+        const hasBalance = group.some((party) => Math.abs(partyBalancesAtClose.get(party.id) ?? 0) > 0.000001);
+        if (hasBalance) throw new Error(`حساب تفصیلی طرف‌حساب‌ها ${accountCode} برای انتقال افتتاحیه معتبر نیست.`);
+        continue;
+      }
+      const partyNet = group.reduce((sum, party) => sum + (partyBalancesAtClose.get(party.id) ?? 0), 0);
+      const ledgerRow = trialRows.find((row) => row.accountCode === accountCode);
+      const ledgerNet = (ledgerRow?.balanceDebit ?? 0) - (ledgerRow?.balanceCredit ?? 0);
+      if (Math.abs(partyNet - ledgerNet) > 1) {
+        throw new Error(`مانده تفصیلی طرف‌حساب‌ها با حساب کل/معین ${accountCode} تطبیق ندارد؛ اختلاف ${Math.round(partyNet - ledgerNet)} ریال است. ابتدا مغایرت‌گیری کنید.`);
       }
     }
 
-    if (netCreditToSummary >= 0) {
-      lines.push({
-        accountCode: '50201',
-        accountTitle: 'سود و زیان انباشته سنواتی',
-        description: 'انتقال سود خالص دوره به سود و زیان انباشته',
-        debit: 0,
-        credit: netCreditToSummary,
-      });
-    } else {
-      lines.push({
-        accountCode: '50201',
-        accountTitle: 'سود و زیان انباشته سنواتی',
-        description: 'انتقال زیان خالص دوره به سود و زیان انباشته',
-        debit: Math.abs(netCreditToSummary),
-        credit: 0,
+    const openingLines: VoucherLine[] = [];
+    for (const row of trialRows) {
+      if (!['asset', 'liability', 'equity'].includes(row.category) || partyAccountCodes.has(row.accountCode)) continue;
+      let netBalance = row.balanceDebit - row.balanceCredit;
+      if (row.accountCode === retainedEarnings.code) netBalance += netCreditToSummary;
+      if (Math.abs(netBalance) <= 0.000001) continue;
+      openingLines.push({
+        accountCode: row.accountCode,
+        accountTitle: row.accountTitle,
+        description: `انتقال مانده افتتاحیه از پایان سال مالی ${fiscalYear}`,
+        debit: netBalance > 0 ? netBalance : 0,
+        credit: netBalance < 0 ? Math.abs(netBalance) : 0,
       });
     }
+    for (const party of parties) {
+      if (!party.accountCode || !partyAccountCodes.has(party.accountCode)) continue;
+      const netBalance = partyBalancesAtClose.get(party.id) ?? 0;
+      if (Math.abs(netBalance) <= 0.000001) continue;
+      const account = accounts.find((candidate) => candidate.code === party.accountCode);
+      if (!account) throw new Error(`حساب افتتاحیه طرف‌حساب ${party.name} یافت نشد.`);
+      openingLines.push({
+        accountCode: account.code,
+        accountTitle: account.title,
+        partyId: party.id,
+        partyName: party.name,
+        description: `انتقال مانده افتتاحیه طرف‌حساب ${party.name}`,
+        debit: netBalance > 0 ? netBalance : 0,
+        credit: netBalance < 0 ? Math.abs(netBalance) : 0,
+      });
+    }
+    const openingDescription = `سند افتتاحیه سال مالی ${nextFiscalYear} بر اساس مانده‌های پایان ${fiscalYear}`;
+    validateJournalEntryPayload({ date: openingDate, description: openingDescription, lines: openingLines });
 
-    await createVoucher({
-      date: getShamsiYearEndDate(profile.fiscalYear),
-      description: `سند بستن حساب‌های موقت و انتقال سود سال مالی ${profile.fiscalYear}`,
-      voucherType: 'closing',
-      status: 'permanent',
-      referenceId: closingReference,
-      lines,
-    });
-  }, [accounts, vouchers, profile.fiscalYear, createVoucher, showToast]);
+    const nextVoucherNumber = vouchers.reduce((max, voucher) => Math.max(max, voucher.voucherNumber || 0), 0) + 1;
+    const closingDebit = closingLines.reduce((sum, line) => sum + line.debit, 0);
+    const closingCredit = closingLines.reduce((sum, line) => sum + line.credit, 0);
+    const openingDebit = openingLines.reduce((sum, line) => sum + line.debit, 0);
+    const openingCredit = openingLines.reduce((sum, line) => sum + line.credit, 0);
+    const closingVoucher: Voucher = {
+      id: generateSafeId('vch'), ownerId, voucherNumber: nextVoucherNumber,
+      date: yearEndDate, description: closingDescription, voucherType: 'closing',
+      status: 'permanent', totalDebit: closingDebit, totalCredit: closingCredit,
+      referenceId: closingReference, lines: closingLines,
+    };
+    const openingVoucher: Voucher = {
+      id: generateSafeId('vch'), ownerId, voucherNumber: nextVoucherNumber + 1,
+      date: openingDate, description: openingDescription, voucherType: 'opening',
+      status: 'permanent', totalDebit: openingDebit, totalCredit: openingCredit,
+      referenceId: openingReference, lines: openingLines,
+    };
+
+    // Persist both vouchers in one database RPC batch; never leave only one side
+    // of the close/open pair committed.
+    if (user) {
+      const batch = writeBatch(db);
+      for (const voucher of [closingVoucher, openingVoucher]) {
+        batch.set(doc(db, 'vouchers', voucher.id), {
+          ownerId, voucherNumber: voucher.voucherNumber, date: voucher.date,
+          description: voucher.description, voucherType: voucher.voucherType,
+          status: voucher.status, totalDebit: voucher.totalDebit,
+          totalCredit: voucher.totalCredit, referenceId: voucher.referenceId,
+          lines: voucher.lines, createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
+        });
+      }
+      await batch.commit();
+    } else {
+      setVouchers((previous) => [...previous, closingVoucher, openingVoucher]);
+    }
+    showToast(`سال مالی ${fiscalYear} بسته شد و سند افتتاحیه ${nextFiscalYear} نیز ثبت شد.`);
+  }, [accounts, parties, vouchers, profile.fiscalYear, ownerId, user, showToast]);
 
   // ---------------- MULTI-CURRENCY & DAILY EXCHANGE RATES ----------------
   const addCurrency = useCallback(
