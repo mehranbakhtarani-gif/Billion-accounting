@@ -1311,15 +1311,15 @@ export const InventoryView: React.FC<{ initialIntent?: string; clearIntent?: () 
                       <div className="overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
                         <table className="w-full text-right min-w-[620px]">
                           <thead className="bg-slate-100 dark:bg-slate-800 text-slate-500">
-                            <tr><th className="p-2">شماره بچ</th><th className="p-2">انبار</th><th className="p-2">تاریخ ورود</th><th className="p-2">انقضا</th><th className="p-2">مانده</th><th className="p-2">بهای واحد</th><th className="p-2">مبنای بها</th></tr>
+                            <tr><th className="p-2">شماره بچ</th><th className="p-2">انبار</th><th className="p-2">تاریخ ورود</th><th className="p-2">انقضا</th><th className="p-2">مانده</th><th className="p-2">رزرو</th><th className="p-2">آزاد</th><th className="p-2">بهای واحد</th><th className="p-2">مبنای بها</th></tr>
                           </thead>
                           <tbody>
                             {inventoryLots.filter((lot) => lot.productId === selectedProduct.id).sort((a,b) => a.receivedDate.localeCompare(b.receivedDate) || a.id.localeCompare(b.id)).map((lot) => (
                               <tr key={lot.id} className="border-t border-slate-100 dark:border-slate-800">
-                                <td className="p-2 font-semibold">{lot.lotNumber}</td><td className="p-2">{lot.warehouse}</td><td className="p-2 font-mono">{toPersianDigits(lot.receivedDate)}</td><td className="p-2 font-mono">{lot.expiryDate ? toPersianDigits(lot.expiryDate) : '—'}</td><td className="p-2 font-mono">{formatWeight(lot.quantityRemaining)} / {formatWeight(lot.quantityReceived)}</td><td className="p-2 font-mono">{formatMoney(lot.unitCost, unit, false)}</td><td className="p-2">{lot.costBasis === 'documented' ? 'مستند خرید' : lot.costBasis === 'estimated-opening' ? 'افتتاحیه برآوردی' : lot.costBasis === 'estimated-return' ? 'برگشت برآوردی' : 'تعدیل برآوردی'}</td>
+                                <td className="p-2 font-semibold">{lot.lotNumber}</td><td className="p-2">{lot.warehouse}</td><td className="p-2 font-mono">{toPersianDigits(lot.receivedDate)}</td><td className="p-2 font-mono">{lot.expiryDate ? toPersianDigits(lot.expiryDate) : '—'}</td><td className="p-2 font-mono">{formatWeight(lot.quantityRemaining)} / {formatWeight(lot.quantityReceived)}</td><td className="p-2 font-mono text-amber-700">{formatWeight(lot.reservedQuantity || 0)}</td><td className="p-2 font-mono text-emerald-700">{formatWeight(Math.max(0, lot.quantityRemaining - (lot.reservedQuantity || 0)))}</td><td className="p-2 font-mono">{formatMoney(lot.unitCost, unit, false)}</td><td className="p-2">{lot.costBasis === 'documented' ? 'مستند خرید' : lot.costBasis === 'estimated-opening' ? 'افتتاحیه برآوردی' : lot.costBasis === 'estimated-return' ? 'برگشت برآوردی' : 'تعدیل برآوردی'}</td>
                               </tr>
                             ))}
-                            {inventoryLots.filter((lot) => lot.productId === selectedProduct.id).length === 0 && <tr><td colSpan={7} className="p-4 text-center text-slate-500">برای این کالا هنوز بچی ثبت نشده است.</td></tr>}
+                            {inventoryLots.filter((lot) => lot.productId === selectedProduct.id).length === 0 && <tr><td colSpan={9} className="p-4 text-center text-slate-500">برای این کالا هنوز بچی ثبت نشده است.</td></tr>}
                           </tbody>
                         </table>
                       </div>
