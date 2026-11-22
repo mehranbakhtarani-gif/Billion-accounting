@@ -195,6 +195,9 @@ test('sales returns cannot exceed net sold quantity of the source lot', () => {
     { id: 'return-in', lotId: 'return-lot-1', movementType: 'return', quantity: 2, sourceLotId: 'lot-a' },
   ];
   assert.equal(calculateLotReturnableQuantity('lot-a', movements), 3);
+  assert.equal(calculateLotReturnableQuantity('lot-a', [
+    { id: 'sub-issue', lotId: 'lot-a', movementType: 'issue', referenceId: 'sub_job_1', quantity: -10 },
+  ]), 0);
   assert.equal(calculateLotReturnedQuantity('lot-a', movements), 2);
   assert.equal(calculateLotReturnableQuantity('lot-a', [
     ...movements,
