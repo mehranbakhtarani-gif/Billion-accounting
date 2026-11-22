@@ -2310,15 +2310,42 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         if (user) await updateDoc(doc(db, 'invoices', invoiceId), { status: 'cancelled', updatedAt: serverTimestamp() });
         else setInvoices((prev) => prev.map((invoice) => invoice.id === invoiceId ? { ...invoice, status: 'cancelled' } : invoice));
       } catch (error) {
+        const compensationFailures: string[] = [];
         for (const snapshot of appliedStock.reverse()) {
-          try { await adjustProductStock(snapshot.productId, snapshot.previousStock); }
-          catch (rollbackError) { console.error('Invoice cancellation stock rollback failed', snapshot.productId, rollbackError); }
+          try {
+            await adjustProductStock(snapshot.productId, snapshot.previousStock);
+          } catch (rollbackError) {
+            console.error('Invoice cancellation stock rollback failed', snapshot.productId, rollbackError);
+            compensationFailures.push(`بازگردانی موجودی کالا ${snapshot.productId}: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`);
+          }
         }
         if (reversalVoucher) {
-          try { await createVoucher({ date: getTodayShamsi(), description: `سند جبرانی خودکار بابت عدم تکمیل ابطال فاکتور ${inv.invoiceNumber}`, voucherType: 'general', status: 'permanent', referenceId: `invoice-cancel-compensation:${inv.id}`, lines: reversalVoucher.lines.map((line) => ({ ...line, description: `برگشت سند ابطال فاکتور #${reversalVoucher!.voucherNumber}: ${line.description}`, debit: line.credit, credit: line.debit, foreignDebit: line.foreignCredit, foreignCredit: line.foreignDebit })) }); }
-          catch (compensationError) { console.error('Invoice cancellation voucher compensation failed', reversalVoucher.id, compensationError); }
+          try {
+            await createVoucher({
+              date: getTodayShamsi(),
+              description: `سند جبرانی خودکار بابت عدم تکمیل ابطال فاکتور ${inv.invoiceNumber}`,
+              voucherType: 'general',
+              status: 'permanent',
+              referenceId: `invoice-cancel-compensation:${inv.id}`,
+              lines: reversalVoucher.lines.map((line) => ({
+                ...line,
+                description: `برگشت سند ابطال فاکتور #${reversalVoucher!.voucherNumber}: ${line.description}`,
+                debit: line.credit,
+                credit: line.debit,
+                foreignDebit: line.foreignCredit,
+                foreignCredit: line.foreignDebit,
+              })),
+            });
+          } catch (compensationError) {
+            console.error('Invoice cancellation voucher compensation failed', reversalVoucher.id, compensationError);
+            compensationFailures.push(`جبران سند معکوس ${reversalVoucher.voucherNumber}: ${compensationError instanceof Error ? compensationError.message : String(compensationError)}`);
+          }
         }
-        throw new Error(`ابطال فاکتور کامل نشد؛ تلاش برای جبران موجودی و اسناد انجام شد. علت: ${error instanceof Error ? error.message : String(error)}`);
+        const originalFailure = error instanceof Error ? error.message : String(error);
+        const compensationSummary = compensationFailures.length
+          ? ` خطاهای جبران نیز رخ داد: ${compensationFailures.join('؛ ')}.`
+          : ' عملیات جبرانی بدون خطای گزارش‌شده انجام شد.';
+        throw new Error(`ابطال فاکتور ${inv.invoiceNumber} کامل نشد. علت اصلی: ${originalFailure}.${compensationSummary}`);
       }
       showToast(`فاکتور ${inv.invoiceNumber} ابطال شد و گردش موجودی/سند معکوس ثبت گردید.`);
     },
