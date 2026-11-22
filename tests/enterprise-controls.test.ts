@@ -19,6 +19,8 @@ import {
   computeOpenItemAging,
   reconcileBankLines,
   parseCsvRow,
+  parseCsvRecords,
+  getInvoiceStockDirection,
   validateAtomicFinancialPlan,
   validateSyncOperation,
   validateJournalEntryPayload,
@@ -31,6 +33,24 @@ import { calculateEmployeePayroll, calculateMonthlyDepreciation, computeAccountL
 
 test('CSV parser preserves quoted commas and escaped quotes', () => {
   assert.deepEqual(parseCsvRow('1405/09/01,"کارمزد، انتقال, فوری","شناسه ""ABC""",1250,0'), ['1405/09/01', 'کارمزد، انتقال, فوری', 'شناسه "ABC"', '1250', '0']);
+});
+
+test('bank CSV parser preserves BOM, quoted multiline descriptions and rejects malformed records', () => {
+  assert.deepEqual(parseCsvRecords('\\uFEFF1405/09/02,"واریز, فروش",100,0,REF-1\\r\\n1405/09/03,"شرح ""ویژه""\\nچندخطی",0,200,REF-2'), [
+    ['1405/09/02', 'واریز, فروش', '100', '0', 'REF-1'],
+    ['1405/09/03', 'شرح "ویژه"\\nچندخطی', '0', '200', 'REF-2'],
+  ]);
+  assert.throws(() => parseCsvRecords('1405/09/02,"نقل قول ناقص,100'), /بسته نشده/);
+});
+
+test('invoice types apply symmetrical stock movement and cancellation directions', () => {
+  assert.equal(getInvoiceStockDirection('sale'), -1);
+  assert.equal(getInvoiceStockDirection('purchase_return'), -1);
+  assert.equal(getInvoiceStockDirection('waste'), -1);
+  assert.equal(getInvoiceStockDirection('purchase'), 1);
+  assert.equal(getInvoiceStockDirection('sale_return'), 1);
+  assert.equal(getInvoiceStockDirection('proforma'), 0);
+  assert.throws(() => getInvoiceStockDirection('unknown'), /معتبر نیست/);
 });
 
 test('fiscal period rejects closed periods and overlapping ranges', () => {
