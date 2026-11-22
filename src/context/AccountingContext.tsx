@@ -1922,6 +1922,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             updatedAt: serverTimestamp(),
           });
         } catch (err) {
+          let compensationFailure: string | undefined;
           if (transitionVoucher) {
             try {
               await createVoucher({
@@ -1934,9 +1935,14 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
               });
             } catch (reversalError) {
               console.error('Cheque status voucher compensation failed', chequeId, reversalError);
+              compensationFailure = reversalError instanceof Error ? reversalError.message : String(reversalError);
             }
           }
           handleSupabaseError(err, OperationType.UPDATE, 'cheques/' + chequeId);
+          const originalFailure = err instanceof Error ? err.message : String(err);
+          if (compensationFailure) {
+            throw new Error(`تغییر وضعیت چک ${chq.sayadiId} ثبت نشد و سند معکوس خودکار نیز ناموفق بود؛ رسیدگی دستی لازم است. خطای ثبت: ${originalFailure}. خطای جبران: ${compensationFailure}`);
+          }
           throw err;
         }
       } else {
