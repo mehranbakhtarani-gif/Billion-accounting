@@ -13,7 +13,7 @@ import {
 import { useAccounting } from '../context/AccountingContext';
 import { ActiveModule } from '../types/accounting';
 import { exportToCsv, formatMoney, toPersianDigits } from '../lib/format';
-import { getBillionDeviceSyncStatus, BillionDeviceSyncStatus } from '../lib/supabaseStore';
+import { getBillionDeviceSyncStatus, type BillionDeviceSyncStatus } from '../lib/supabaseStore';
 
 export const AuditView: React.FC<{
   onNavigate: (mod: ActiveModule, intent?: string) => void;
