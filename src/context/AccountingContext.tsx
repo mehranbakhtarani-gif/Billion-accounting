@@ -34,7 +34,7 @@ import {
 import { createHolooSeedData } from '../data/holooSeed';
 import { getOrCreateLocalDeviceIdentity, loadLocalAccountingSnapshot, LocalDeviceIdentity, saveLocalAccountingSnapshot } from '../lib/localAccountingStore';
 import { FxRevaluationRow } from '../lib/enterpriseAccounting';
-import { assertSufficientStock, getChequeStatusTransitionError, validateJournalEntryPayload, validateTreasuryOperationPayload, validateTreasuryAccountSelection, validateTreasuryTransferAccounts, validateChequeDateRange, validatePartyTreasuryAccount, validateJalaliDate, validateImportLandedCostPayload, aggregateStockReservations, validateSalesOrderDispatchQuantities } from '../lib/enterpriseControls';
+import { assertSufficientStock, getChequeStatusTransitionError, validateJournalEntryPayload, validateTreasuryOperationPayload, validateTreasuryAccountSelection, validateTreasuryTransferAccounts, validateChequeDateRange, validatePartyTreasuryAccount, validateJalaliDate, validateImportLandedCostPayload, aggregateStockReservations, collectActiveStockReservations, validateSalesOrderDispatchQuantities } from '../lib/enterpriseControls';
 import {
   AuditReport,
   buildInvoiceVoucherLines,
@@ -2368,13 +2368,9 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             stockDeltas.set(product.id, (stockDeltas.get(product.id) || 0) + (wasOut ? item.quantity : -item.quantity));
           }
           if (!wasOut) {
-            const subcontractReservations = new Map<string, number>();
-            for (const job of subcontractJobs) {
-              if (job.status !== 'sent') continue;
-              subcontractReservations.set(job.rawProductId, (subcontractReservations.get(job.rawProductId) ?? 0) + job.sentWeightKg);
-            }
+            const reserved = collectActiveStockReservations(salesOrders, subcontractJobs);
             assertSufficientStock(
-              new Map(products.map((product) => [product.id, Math.max(0, product.stock - (subcontractReservations.get(product.id) ?? 0))])),
+              new Map(products.map((product) => [product.id, Math.max(0, product.stock - (reserved.get(product.id) ?? 0))])),
               inv.items.map((item) => ({ productId: item.productId, quantity: item.quantity })),
             );
           }
@@ -2432,7 +2428,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       }
       showToast(`فاکتور ${inv.invoiceNumber} ابطال شد و گردش موجودی/سند معکوس ثبت گردید.`);
     },
-    [invoices, products, vouchers, subcontractJobs, adjustProductStock, createVoucher, user, showToast]
+    [invoices, products, vouchers, salesOrders, subcontractJobs, adjustProductStock, createVoucher, user, showToast]
   );
 
   const convertProformaToSale = useCallback(
@@ -2443,13 +2439,11 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         throw new Error(`شماره فاکتور فروش ${inv.invoiceNumber.replace(/^PF-/, 'F-')} قبلاً استفاده شده است.`);
       }
 
-      const subcontractReservations = new Map<string, number>();
-      for (const job of subcontractJobs) {
-        if (job.status !== 'sent') continue;
-        subcontractReservations.set(job.rawProductId, (subcontractReservations.get(job.rawProductId) ?? 0) + job.sentWeightKg);
-      }
+      const reserved = collectActiveStockReservations(salesOrders, subcontractJobs, {
+        salesOrderId: inv.salesOrderId,
+      });
       assertSufficientStock(
-        new Map(products.map((product) => [product.id, Math.max(0, product.stock - (subcontractReservations.get(product.id) ?? 0))])),
+        new Map(products.map((product) => [product.id, Math.max(0, product.stock - (reserved.get(product.id) ?? 0))])),
         inv.items.map((item) => ({ productId: item.productId, quantity: item.quantity })),
       );
 
@@ -2558,7 +2552,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
       showToast(`پیش‌فاکتور به فاکتور فروش رسمی ${saleNumber} تبدیل و سند حسابداری آن صادر شد.`);
     },
-    [invoices, products, subcontractJobs, adjustProductStock, createVoucher, user, showToast]
+    [invoices, products, salesOrders, subcontractJobs, adjustProductStock, createVoucher, user, showToast]
   );
 
   // ---------------- CORPORATE MODULES CRUD ----------------
