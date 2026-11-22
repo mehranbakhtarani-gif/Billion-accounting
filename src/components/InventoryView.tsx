@@ -301,6 +301,13 @@ export const InventoryView: React.FC<{ initialIntent?: string; clearIntent?: () 
   }), { inventoryValue: 0, estimatedCogs: 0, netSalesRevenue: 0, grossProfit: 0, unreconciledItems: 0 }), [inventoryValuation]);
 
   const selectedProduct = products.find((p) => p.id === selectedProductId) ?? products[0];
+  const selectedProductLots = useMemo(
+    () => selectedProduct ? inventoryLots.filter((lot) => lot.productId === selectedProduct.id && lot.warehouse === selectedProduct.warehouse) : [],
+    [inventoryLots, selectedProduct?.id, selectedProduct?.warehouse]
+  );
+  const untrackedStockQty = selectedProduct
+    ? Math.max(0, selectedProduct.stock - selectedProductLots.reduce((sum, lot) => sum + lot.quantityRemaining, 0))
+    : 0;
 
   const kardexRows = useMemo(() => {
     if (!selectedProduct) return [];
@@ -1343,13 +1350,13 @@ export const InventoryView: React.FC<{ initialIntent?: string; clearIntent?: () 
                           {inventoryLotMovements.filter((movement) => movement.productId === selectedProduct.id).length === 0 && <div className="p-3 text-center text-slate-500">گردشی ثبت نشده است.</div>}
                         </div>
                       </div>
-                      {inventoryLots.filter((lot) => lot.productId === selectedProduct.id && lot.warehouse === selectedProduct.warehouse).length === 0 && selectedProduct.stock > 0 && (
+                      {untrackedStockQty > 0.01 && (
                         <div className="rounded-lg border border-amber-300 dark:border-amber-900 bg-amber-50/70 dark:bg-amber-950/20 p-3 space-y-2">
                           <div className="font-semibold text-amber-900 dark:text-amber-300">ثبت بچ افتتاحیه برای موجودی فعلی</div>
-                          <p className="text-[10px] text-amber-800 dark:text-amber-300">این عملیات موجودی کالا را تغییر نمی‌دهد. مقدار بچ باید دقیقاً با موجودی فعلی برابر باشد. بهای آن برآوردی است و سابقه خرید تاریخی تلقی نمی‌شود.</p>
+                          <p className="text-[10px] text-amber-800 dark:text-amber-300">این عملیات موجودی کالا را تغییر نمی‌دهد. مقدار بچ باید دقیقاً برابر کسری موجودیِ بدون بچ باشد. بهای آن برآوردی است و سابقه خرید تاریخی تلقی نمی‌شود.</p>
                           <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
                             <label className="space-y-1"><span>شماره بچ</span><input value={openingLotNumber} onChange={(e) => setOpeningLotNumber(e.target.value)} className="w-full rounded border p-2 bg-white dark:bg-slate-900" placeholder="OPEN-001" /></label>
-                            <label className="space-y-1"><span>مقدار ({selectedProduct.unit})</span><input type="number" min="0" value={openingLotQty || String(selectedProduct.stock)} onChange={(e) => setOpeningLotQty(e.target.value)} className="w-full rounded border p-2 bg-white dark:bg-slate-900" /></label>
+                            <label className="space-y-1"><span>مقدار ({selectedProduct.unit})</span><input type="number" min="0" value={openingLotQty || String(untrackedStockQty)} onChange={(e) => setOpeningLotQty(e.target.value)} className="w-full rounded border p-2 bg-white dark:bg-slate-900" /></label>
                             <label className="space-y-1"><span>بهای واحد برآوردی</span><input type="number" min="0" value={openingLotCost || String(selectedProduct.buyPrice)} onChange={(e) => setOpeningLotCost(e.target.value)} className="w-full rounded border p-2 bg-white dark:bg-slate-900" /></label>
                             <label className="space-y-1"><span>تاریخ ورود</span><input type="date" value={openingLotDate} onChange={(e) => setOpeningLotDate(e.target.value)} className="w-full rounded border p-2 bg-white dark:bg-slate-900" /></label>
                             <label className="space-y-1"><span>تاریخ انقضا (اختیاری)</span><input type="date" value={openingLotExpiry} onChange={(e) => setOpeningLotExpiry(e.target.value)} className="w-full rounded border p-2 bg-white dark:bg-slate-900" /></label>
@@ -1358,7 +1365,7 @@ export const InventoryView: React.FC<{ initialIntent?: string; clearIntent?: () 
                             try {
                               await createOpeningInventoryLot({
                                 productId: selectedProduct.id, lotNumber: openingLotNumber,
-                                quantity: Number(openingLotQty || selectedProduct.stock),
+                                quantity: Number(openingLotQty || untrackedStockQty),
                                 unitCost: Number(openingLotCost || selectedProduct.buyPrice),
                                 receivedDate: openingLotDate, ...(openingLotExpiry ? { expiryDate: openingLotExpiry } : {}),
                               });
