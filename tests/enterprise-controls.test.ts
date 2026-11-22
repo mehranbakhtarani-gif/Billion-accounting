@@ -8,6 +8,7 @@ import {
   validateTreasuryOperationPayload,
   validateTreasuryAccountSelection,
   validateTreasuryTransferAccounts,
+  validateChequeDateRange,
   getChequeStatusTransitionError,
   classifySyncOperation,
   computeOpenItemAging,
@@ -468,6 +469,12 @@ test('treasury operation validation rejects invalid date, amount and description
   assert.throws(() => validateTreasuryOperationPayload({ ...valid, amount: 0 }), /مبلغ/);
   assert.throws(() => validateTreasuryOperationPayload({ ...valid, amount: Number.NaN }), /مبلغ/);
   assert.throws(() => validateTreasuryOperationPayload({ ...valid, description: '  ' }), /شرح/);
+});
+
+test('cheque dates validate Jalali leap days and issue-before-due ordering', () => {
+  assert.doesNotThrow(() => validateChequeDateRange('1403/12/30', '1404/01/02'));
+  assert.throws(() => validateChequeDateRange('1405/12/30', '1406/01/02'), /تاریخ صدور یا سررسید/);
+  assert.throws(() => validateChequeDateRange('1405/08/10', '1405/08/09'), /قبل از تاریخ صدور/);
 });
 
 test('treasury account validation requires an existing cash or bank moein account', () => {
