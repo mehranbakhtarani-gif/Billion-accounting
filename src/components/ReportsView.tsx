@@ -48,7 +48,8 @@ type ReportTab =
   | 'product-profit'
   | 'aging'
   | 'commissions'
-  | 'statutory';
+  | 'statutory'
+  | 'inventory-lots';
 
 function downloadTextFile(filename: string, content: string, mime = 'text/plain;charset=utf-8') {
   const blob = new Blob([content], { type: mime });
@@ -72,6 +73,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ initialIntent, clearIn
     accounts,
     parties,
     products,
+    inventoryLots,
     employees,
     vouchers,
     invoices,
@@ -116,7 +118,8 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ initialIntent, clearIn
       initialIntent === 'product-profit' ||
       initialIntent === 'aging' ||
       initialIntent === 'commissions' ||
-      initialIntent === 'statutory'
+      initialIntent === 'statutory' ||
+      initialIntent === 'inventory-lots'
     ) {
       setTab(initialIntent);
     }
@@ -212,6 +215,29 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ initialIntent, clearIn
     () => computePayablesAging(parties, invoices, accounts, vouchers, getTodayShamsi()),
     [parties, invoices, accounts, vouchers]
   );
+
+  const inventoryLotValuationRows = useMemo(() => inventoryLots.map((lot) => {
+    const product = products.find((item) => item.id === lot.productId);
+    const remaining = Number(lot.quantityRemaining);
+    const reserved = Number(lot.reservedQuantity ?? 0);
+    return {
+      ...lot,
+      productName: product?.name ?? 'کالای حذف‌شده یا ناشناخته',
+      sku: product?.sku ?? '',
+      remaining,
+      reserved,
+      available: remaining - reserved,
+      inventoryValue: remaining * Number(lot.unitCost),
+      isExpired: !!lot.expiryDate && lot.expiryDate < getTodayShamsi(),
+    };
+  }).sort((a, b) => a.receivedDate.localeCompare(b.receivedDate) || a.lotNumber.localeCompare(b.lotNumber)), [inventoryLots, products]);
+
+  const inventoryLotValuationTotals = useMemo(() => inventoryLotValuationRows.reduce((totals, row) => ({
+    quantity: totals.quantity + row.remaining,
+    reserved: totals.reserved + row.reserved,
+    available: totals.available + row.available,
+    value: totals.value + row.inventoryValue,
+  }), { quantity: 0, reserved: 0, available: 0, value: 0 }), [inventoryLotValuationRows]);
 
   const commissionRows = useMemo(
     () => computeBrokerCommissions(parties, invoices),
@@ -366,6 +392,15 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ initialIntent, clearIn
           r.purchasesVat,
         ])
       );
+    } else if (tab === 'inventory-lots') {
+      exportToCsv(
+        `billion-inventory-lot-valuation-${profile.fiscalYear}.csv`,
+        ['کد کالا', 'نام کالا', 'شماره بچ', 'انبار', 'تاریخ ورود', 'تاریخ انقضا', 'مقدار اولیه', 'مانده', 'رزرو', 'قابل استفاده', 'بهای واحد', 'ارزش موجودی', 'مبنای بها'],
+        inventoryLotValuationRows.map((row) => [
+          row.sku, row.productName, row.lotNumber, row.warehouse, row.receivedDate, row.expiryDate ?? '',
+          row.quantityReceived, row.remaining, row.reserved, row.available, row.unitCost, row.inventoryValue, row.costBasis,
+        ])
+      );
     } else if (tab === 'product-profit') {
       if (profitMode === 'invoice') {
         exportToCsv(
@@ -457,6 +492,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ initialIntent, clearIn
           { id: 'aging', label: 'سنی مطالبات (Aging)' },
           { id: 'commissions', label: 'پورسانت بازاریابان' },
           { id: 'statutory', label: 'خروجی بیمه / مالیات / مودیان' },
+          { id: 'inventory-lots', label: 'ارزش موجودی به تفکیک بچ (FIFO)' },
         ].map((t) => (
           <button
             key={t.id}
@@ -1993,6 +2029,92 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ initialIntent, clearIn
             >
               دانلود JSON استاندارد سامانه مودیان
             </button>
+          </div>
+        </div>
+      )}
+
+      {tab === 'inventory-lots' && (
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4">
+              <div className="text-xs text-slate-500">تعداد بچ‌های ثبت‌شده</div>
+              <div className="mt-2 text-xl font-bold tabular-nums">{toPersianDigits(inventoryLotValuationRows.length)}</div>
+            </div>
+            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4">
+              <div className="text-xs text-slate-500">مقدار باقی‌مانده</div>
+              <div className="mt-2 text-xl font-bold tabular-nums">{toPersianDigits(inventoryLotValuationTotals.quantity)}</div>
+            </div>
+            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4">
+              <div className="text-xs text-slate-500">مقدار رزروشده / قابل استفاده</div>
+              <div className="mt-2 text-xl font-bold tabular-nums">{toPersianDigits(inventoryLotValuationTotals.reserved)} / {toPersianDigits(inventoryLotValuationTotals.available)}</div>
+            </div>
+            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4">
+              <div className="text-xs text-slate-500">ارزش موجودی بر مبنای بهای بچ</div>
+              <div className="mt-2 text-xl font-bold tabular-nums">{formatMoney(inventoryLotValuationTotals.value, unit)}</div>
+            </div>
+          </div>
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden print-container">
+            <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between gap-3">
+              <div>
+                <h2 className="text-sm font-bold text-slate-900 dark:text-white">ارزش موجودی به تفکیک بچ و انبار</h2>
+                <p className="mt-1 text-xs text-slate-500">ارزش هر بچ از مانده واقعی × بهای واحد همان بچ محاسبه می‌شود؛ مقدار رزروشده از مقدار قابل استفاده جدا نمایش داده می‌شود.</p>
+              </div>
+              <span className="text-xs text-slate-500 whitespace-nowrap">مبنای ارزش‌گذاری: بهای ثبت‌شده بچ</span>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-right text-xs border-collapse">
+                <thead>
+                  <tr className="bg-slate-50 dark:bg-slate-950 text-slate-500 border-b border-slate-200 dark:border-slate-800">
+                    <th className="py-3 px-3">کالا / بچ</th>
+                    <th className="py-3 px-3">انبار</th>
+                    <th className="py-3 px-3">ورود / انقضا</th>
+                    <th className="py-3 px-3 text-left">مانده</th>
+                    <th className="py-3 px-3 text-left">رزرو</th>
+                    <th className="py-3 px-3 text-left">قابل استفاده</th>
+                    <th className="py-3 px-3 text-left">بهای واحد</th>
+                    <th className="py-3 px-3 text-left">ارزش موجودی</th>
+                    <th className="py-3 px-3">مبنای بها</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                  {inventoryLotValuationRows.map((row) => (
+                    <tr key={row.id} className={row.isExpired ? 'bg-rose-50/60 dark:bg-rose-950/20' : ''}>
+                      <td className="py-3 px-3">
+                        <div className="font-semibold text-slate-900 dark:text-white">{row.productName}</div>
+                        <div className="text-slate-500">{row.sku} · بچ {row.lotNumber}</div>
+                      </td>
+                      <td className="py-3 px-3">{row.warehouse}</td>
+                      <td className="py-3 px-3">
+                        <div>{toPersianDigits(row.receivedDate)}</div>
+                        <div className={row.isExpired ? 'text-rose-700 dark:text-rose-400 font-semibold' : 'text-slate-500'}>
+                          {row.expiryDate ? (row.isExpired ? 'منقضی: ' : 'انقضا: ') + toPersianDigits(row.expiryDate) : 'بدون تاریخ انقضا'}
+                        </div>
+                      </td>
+                      <td className="py-3 px-3 text-left tabular-nums">{toPersianDigits(row.remaining)}</td>
+                      <td className="py-3 px-3 text-left tabular-nums">{toPersianDigits(row.reserved)}</td>
+                      <td className="py-3 px-3 text-left tabular-nums">{toPersianDigits(row.available)}</td>
+                      <td className="py-3 px-3 text-left tabular-nums">{formatMoney(row.unitCost, unit, false)}</td>
+                      <td className="py-3 px-3 text-left font-semibold tabular-nums">{formatMoney(row.inventoryValue, unit, false)}</td>
+                      <td className="py-3 px-3">{row.costBasis === 'documented' ? 'مستند' : row.costBasis === 'estimated-opening' ? 'برآورد اول دوره' : row.costBasis === 'estimated-return' ? 'برآورد برگشت' : 'برآورد اصلاحی'}</td>
+                    </tr>
+                  ))}
+                  {inventoryLotValuationRows.length === 0 && (
+                    <tr><td colSpan={9} className="py-10 text-center text-slate-500">هنوز بچی برای ارزش‌گذاری ثبت نشده است.</td></tr>
+                  )}
+                </tbody>
+                <tfoot>
+                  <tr className="bg-slate-50 dark:bg-slate-950 border-t-2 border-slate-300 dark:border-slate-700 font-bold">
+                    <td colSpan={3} className="py-3 px-3">جمع کل</td>
+                    <td className="py-3 px-3 text-left">{toPersianDigits(inventoryLotValuationTotals.quantity)}</td>
+                    <td className="py-3 px-3 text-left">{toPersianDigits(inventoryLotValuationTotals.reserved)}</td>
+                    <td className="py-3 px-3 text-left">{toPersianDigits(inventoryLotValuationTotals.available)}</td>
+                    <td></td>
+                    <td className="py-3 px-3 text-left">{formatMoney(inventoryLotValuationTotals.value, unit, false)}</td>
+                    <td></td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
           </div>
         </div>
       )}

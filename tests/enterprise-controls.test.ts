@@ -35,7 +35,7 @@ import {
   buildInvoiceAllocationReversal,
 } from '../src/lib/enterpriseControls.ts';
 import { calculateLandedCostAllocation, computeReceivablesAging, computePayablesAging, computeFxRevaluationReport } from '../src/lib/enterpriseAccounting.ts';
-import { buildInvoiceVoucherLines, calculateEmployeePayroll, calculateMonthlyDepreciation, computeAccountLedger, computeAuditReport, computePartyBalances, computePartyLedger, computeTrialBalance, computeInventoryValuation } from '../src/lib/accountingEngine.ts';
+import { buildInvoiceVoucherLines, calculateEmployeePayroll, calculateMonthlyDepreciation, computeAccountLedger, computeAuditReport, computeBalanceSheet, computePartyBalances, computePartyLedger, computeTrialBalance, computeInventoryValuation } from '../src/lib/accountingEngine.ts';
 
 test('online writes use the device cached revision and never silently adopt a newer server revision', () => {
   assert.equal(resolveExpectedRecordRevision('patch', 4), 4);
@@ -648,6 +648,87 @@ test('audit ignores draft party postings in GL reconciliation and flags duplicat
   assert.ok(operational?.details.some((detail) => detail.includes('مبلغ معتبر')));
 });
 
+
+test('audit excludes drafts from posted voucher balance and numbering checks', () => {
+  const draft = {
+    id: 'draft-audit', ownerId: 'o1', voucherNumber: 1, date: '1405/08/01', description: 'پیش‌نویس',
+    voucherType: 'general', status: 'draft', totalDebit: 100, totalCredit: 100,
+    lines: [{ accountCode: '10401', accountTitle: 'مشتریان', partyId: 'p1', partyName: 'مشتری', description: 'پیش‌نویس', debit: 100, credit: 0 }],
+  };
+  const report = computeAuditReport({
+    accounts: [], vouchers: [draft] as any, invoices: [], parties: [], products: [], cheques: [] as any,
+    trialBalance: [], balanceSheet: {
+      isBalanced: true, difference: 0, totalAssets: 0, totalLiabilities: 0, totalEquity: 0,
+      assets: [], liabilities: [], equity: [], currentPeriodProfit: 0,
+    } as any,
+    partyBalances: new Map(), inventoryLotReconciliationIssues: [],
+  });
+  assert.equal(report.checks.find((check) => check.id === 'voucher-balance')?.status, 'pass');
+  assert.equal(report.checks.find((check) => check.id === 'voucher-sequence')?.status, 'pass');
+  assert.ok(report.checks.find((check) => check.id === 'operational-controls')?.details.some((detail) => detail.includes('سند موقت #1')));
+  assert.equal(report.checks.find((check) => check.id === 'inventory-lot-ledger')?.status, 'pass');
+});
+
+test('audit reconciles configured receivable and payable control-account subtrees', () => {
+  const accounts = [
+    { code: '114', title: 'دریافتنی تجاری', level: 'kol', category: 'asset' },
+    { code: '11401', title: 'مشتریان', level: 'moein', category: 'asset', parentCode: '114' },
+    { code: '1140101', title: 'مشتری الف', level: 'tafsili', category: 'asset', parentCode: '11401' },
+    { code: '315', title: 'پرداختنی تجاری', level: 'kol', category: 'liability' },
+    { code: '31501', title: 'تأمین‌کنندگان', level: 'moein', category: 'liability', parentCode: '315' },
+    { code: '3150101', title: 'تأمین‌کننده ب', level: 'tafsili', category: 'liability', parentCode: '31501' },
+    { code: '401', title: 'فروش', level: 'kol', category: 'revenue' },
+    { code: '501', title: 'هزینه', level: 'kol', category: 'expense' },
+  ];
+  const parties = [
+    { id: 'customer-a', name: 'مشتری الف', partyType: 'customer', accountCode: '1140101' },
+    { id: 'vendor-b', name: 'تأمین‌کننده ب', partyType: 'vendor', accountCode: '3150101' },
+  ];
+  const vouchers = [
+    { id: 'ar', ownerId: 'o1', voucherNumber: 1, date: '1405/08/01', description: 'فروش نسیه', voucherType: 'sales', status: 'permanent', totalDebit: 250, totalCredit: 250,
+      lines: [
+        { accountCode: '1140101', partyId: 'customer-a', debit: 250, credit: 0 },
+        { accountCode: '401', debit: 0, credit: 250 },
+      ] },
+    { id: 'ap', ownerId: 'o1', voucherNumber: 2, date: '1405/08/02', description: 'خرید نسیه', voucherType: 'purchase', status: 'permanent', totalDebit: 400, totalCredit: 400,
+      lines: [
+        { accountCode: '501', debit: 400, credit: 0 },
+        { accountCode: '3150101', partyId: 'vendor-b', debit: 0, credit: 400 },
+      ] },
+    { id: 'draft', ownerId: 'o1', voucherNumber: 3, date: '1405/08/03', description: 'پیش‌نویس', voucherType: 'general', status: 'draft', totalDebit: 999, totalCredit: 0,
+      lines: [{ accountCode: '1140101', partyId: 'customer-a', debit: 999, credit: 0 }] },
+  ];
+  const trial = computeTrialBalance(accounts as any, vouchers as any);
+  const report = computeAuditReport({
+    accounts: accounts as any, vouchers: vouchers as any, invoices: [], parties: parties as any,
+    products: [], cheques: [] as any, trialBalance: trial,
+    balanceSheet: computeBalanceSheet(trial), partyBalances: new Map(),
+    inventoryLotReconciliationIssues: [],
+  });
+  assert.equal(report.reconciliation.glReceivables, 250);
+  assert.equal(report.reconciliation.subReceivables, 250);
+  assert.equal(report.reconciliation.glPayables, 400);
+  assert.equal(report.reconciliation.subPayables, 400);
+  assert.equal(report.checks.find((check) => check.id === 'sub-gl-reconcile')?.status, 'pass');
+});
+
+test('audit VAT reconciliation uses the same one-unit tolerance as the reports UI', () => {
+  const report = computeAuditReport({
+    accounts: [], vouchers: [], invoices: [{
+      id: 'vat-sale', invoiceType: 'sale', status: 'issued', vatAmount: 100,
+    }] as any, parties: [], products: [], cheques: [] as any,
+    trialBalance: [{
+      accountCode: '30301', accountTitle: 'مالیات فروش', category: 'liability',
+      totalDebit: 0, totalCredit: 105, balanceDebit: 0, balanceCredit: 105,
+    }] as any,
+    balanceSheet: {
+      isBalanced: true, difference: 0, totalAssets: 0, totalLiabilities: 0, totalEquity: 0,
+      assets: [], liabilities: [], equity: [], currentPeriodProfit: 0,
+    } as any,
+    partyBalances: new Map(), inventoryLotReconciliationIssues: [],
+  });
+  assert.equal(report.checks.find((check) => check.id === 'vat-reconcile')?.status, 'warning');
+});
 
 test('journal payload validation rejects invalid dates, lines and one-sided entries', () => {
   const valid = {
