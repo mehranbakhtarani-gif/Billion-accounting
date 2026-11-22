@@ -256,7 +256,9 @@ export const TreasuryView: React.FC<TreasuryViewProps> = ({ initialIntent, clear
       });
     }));
     const rowOccurrences = new Map<string, number>();
+    let parsedLineIndex = 0;
     const parsedBankRows = bankCsvText.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).map((line) => {
+      const idx = parsedLineIndex++;
       const parts = parseCsvRow(line);
       const date = (parts[0] || '').trim();
       const desc = (parts[1] || '').trim() || ('تراکنش بانکی ' + (idx + 1));
