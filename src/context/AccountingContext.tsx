@@ -4345,14 +4345,25 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         throw new Error('وزن برگشتی باید مثبت و حداکثر برابر وزن نخ ارسالی باشد؛ تاریخ و شماره لات نیز باید معتبر باشند.');
       }
       validateJalaliDate(payload.completionDate, 'تاریخ تکمیل پیمانکاری');
-      if (!Number.isFinite(job.rawUnitCostIrr) || job.rawUnitCostIrr < 0 || !Number.isFinite(job.serviceFeePerKgIrr) || job.serviceFeePerKgIrr < 0) throw new Error('بهای مواد اولیه یا اجرت پیمانکاری نامعتبر است.');
-      const rawTotalCost = Math.round(job.sentWeightKg * job.rawUnitCostIrr);
+      if (!Number.isFinite(job.serviceFeePerKgIrr) || job.serviceFeePerKgIrr < 0) throw new Error('اجرت پیمانکاری نامعتبر است.');
+      const ledgerIssues = reconcileInventoryLotLedger(inventoryLots as any, inventoryLotMovements);
+      if (ledgerIssues.length) throw new Error('دفتر بچ با گردش‌های ثبت‌شده مغایرت دارد؛ تکمیل پیمانکاری متوقف شد.');
+      const rawLotBalance = inventoryLots.filter((lot) => lot.productId === rawProduct.id && lot.warehouse === rawProduct.warehouse)
+        .reduce((sum, lot) => sum + lot.quantityRemaining, 0);
+      if (Math.abs(rawLotBalance - rawProduct.stock) > 0.01) {
+        throw new Error('مانده بچ‌های نخ خام با موجودی کالا برابر نیست؛ ابتدا دفتر بچ را تطبیق دهید.');
+      }
+      const movementDate = new Date().toISOString().slice(0, 10);
+      const fifo = allocateStockFIFO(inventoryLots as any, job.sentWeightKg, {
+        productId: rawProduct.id, warehouse: rawProduct.warehouse, asOfDate: movementDate,
+      });
+      const rawTotalCost = Math.round(fifo.totalCost);
       const serviceFeeTotal = Math.round(payload.returnedWeightKg * job.serviceFeePerKgIrr);
       const finishedTotalCost = rawTotalCost + serviceFeeTotal;
       const finishedUnitCost = Math.round(finishedTotalCost / payload.returnedWeightKg);
       const lines: VoucherLine[] = [
         { accountCode: '10501', accountTitle: 'موجودی انبار نخ و کالای وارداتی', description: `ورود ${payload.returnedWeightKg} کیلوگرم محصول تکمیل‌شده ${job.jobNumber}`, debit: finishedTotalCost, credit: 0 },
-        { accountCode: '10501', accountTitle: 'موجودی انبار نخ و کالای وارداتی', description: `مصرف ${job.sentWeightKg} کیلوگرم نخ خام (${job.rawProductName})`, debit: 0, credit: rawTotalCost },
+        { accountCode: '10501', accountTitle: 'موجودی انبار نخ و کالای وارداتی', description: `مصرف ${job.sentWeightKg} کیلوگرم نخ خام با بهای FIFO (${job.rawProductName})`, debit: 0, credit: rawTotalCost },
         { accountCode: '30101', accountTitle: 'بستانکاران و تأمین‌کنندگان واردات نخ', partyId: job.contractorPartyId, partyName: job.contractorName, description: `اجرت پیمانکاری رنگرزی/تبدیل ${job.jobNumber}`, debit: 0, credit: serviceFeeTotal },
       ];
       const voucher = await createVoucher({ date: payload.completionDate, description: `تکمیل عملیات پیمانکاری ${job.jobNumber} (${job.finishedProductName} — لات ${payload.finishedLotNumber})`, voucherType: 'general', status: 'permanent', lines, referenceId: job.id });
@@ -4367,12 +4378,54 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           kgPerCarton: rawProduct.kgPerCarton || 25, lotNumber: payload.finishedLotNumber, originCountry: 'تکمیل داخلی',
           buyPrice: finishedUnitCost, sellPrice: Math.round(finishedUnitCost * 1.18), stock: payload.returnedWeightKg, reorderPoint: 100, vatExempt: false });
         finishedProductId = finishedProduct.id;
-        if (user) await updateDoc(doc(db, 'subcontractJobs', jobId), { status: 'completed', completionDate: payload.completionDate, returnedWeightKg: payload.returnedWeightKg, finishedLotNumber: payload.finishedLotNumber, totalServiceFeeIrr: serviceFeeTotal, finishedUnitCostIrr: finishedUnitCost, voucherId: voucher.id, updatedAt: serverTimestamp() });
+        const finishedLotId = generateSafeId('lot');
+        const finishedMovementId = generateSafeId('lotmove');
+        const finishedLot: InventoryLot = {
+          id: finishedLotId, ownerId, productId: finishedProduct.id, warehouse: finishedProduct.warehouse,
+          lotNumber: payload.finishedLotNumber.trim().slice(0, 80), receivedDate: movementDate,
+          quantityReceived: payload.returnedWeightKg, quantityRemaining: payload.returnedWeightKg,
+          unitCost: finishedUnitCost, costBasis: 'documented', sourceInvoiceId: job.id, createdAt: serverTimestamp(),
+        };
+        const rawUpdatedLots = new Map(fifo.remainingLots.map((lot: any) => [lot.id, lot as InventoryLot]));
+        const rawMovements: InventoryLotMovement[] = fifo.allocations.map((allocation) => ({
+          id: generateSafeId('lotmove'), ownerId, lotId: allocation.lotId, productId: rawProduct.id,
+          warehouse: rawProduct.warehouse, movementType: 'issue', quantity: -allocation.quantity,
+          unitCost: allocation.unitCost, referenceId: job.id, referenceNumber: job.jobNumber, date: movementDate,
+          notes: 'مصرف نخ خام در پیمانکاری بر اساس FIFO',
+        }));
+        const finishedMovement: InventoryLotMovement = {
+          id: finishedMovementId, ownerId, lotId: finishedLotId, productId: finishedProduct.id,
+          warehouse: finishedProduct.warehouse, movementType: 'receipt', quantity: payload.returnedWeightKg,
+          unitCost: finishedUnitCost, referenceId: job.id, referenceNumber: job.jobNumber, date: movementDate,
+          notes: 'ورود محصول تکمیل‌شده با بهای مواد FIFO و اجرت پیمانکاری',
+        };
+        if (user) {
+          const batch = writeBatch(db);
+          rawUpdatedLots.forEach((lot) => batch.update(doc(db, 'inventoryLots', lot.id), {
+            quantityRemaining: lot.quantityRemaining, updatedAt: serverTimestamp(),
+          }));
+          rawMovements.forEach((movement) => batch.set(doc(db, 'inventoryLotMovements', movement.id), movement));
+          batch.set(doc(db, 'inventoryLots', finishedLotId), finishedLot);
+          batch.set(doc(db, 'inventoryLotMovements', finishedMovementId), finishedMovement);
+          batch.update(doc(db, 'subcontractJobs', jobId), {
+            status: 'completed', completionDate: payload.completionDate, returnedWeightKg: payload.returnedWeightKg,
+            finishedLotNumber: payload.finishedLotNumber, totalServiceFeeIrr: serviceFeeTotal,
+            finishedUnitCostIrr: finishedUnitCost, voucherId: voucher.id, updatedAt: serverTimestamp(),
+          });
+          await batch.commit();
+        }
+        setInventoryLots((prev) => [
+          ...prev.filter((lot) => !rawUpdatedLots.has(lot.id) && lot.id !== finishedLotId),
+          ...[...rawUpdatedLots.values(), finishedLot],
+        ]);
+        setInventoryLotMovements((prev) => [...prev, ...rawMovements, finishedMovement]);
       } catch (error) {
         const compensationFailures: string[] = [];
         if (user && finishedProductId) {
           try { await deleteDoc(doc(db, 'products', finishedProductId)); }
           catch (deleteError) { compensationFailures.push(`حذف محصول تکمیل‌شده ${finishedProductId} ناموفق بود: ${deleteError instanceof Error ? deleteError.message : String(deleteError)}`); }
+        } else if (!user && finishedProductId) {
+          setProducts((prev) => prev.filter((product) => product.id !== finishedProductId));
         }
         if (rawStockUpdated) {
           try {
@@ -4412,7 +4465,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       logActivity('پیمانکاری رنگرزی/بافندگی', `اتمام و ورود محصول ${job.jobNumber}`, `بازگشت ${payload.returnedWeightKg} کیلوگرم با لات ${payload.finishedLotNumber} و ثبت سند #${voucher.voucherNumber}`);
       showToast(`عملیات پیمانکاری ${job.jobNumber} تکمیل و سند #${voucher.voucherNumber} ثبت شد.`);
     },
-    [subcontractJobs, salesOrders, vouchers, products, updateProduct, addProduct, createVoucher, logActivity, showToast, user]
+    [subcontractJobs, salesOrders, vouchers, products, inventoryLots, inventoryLotMovements, ownerId, updateProduct, addProduct, createVoucher, logActivity, showToast, user]
   );
 
   // ---------------- FX REVALUATION & BROKER COMMISSION VOUCHERS ----------------
