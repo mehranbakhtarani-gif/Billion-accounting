@@ -185,6 +185,7 @@ test('Jalali dates convert to Gregorian ISO for FIFO transaction chronology', ()
   assert.equal(shamsiToGregorianIso('1405/01/01'), '2026-03-21');
   assert.equal(shamsiToGregorianIso('1404/01/01'), '2025-03-21');
   assert.throws(() => shamsiToGregorianIso('1405/13/01'), /معتبر/);
+  assert.throws(() => shamsiToGregorianIso('1405/12/30'), /معتبر/);
 });
 
 test('sales returns cannot exceed net sold quantity of the source lot', () => {
