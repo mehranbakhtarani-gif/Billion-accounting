@@ -278,6 +278,7 @@ export function reconcileInventoryLotLedger(
   }
   const movementIds = new Set<string>();
   const signedTotals = new Map<string, number>();
+  const receiptLotIds = new Set<string>();
   for (const movement of movements) {
     if (!movement.id.trim() || movementIds.has(movement.id)) throw new Error('شناسه گردش بچ تکراری یا خالی است.');
     movementIds.add(movement.id);
@@ -289,9 +290,15 @@ export function reconcileInventoryLotLedger(
     if (['issue', 'purchase-return', 'waste', 'transfer-out'].includes(movement.movementType) && movement.quantity > 0) {
       throw new Error('گردش خروج بچ باید مقدار منفی داشته باشد.');
     }
+    if (['receipt', 'return', 'adjustment'].includes(movement.movementType) && movement.quantity > 0) {
+      receiptLotIds.add(movement.lotId);
+    }
     signedTotals.set(movement.lotId, (signedTotals.get(movement.lotId) ?? 0) + movement.quantity);
   }
   return lots.map((lot) => {
+    if (lot.quantityReceived > 0 && !receiptLotIds.has(lot.id)) {
+      throw new Error(`بچ ${lot.id} فاقد گردش ورود اولیه قابل حسابرسی است.`);
+    }
     const expectedRemaining = Number((signedTotals.get(lot.id) ?? 0).toFixed(6));
     const actualRemaining = Number(lot.quantityRemaining.toFixed(6));
     if (expectedRemaining < -0.0001 || expectedRemaining - lot.quantityReceived > 0.0001) {
