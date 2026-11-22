@@ -362,6 +362,37 @@ export function validateAtomicFinancialPlan(plan: AtomicFinancialPlan): void {
   }
 }
 
+
+export function getChequeStatusTransitionError(
+  direction: 'receivable' | 'payable',
+  current: 'in_box' | 'deposited' | 'endorsed' | 'cleared' | 'bounced' | 'cancelled',
+  next: 'in_box' | 'deposited' | 'endorsed' | 'cleared' | 'bounced' | 'cancelled',
+): string | null {
+  if (current === next) return null;
+  const allowed: Record<typeof direction, Partial<Record<typeof current, typeof next[]>>> = {
+    receivable: {
+      in_box: ['deposited', 'cleared', 'bounced', 'cancelled', 'endorsed'],
+      deposited: ['cleared', 'bounced', 'cancelled'],
+      bounced: ['in_box'],
+      cleared: ['in_box'],
+      endorsed: [],
+      cancelled: [],
+    },
+    payable: {
+      in_box: ['cleared', 'bounced', 'cancelled'],
+      bounced: ['in_box'],
+      cleared: ['in_box'],
+      deposited: [],
+      endorsed: [],
+      cancelled: [],
+    },
+  };
+  if (allowed[direction][current]?.includes(next)) return null;
+  return direction === 'receivable'
+    ? 'تغییر وضعیت چک دریافتی از این مرحله به مرحله انتخاب‌شده مجاز نیست. چک واگذارشده به غیر تا زمان ثبت فرآیند برگشت، قابل تغییر خودکار نیست.'
+    : 'تغییر وضعیت چک پرداختی از این مرحله به مرحله انتخاب‌شده مجاز نیست.';
+}
+
 export interface BankStatementLine {
   id: string;
   accountId: string;
