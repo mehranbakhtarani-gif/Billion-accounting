@@ -13,6 +13,7 @@ import {
   validatePartyTreasuryAccount,
   validateImportLandedCostPayload,
   aggregateStockReservations,
+  collectActiveStockReservations,
   getChequeStatusTransitionError,
   classifySyncOperation,
   computeOpenItemAging,
@@ -498,6 +499,36 @@ test('stock reservations aggregate across sales orders and subcontract jobs', ()
   assert.equal(reserved.get('raw-2'), 7.5);
   assert.throws(() => aggregateStockReservations([{ productId: 'raw-1', quantity: -1 }]), /رزرو موجودی/);
   assert.throws(() => aggregateStockReservations([{ productId: '', quantity: 1 }]), /رزرو موجودی/);
+});
+
+test('active stock reservations include dispatched sales and sent subcontract jobs with operation exclusions', () => {
+  const reserved = collectActiveStockReservations(
+    [
+      { id: 'so-1', status: 'dispatched', items: [{ productId: 'raw-1', actualWeighedKg: 12.5, orderedWeightKg: 15 }] },
+      { id: 'so-2', status: 'dispatched', items: [{ productId: 'raw-1', actualWeighedKg: 0, orderedWeightKg: 8 }] },
+      { id: 'so-3', status: 'open', items: [{ productId: 'raw-2', actualWeighedKg: 5, orderedWeightKg: 5 }] },
+    ],
+    [
+      { id: 'sub-1', status: 'sent', rawProductId: 'raw-1', sentWeightKg: 10 },
+      { id: 'sub-2', status: 'completed', rawProductId: 'raw-2', sentWeightKg: 4 },
+    ],
+  );
+  assert.equal(reserved.get('raw-1'), 30.5);
+  assert.equal(reserved.has('raw-2'), false);
+
+  const excludingCurrentSale = collectActiveStockReservations(
+    [{ id: 'so-1', status: 'dispatched', items: [{ productId: 'raw-1', actualWeighedKg: 12.5, orderedWeightKg: 15 }] }],
+    [{ id: 'sub-1', status: 'sent', rawProductId: 'raw-1', sentWeightKg: 10 }],
+    { salesOrderId: 'so-1' },
+  );
+  assert.equal(excludingCurrentSale.get('raw-1'), 10);
+
+  const excludingCurrentSubcontract = collectActiveStockReservations(
+    [{ id: 'so-1', status: 'dispatched', items: [{ productId: 'raw-1', actualWeighedKg: 12.5, orderedWeightKg: 15 }] }],
+    [{ id: 'sub-1', status: 'sent', rawProductId: 'raw-1', sentWeightKg: 10 }],
+    { subcontractJobId: 'sub-1' },
+  );
+  assert.equal(excludingCurrentSubcontract.get('raw-1'), 12.5);
 });
 
 test('import landed cost ties foreign value, settlement costs and inventory item values', () => {
