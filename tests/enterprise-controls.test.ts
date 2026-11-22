@@ -5,6 +5,7 @@ import {
   assertSufficientStock,
   assertFiscalPeriodOpen,
   auditTreasuryVoucherLinks,
+  getChequeStatusTransitionError,
   classifySyncOperation,
   computeOpenItemAging,
   reconcileBankLines,
@@ -389,4 +390,14 @@ test('journal payload validation rejects invalid dates, lines and one-sided entr
   assert.throws(() => validateJournalEntryPayload({ ...valid, lines: [{ accountCode: '10201', debit: -1, credit: 0 }, valid.lines[1]] }), /معتبر نیست/);
   assert.throws(() => validateJournalEntryPayload({ ...valid, lines: [{ accountCode: '10201', debit: 100, credit: 100 }, valid.lines[1]] }), /معتبر نیست/);
   assert.throws(() => validateJournalEntryPayload({ ...valid, lines: Array.from({ length: 101 }, () => valid.lines[0]) }), /۱۰۰ ردیف/);
+});
+
+test('cheque status transitions reject financially unsupported paths', () => {
+  assert.equal(getChequeStatusTransitionError('receivable', 'in_box', 'deposited'), null);
+  assert.equal(getChequeStatusTransitionError('receivable', 'deposited', 'cleared'), null);
+  assert.equal(getChequeStatusTransitionError('receivable', 'bounced', 'in_box'), null);
+  assert.equal(getChequeStatusTransitionError('payable', 'cleared', 'in_box'), null);
+  assert.match(getChequeStatusTransitionError('receivable', 'endorsed', 'cleared') || '', /واگذارشده/);
+  assert.match(getChequeStatusTransitionError('payable', 'in_box', 'endorsed') || '', /مجاز نیست/);
+  assert.match(getChequeStatusTransitionError('receivable', 'cancelled', 'in_box') || '', /مجاز نیست/);
 });
