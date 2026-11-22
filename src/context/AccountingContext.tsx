@@ -1641,7 +1641,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       }
       return full;
     },
-    [ownerId, user, cheques, createVoucher]
+    [ownerId, user, cheques, parties, createVoucher]
   );
 
   const updateCheque = useCallback(
@@ -1669,7 +1669,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       }
       showToast('مشخصات چک صیادی ویرایش شد.');
     },
-    [user, showToast]
+    [cheques, user, showToast]
   );
 
   const updateChequeStatus = useCallback(
