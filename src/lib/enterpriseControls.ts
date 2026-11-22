@@ -45,19 +45,48 @@ export function validateJournalEntryPayload(payload: {
 
 /** Parse one RFC-4180-style CSV row, including quoted commas and escaped double quotes. */
 export function parseCsvRow(input: string): string[] {
-  const fields: string[] = [];
+  return parseCsvRecords(input)[0] ?? [];
+}
+
+/** Parse RFC-4180-style CSV records, including quoted commas, escaped quotes and embedded newlines. */
+export function parseCsvRecords(input: string): string[][] {
+  const source = input.replace(/^\\uFEFF/, '');
+  const records: string[][] = [];
+  let fields: string[] = [];
   let value = '';
   let quoted = false;
-  for (let index = 0; index < input.length; index += 1) {
-    const char = input[index];
-    if (char === '"') {
-      if (quoted && input[index + 1] === '"') { value += '"'; index += 1; }
-      else quoted = !quoted;
-    } else if (char === ',' && !quoted) { fields.push(value.trim()); value = ''; }
-    else value += char;
+  let afterQuote = false;
+  for (let index = 0; index < source.length; index += 1) {
+    const char = source[index];
+    if (quoted) {
+      if (char === '"' && source[index + 1] === '"') { value += '"'; index += 1; }
+      else if (char === '"') { quoted = false; afterQuote = true; }
+      else value += char;
+      continue;
+    }
+    if (char === '"' && value.length === 0 && !afterQuote) { quoted = true; continue; }
+    if (char === ',') {
+      fields.push(value.trim());
+      value = '';
+      afterQuote = false;
+      continue;
+    }
+    if (char === '\\r' || char === '\\n') {
+      if (char === '\\r' && source[index + 1] === '\\n') index += 1;
+      fields.push(value.trim());
+      value = '';
+      afterQuote = false;
+      if (fields.some((field) => field.length > 0)) records.push(fields);
+      fields = [];
+      continue;
+    }
+    if (afterQuote && !/\\s/.test(char)) throw new Error('ساختار CSV پس از بسته‌شدن نقل‌قول معتبر نیست.');
+    if (!afterQuote) value += char;
   }
+  if (quoted) throw new Error('نقل‌قول در فایل CSV بسته نشده است.');
   fields.push(value.trim());
-  return fields;
+  if (fields.some((field) => field.length > 0)) records.push(fields);
+  return records;
 }
 export type FiscalPeriodStatus = 'open' | 'closed';
 
