@@ -11,6 +11,7 @@ import {
   parseCsvRow,
   validateAtomicFinancialPlan,
   validateSyncOperation,
+  validateJournalEntryPayload,
 } from '../src/lib/enterpriseControls.ts';
 import { calculateLandedCostAllocation, computeReceivablesAging, computePayablesAging, computeFxRevaluationReport } from '../src/lib/enterpriseAccounting.ts';
 import { calculateEmployeePayroll, calculateMonthlyDepreciation, computeAccountLedger, computeAuditReport, computePartyBalances, computePartyLedger, computeTrialBalance } from '../src/lib/accountingEngine.ts';
@@ -368,4 +369,23 @@ test('audit ignores draft party postings in GL reconciliation and flags duplicat
   const operational = report.checks.find((check) => check.id === 'operational-controls');
   assert.ok(operational?.details.some((detail) => detail.includes('SAY-1')));
   assert.ok(operational?.details.some((detail) => detail.includes('مبلغ معتبر')));
+});
+
+
+test('journal payload validation rejects invalid dates, lines and one-sided entries', () => {
+  const valid = {
+    date: '1405/08/22',
+    description: 'سند آزمایشی',
+    lines: [
+      { accountCode: '10201', debit: 100, credit: 0 },
+      { accountCode: '40101', debit: 0, credit: 100 },
+    ],
+  };
+  assert.doesNotThrow(() => validateJournalEntryPayload(valid));
+  assert.throws(() => validateJournalEntryPayload({ ...valid, date: '1405/13/01' }), /تاریخ/);
+  assert.throws(() => validateJournalEntryPayload({ ...valid, description: ' ' }), /شرح/);
+  assert.throws(() => validateJournalEntryPayload({ ...valid, lines: [{ accountCode: '10201', debit: 0, credit: 0 }, valid.lines[1]] }), /معتبر نیست/);
+  assert.throws(() => validateJournalEntryPayload({ ...valid, lines: [{ accountCode: '10201', debit: -1, credit: 0 }, valid.lines[1]] }), /معتبر نیست/);
+  assert.throws(() => validateJournalEntryPayload({ ...valid, lines: [{ accountCode: '10201', debit: 100, credit: 100 }, valid.lines[1]] }), /معتبر نیست/);
+  assert.throws(() => validateJournalEntryPayload({ ...valid, lines: Array.from({ length: 101 }, () => valid.lines[0]) }), /۱۰۰ ردیف/);
 });
