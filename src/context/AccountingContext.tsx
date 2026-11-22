@@ -1161,7 +1161,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       const orig = vouchers.find((v) => v.id === voucherId);
       if (!orig) return null;
       if (orig.referenceId?.startsWith('treasury-allocation:') &&
-          vouchers.some((voucher) => voucher.referenceId === orig.id && voucher.status !== 'cancelled')) {
+          vouchers.some((voucher) => voucher.referenceId === orig.id)) {
         throw new Error('برای این سند خزانه قبلاً سند معکوس ایجاد شده است.');
       }
       const reversedLines: VoucherLine[] = orig.lines.map((l) => ({

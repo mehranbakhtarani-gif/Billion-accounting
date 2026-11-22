@@ -660,26 +660,26 @@ test('aging report exposes ledger-to-invoice differences instead of forcing FIFO
 test('allocated treasury voucher reversal restores invoice balances and removes its allocations', () => {
   const invoices = [
     { id: 'i1', creditAmount: 400, paidCash: 600, paidBank: 0, status: 'issued',
-      paymentAllocations: [{ voucherId: 'v1', amount: 200 }, { voucherId: 'v2', amount: 100 }] },
+      paymentAllocations: [{ id: 'a1', voucherId: 'v1', date: '1405/08/01', direction: 'receipt', amount: 200 }, { id: 'a2', voucherId: 'v2', date: '1405/08/02', direction: 'receipt', amount: 100 }] },
     { id: 'i2', creditAmount: 300, paidCash: 0, paidBank: 200, status: 'settled',
-      paymentAllocations: [{ voucherId: 'v1', amount: 200 }] },
+      paymentAllocations: [{ id: 'a3', voucherId: 'v1', date: '1405/08/01', direction: 'receipt', amount: 200 }] },
   ];
   const cash = buildInvoiceAllocationReversal(invoices as any, 'v1', '10101');
   assert.deepEqual(cash, [
     { invoiceId: 'i1', creditAmount: 600, paidCash: 400, paidBank: 0, status: 'issued',
-      paymentAllocations: [{ voucherId: 'v2', amount: 100 }] },
+      paymentAllocations: [{ id: 'a2', voucherId: 'v2', date: '1405/08/02', direction: 'receipt', amount: 100 }] },
     { invoiceId: 'i2', creditAmount: 500, paidCash: 0, paidBank: 200, status: 'issued',
       paymentAllocations: [] },
   ]);
   const bank = buildInvoiceAllocationReversal([{
     id: 'i3', creditAmount: 0, paidCash: 0, paidBank: 500, status: 'settled',
-    paymentAllocations: [{ voucherId: 'v3', amount: 500 }],
+    paymentAllocations: [{ id: 'a4', voucherId: 'v3', date: '1405/08/03', direction: 'payment', amount: 500 }],
   }] as any, 'v3', '10201');
   assert.equal(bank[0].paidBank, 0);
   assert.equal(bank[0].creditAmount, 500);
   assert.throws(() => buildInvoiceAllocationReversal(invoices as any, 'missing', '10101'), /یافت نشد/);
   assert.throws(() => buildInvoiceAllocationReversal([{
     id: 'bad', creditAmount: 0, paidCash: 10, paidBank: 0, status: 'issued',
-    paymentAllocations: [{ voucherId: 'v4', amount: 50 }],
+    paymentAllocations: [{ id: 'a5', voucherId: 'v4', date: '1405/08/04', direction: 'receipt', amount: 50 }],
   }] as any, 'v4', '10101'), /تطبیق ندارد/);
 });

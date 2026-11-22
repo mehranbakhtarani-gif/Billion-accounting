@@ -1,3 +1,4 @@
+import type { InvoicePaymentAllocation, InvoiceStatus } from '../types/accounting';
 import { getJalaliMonthLength, shamsiToExactDayNumber } from './chequeAlerts';
 
 /**
@@ -783,8 +784,8 @@ export interface InvoiceAllocationReversalCandidate {
   creditAmount: number;
   paidCash: number;
   paidBank: number;
-  status: string;
-  paymentAllocations?: { voucherId: string; amount: number }[];
+  status: InvoiceStatus;
+  paymentAllocations?: InvoicePaymentAllocation[];
 }
 
 export function buildInvoiceAllocationReversal(
@@ -796,8 +797,8 @@ export function buildInvoiceAllocationReversal(
   creditAmount: number;
   paidCash: number;
   paidBank: number;
-  status: string;
-  paymentAllocations: { voucherId: string; amount: number }[];
+  status: InvoiceStatus;
+  paymentAllocations: InvoicePaymentAllocation[];
 }> {
   if (!originalVoucherId?.trim() || !(cashAccountCode.startsWith('101') || cashAccountCode.startsWith('102'))) {
     throw new Error('شناسه سند یا حساب صندوق/بانک برای برگشت تخصیص معتبر نیست.');
