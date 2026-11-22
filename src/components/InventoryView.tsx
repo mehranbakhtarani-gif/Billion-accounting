@@ -26,6 +26,7 @@ import { fuzzyFilterAndRank } from '../lib/fuzzySearch';
 import { FuzzyTableOption, FuzzyTableSearch } from './FuzzyTableSearch';
 import { code39Svg, normalizeCode39 } from '../lib/barcode';
 import { computeInventoryValuation } from '../lib/accountingEngine';
+import { reconcileInventoryLotLedger } from '../lib/enterpriseControls';
 
 const YARN_CATEGORIES = [
   'نخ پلی‌استر DTY',
@@ -72,6 +73,7 @@ export const InventoryView: React.FC<{ initialIntent?: string; clearIntent?: () 
   const {
     products,
     inventoryLots,
+    inventoryLotMovements,
     createOpeningInventoryLot,
     invoices,
     profile,
@@ -278,6 +280,17 @@ export const InventoryView: React.FC<{ initialIntent?: string; clearIntent?: () 
     () => computeInventoryValuation(products, invoices),
     [products, invoices],
   );
+  const lotLedgerStatus = useMemo(() => {
+    try {
+      const issues = reconcileInventoryLotLedger(inventoryLots as any, inventoryLotMovements);
+      return issues.length === 0
+        ? 'تطبیق دفتر بچ و گردش‌ها برقرار است.'
+        : `مغایرت در ${issues.length} بچ؛ فروش جدید را تا بررسی مغایرت متوقف کنید.`;
+    } catch (error) {
+      return error instanceof Error ? error.message : 'تطبیق دفتر بچ ناموفق بود.';
+    }
+  }, [inventoryLots, inventoryLotMovements]);
+
   const inventoryValuationTotals = useMemo(() => inventoryValuation.reduce((totals, row) => ({
     inventoryValue: totals.inventoryValue + row.inventoryValue,
     estimatedCogs: totals.estimatedCogs + row.estimatedCogs,
@@ -1308,6 +1321,19 @@ export const InventoryView: React.FC<{ initialIntent?: string; clearIntent?: () 
                             {inventoryLots.filter((lot) => lot.productId === selectedProduct.id).length === 0 && <tr><td colSpan={7} className="p-4 text-center text-slate-500">برای این کالا هنوز بچی ثبت نشده است.</td></tr>}
                           </tbody>
                         </table>
+                      </div>
+                      <div className={`rounded-md border p-2 text-[10px] ${lotLedgerStatus.startsWith('تطبیق دفتر') ? 'border-emerald-200 bg-emerald-50 text-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300' : 'border-amber-300 bg-amber-50 text-amber-900 dark:bg-amber-950/30 dark:text-amber-300'}`}>{lotLedgerStatus}</div>
+                      <div className="space-y-1">
+                        <div className="font-semibold text-slate-700 dark:text-slate-300">آخرین گردش‌های بچ این کالا</div>
+                        <div className="max-h-48 overflow-y-auto rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
+                          {inventoryLotMovements.filter((movement) => movement.productId === selectedProduct.id).slice().sort((a,b) => b.date.localeCompare(a.date) || b.id.localeCompare(a.id)).slice(0, 30).map((movement) => (
+                            <div key={movement.id} className="flex items-center justify-between gap-2 border-b last:border-0 border-slate-100 dark:border-slate-800 p-2">
+                              <div className="min-w-0"><div className="font-medium">{movement.movementType === 'receipt' ? 'ورود خرید' : movement.movementType === 'issue' ? 'خروج FIFO' : movement.movementType === 'purchase-return' ? 'برگشت خرید' : movement.movementType === 'waste' ? 'ضایعات' : movement.movementType === 'return' ? 'برگشت فروش' : movement.movementType === 'reversal' ? 'گردش معکوس' : movement.movementType}</div><div className="text-[10px] text-slate-500">{movement.referenceNumber || movement.referenceId} · {toPersianDigits(movement.date)}</div></div>
+                              <div className={`font-mono shrink-0 ${movement.quantity < 0 ? 'text-rose-600' : 'text-emerald-700'}`}>{movement.quantity > 0 ? '+' : ''}{formatWeight(movement.quantity)}</div>
+                            </div>
+                          ))}
+                          {inventoryLotMovements.filter((movement) => movement.productId === selectedProduct.id).length === 0 && <div className="p-3 text-center text-slate-500">گردشی ثبت نشده است.</div>}
+                        </div>
                       </div>
                       {inventoryLots.filter((lot) => lot.productId === selectedProduct.id && lot.warehouse === selectedProduct.warehouse).length === 0 && selectedProduct.stock > 0 && (
                         <div className="rounded-lg border border-amber-300 dark:border-amber-900 bg-amber-50/70 dark:bg-amber-950/20 p-3 space-y-2">
