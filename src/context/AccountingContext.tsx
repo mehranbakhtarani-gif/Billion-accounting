@@ -3227,6 +3227,15 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         credit: netBalance < 0 ? Math.abs(netBalance) : 0,
       });
     }
+    if (!trialRows.some((row) => row.accountCode === retainedEarnings.code) && Math.abs(netCreditToSummary) > 0.000001) {
+      openingLines.push({
+        accountCode: retainedEarnings.code,
+        accountTitle: retainedEarnings.title,
+        description: `انتقال سود/زیان خالص سال مالی ${fiscalYear} به مانده افتتاحیه`,
+        debit: netCreditToSummary < 0 ? Math.abs(netCreditToSummary) : 0,
+        credit: netCreditToSummary > 0 ? netCreditToSummary : 0,
+      });
+    }
     for (const party of parties) {
       if (!party.accountCode || !partyAccountCodes.has(party.accountCode)) continue;
       const netBalance = partyBalancesAtClose.get(party.id) ?? 0;
