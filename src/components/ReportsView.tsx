@@ -204,13 +204,13 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ initialIntent, clearIn
   );
 
   const agingRows = useMemo(
-    () => computeReceivablesAging(parties, invoices, partyBalances, getTodayShamsi()),
-    [parties, invoices, partyBalances]
+    () => computeReceivablesAging(parties, invoices, accounts, vouchers, getTodayShamsi()),
+    [parties, invoices, accounts, vouchers]
   );
 
   const payablesAgingRows = useMemo(
-    () => computePayablesAging(parties, invoices, partyBalances, getTodayShamsi()),
-    [parties, invoices, partyBalances]
+    () => computePayablesAging(parties, invoices, accounts, vouchers, getTodayShamsi()),
+    [parties, invoices, accounts, vouchers]
   );
 
   const commissionRows = useMemo(
@@ -1684,7 +1684,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ initialIntent, clearIn
                           <div className="font-semibold text-slate-900 dark:text-white">{r.partyName}</div>
                           <div className="text-[11px] text-slate-500 font-code">
                             کد {toPersianDigits(r.partyCode)} · قدیمی‌ترین فاکتور: {r.oldestInvoiceDate ? toPersianDigits(r.oldestInvoiceDate) : 'بدون فاکتور باز'}
-                            <div>مانده دفتر کل: {formatMoney(r.ledgerBalance, unit, false)} · اختلاف دفتر کل با فاکتورها: {formatMoney(r.ledgerDifference, unit, false)}</div>
+                            <div>مانده حساب کنترل: {formatMoney(r.ledgerBalance, unit, false)} · اختلاف حساب کنترل با فاکتورها: {formatMoney(r.ledgerDifference, unit, false)}</div>
                           </div>
                         </td>
                         <td className="py-2.5 px-3 text-left font-code tabular-nums">
@@ -1772,7 +1772,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ initialIntent, clearIn
                     payablesAgingRows.map((r) => <tr key={r.partyId} className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
                       <td className="py-2.5 px-4"><div className="font-semibold text-slate-900 dark:text-white">{r.partyName}</div>
                         <div className="text-[11px] text-slate-500 font-code">کد {toPersianDigits(r.partyCode)} · قدیمی‌ترین سررسید: {r.oldestInvoiceDate ? toPersianDigits(r.oldestInvoiceDate) : 'بدون فاکتور باز'}
-                        <div>مانده دفتر کل: {formatMoney(r.ledgerBalance, unit, false)} · اختلاف دفتر کل با فاکتورها: {formatMoney(r.ledgerDifference, unit, false)}</div></div></td>
+                        <div>مانده حساب کنترل: {formatMoney(r.ledgerBalance, unit, false)} · اختلاف حساب کنترل با فاکتورها: {formatMoney(r.ledgerDifference, unit, false)}</div></div></td>
                       <td className="py-2.5 px-3 text-left font-code">{r.bucket0to30 > 0 ? formatMoney(r.bucket0to30, unit, false) : '—'}</td>
                       <td className="py-2.5 px-3 text-left font-code text-amber-700">{r.bucket31to60 > 0 ? formatMoney(r.bucket31to60, unit, false) : '—'}</td>
                       <td className="py-2.5 px-3 text-left font-code text-orange-700">{r.bucket61to90 > 0 ? formatMoney(r.bucket61to90, unit, false) : '—'}</td>
