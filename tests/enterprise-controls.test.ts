@@ -36,9 +36,9 @@ test('CSV parser preserves quoted commas and escaped quotes', () => {
 });
 
 test('bank CSV parser preserves BOM, quoted multiline descriptions and rejects malformed records', () => {
-  assert.deepEqual(parseCsvRecords('\\uFEFF1405/09/02,"واریز, فروش",100,0,REF-1\\r\\n1405/09/03,"شرح ""ویژه""\\nچندخطی",0,200,REF-2'), [
+  assert.deepEqual(parseCsvRecords('\uFEFF1405/09/02,"واریز, فروش",100,0,REF-1\r\n1405/09/03,"شرح ""ویژه""\nچندخطی",0,200,REF-2'), [
     ['1405/09/02', 'واریز, فروش', '100', '0', 'REF-1'],
-    ['1405/09/03', 'شرح "ویژه"\\nچندخطی', '0', '200', 'REF-2'],
+    ['1405/09/03', 'شرح "ویژه"\nچندخطی', '0', '200', 'REF-2'],
   ]);
   assert.throws(() => parseCsvRecords('1405/09/02,"نقل قول ناقص,100'), /بسته نشده/);
 });
@@ -51,6 +51,27 @@ test('invoice types apply symmetrical stock movement and cancellation directions
   assert.equal(getInvoiceStockDirection('sale_return'), 1);
   assert.equal(getInvoiceStockDirection('proforma'), 0);
   assert.throws(() => getInvoiceStockDirection('unknown'), /معتبر نیست/);
+});
+
+test('sale and purchase returns create balanced reversal-side accounting entries', () => {
+  const base = {
+    invoiceNumber: 'RET-1', date: '1405/09/01', dueDate: '1405/09/01', partyId: 'party-1',
+    partyName: 'طرف حساب آزمایشی', warehouse: 'انبار مرکزی', subtotal: 100, discount: 0,
+    vatAmount: 10, grandTotal: 110, paidCash: 110, paidBank: 0, paidCheque: 0,
+    creditAmount: 0, status: 'issued', items: [],
+  };
+  const saleReturn = buildInvoiceVoucherLines({ ...base, invoiceType: 'sale_return' } as any, 60);
+  assert.deepEqual(saleReturn.filter((line) => ['60201','30301','10101','10501','70101'].includes(line.accountCode))
+    .map((line) => [line.accountCode, line.debit, line.credit]), [
+      ['60201', 100, 0], ['30301', 10, 0], ['10101', 0, 110], ['10501', 60, 0], ['70101', 0, 60],
+    ]);
+  assert.equal(saleReturn.reduce((sum, line) => sum + line.debit, 0), saleReturn.reduce((sum, line) => sum + line.credit, 0));
+
+  const purchaseReturn = buildInvoiceVoucherLines({ ...base, invoiceType: 'purchase_return' } as any, 0);
+  assert.deepEqual(purchaseReturn.map((line) => [line.accountCode, line.debit, line.credit]), [
+    ['10101', 110, 0], ['10501', 0, 100], ['30302', 0, 10],
+  ]);
+  assert.equal(purchaseReturn.reduce((sum, line) => sum + line.debit, 0), purchaseReturn.reduce((sum, line) => sum + line.credit, 0));
 });
 
 test('fiscal period rejects closed periods and overlapping ranges', () => {
