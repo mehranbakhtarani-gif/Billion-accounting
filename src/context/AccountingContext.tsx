@@ -1714,12 +1714,16 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     showToast(difference > 0
       ? 'مانده بچ با یک بچ تعدیل افزایشی و بهای برآوردی تطبیق داده شد.'
       : 'مانده بچ‌ها با گردش تعدیل کاهشی تطبیق داده شد.');
-  }, [products, inventoryLots, inventoryLotMovements, ownerId, user, showToast]);
+  }, [products, inventoryLots, inventoryLotMovements, subcontractJobs, salesOrders, ownerId, user, showToast]);
 
   const transferProductWarehouse = useCallback(
     async (productId: string, targetWarehouse: string) => {
       const prod = products.find((p) => p.id === productId);
       if (!prod || !targetWarehouse.trim()) return;
+      if (subcontractJobs.some((job) => job.status === 'sent' && job.rawProductId === productId) ||
+          salesOrders.some((order) => order.status === 'dispatched' && order.items.some((item) => item.productId === productId))) {
+        throw new Error('تا تعیین تکلیف حواله‌های پیمانکاری و فروشِ رزروشده، انتقال انبار این کالا مجاز نیست.');
+      }
       const cleanWh = targetWarehouse.trim().slice(0, 80);
       if (cleanWh === prod.warehouse) throw new Error('انبار مقصد با انبار فعلی یکسان است.');
       const sourceLots = inventoryLots.filter((lot) => lot.productId === productId && lot.warehouse === prod.warehouse);
