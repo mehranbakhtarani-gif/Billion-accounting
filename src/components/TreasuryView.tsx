@@ -1454,7 +1454,13 @@ export const TreasuryView: React.FC<TreasuryViewProps> = ({ initialIntent, clear
                         {!row.validationError && !row.matched && !row.ambiguous ? (
                           <button
                             type="button"
-                            onClick={() => handlePostBankAdjustment(row)}
+                            onClick={async () => {
+                              try {
+                                await handlePostBankAdjustment(row);
+                              } catch (error) {
+                                showToast(error instanceof Error ? error.message : 'ثبت سند مغایرت بانکی ناموفق بود.');
+                              }
+                            }}
                             className="px-2.5 py-1 rounded bg-teal-700 hover:bg-teal-800 text-white font-semibold"
                           >
                             ثبت سند مغایرت
