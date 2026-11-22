@@ -1132,13 +1132,31 @@ export function buildInvoiceVoucherLines(
         credit: 0,
       });
     }
+    const inventoryReturnCost = cogsTotal > 0 ? cogsTotal : netRet;
     lines.push({
       accountCode: '10501',
       accountTitle: 'موجودی انبار مرکزی',
-      description: `خروج کالای برگشتی از انبار — ${invoice.invoiceNumber}`,
+      description: `خروج کالای برگشتی از انبار بر مبنای بهای بچ — ${invoice.invoiceNumber}`,
       debit: 0,
-      credit: netRet,
+      credit: inventoryReturnCost,
     });
+    if (netRet > inventoryReturnCost) {
+      lines.push({
+        accountCode: '60301',
+        accountTitle: 'اختلاف مساعد بهای برگشت از خرید',
+        description: `اختلاف بهای فاکتور و بهای بچ برگشت خرید ${invoice.invoiceNumber}`,
+        debit: 0,
+        credit: netRet - inventoryReturnCost,
+      });
+    } else if (inventoryReturnCost > netRet) {
+      lines.push({
+        accountCode: '80401',
+        accountTitle: 'اختلاف نامساعد بهای برگشت از خرید',
+        description: `اختلاف نامساعد بهای بچ و مبلغ برگشت خرید ${invoice.invoiceNumber}`,
+        debit: inventoryReturnCost - netRet,
+        credit: 0,
+      });
+    }
     if (invoice.vatAmount > 0) {
       lines.push({
         accountCode: '30302',
