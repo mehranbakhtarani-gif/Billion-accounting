@@ -1196,6 +1196,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           });
         } catch (err) {
           handleSupabaseError(err, OperationType.CREATE, `products/${id}`);
+          throw err;
         }
       } else {
         setProducts((prev) => [full, ...prev]);
