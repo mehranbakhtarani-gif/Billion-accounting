@@ -4545,7 +4545,9 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
               lot.quantityRemaining + 0.0001 < allocation.quantity) {
             throw new Error(`بچ ${allocation.lotNumber} برای مصرف پیمانکاری موجودی کافی ندارد؛ حواله دوباره بررسی شود.`);
           }
-          const currentReserved = Math.max(lot.reservedQuantity || 0, jobLotReservations.get(lot.id) || 0);
+          const currentReserved = rawUpdatedLots.has(lot.id)
+            ? (lot.reservedQuantity || 0)
+            : Math.max(lot.reservedQuantity || 0, jobLotReservations.get(lot.id) || 0);
           if (isLotReservedJob && currentReserved + 0.0001 < allocation.quantity) {
             throw new Error(`رزرو بچ ${lot.lotNumber} برای این حواله معتبر نیست؛ تکمیل متوقف شد.`);
           }
