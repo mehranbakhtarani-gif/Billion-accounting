@@ -18,7 +18,7 @@ export function validateJournalEntryPayload(payload: {
   lines: JournalValidationLine[];
 }): void {
   const dateParts = payload.date.split('/').map(Number);
-  if (!/^14\\d{2}\\/\\d{2}\\/\\d{2}$/.test(payload.date) ||
+  if (!/^14\d{2}\/\d{2}\/\d{2}$/.test(payload.date) ||
       dateParts.length !== 3 || dateParts[1] < 1 || dateParts[1] > 12 ||
       dateParts[2] < 1 || dateParts[2] > 31) {
     throw new Error('تاریخ سند حسابداری معتبر نیست.');
