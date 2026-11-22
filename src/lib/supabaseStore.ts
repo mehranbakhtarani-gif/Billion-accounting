@@ -92,11 +92,50 @@ async function fetchMany(ref: CollectionRef | QueryRef) {
 async function applyChanges(changes: BatchChange[]) {
   const companyId = requireCompany();
   if (!changes.length) return;
+
+  const identities = new Set<string>();
+  for (const change of changes) {
+    const type = String(change.record_type ?? '');
+    const id = String(change.legacy_record_id ?? '');
+    const key = type + '\\u0000' + id;
+    if (!type || !id || identities.has(key)) {
+      throw new Error('یک رکورد در بستهٔ ذخیره‌سازی بیش از یک بار تغییر داده شده است. عملیات را جداگانه انجام دهید.');
+    }
+    identities.add(key);
+  }
+
+  const recordTypes = [...new Set(changes.map((change) => String(change.record_type)))];
+  const recordIds = [...new Set(changes.map((change) => String(change.legacy_record_id)))];
+  const { data: currentRows, error: readError } = await supabase
+    .from('billion_records')
+    .select('record_type,legacy_record_id,revision')
+    .eq('company_id', companyId)
+    .in('record_type', recordTypes)
+    .in('legacy_record_id', recordIds);
+  if (readError) throw readError;
+
+  const revisions = new Map(
+    (currentRows ?? []).map((row: { record_type: string; legacy_record_id: string; revision: number }) => [
+      row.record_type + '\\u0000' + row.legacy_record_id,
+      Number(row.revision),
+    ]),
+  );
+  const versionedChanges = changes.map((change) => ({
+    ...change,
+    expected_revision: revisions.get(String(change.record_type) + '\\u0000' + String(change.legacy_record_id)) ?? 0,
+  }));
+
   const { error } = await supabase.rpc('billion_apply_record_batch', {
     p_company_id: companyId,
-    p_changes: changes,
+    p_changes: versionedChanges,
   });
-  if (error) throw error;
+  if (error) {
+    const message = error.message ?? String(error);
+    if (message.includes('BILLION_CONCURRENCY_CONFLICT')) {
+      throw new Error('این رکورد روی دستگاه دیگری تغییر کرده است. اطلاعات تازه را دریافت و تغییر خود را دوباره اعمال کنید؛ دادهٔ دستگاه دیگر بازنویسی نشد.');
+    }
+    throw error;
+  }
 }
 
 export async function getDoc(ref: RecordRef) {
