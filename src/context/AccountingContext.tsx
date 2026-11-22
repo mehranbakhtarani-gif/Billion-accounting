@@ -2781,8 +2781,10 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
               for (const allocation of item.lotAllocations) {
                 const lot = lotUpdates.get(allocation.lotId) ?? inventoryLots.find((candidate) => candidate.id === allocation.lotId);
                 if (!lot) throw new Error(`بچ ${allocation.lotNumber} برای ابطال فاکتور یافت نشد.`);
-                if (inventoryLots.some((returnedLot) => returnedLot.sourceLotId === lot.id && returnedLot.quantityRemaining > 0.0001)) {
-                  throw new Error(`ابتدا باید بچ‌های برگشتی مرتبط با بچ ${lot.lotNumber} تعیین تکلیف یا ابطال شوند؛ ابطال فروش اصلی فعلاً مجاز نیست.`);
+                if ((lot.returnedQuantity ?? 0) > 0.0001 ||
+                    calculateLotReturnedQuantity(lot.id, inventoryLotMovements) > 0.0001 ||
+                    inventoryLots.some((returnedLot) => returnedLot.sourceLotId === lot.id && returnedLot.quantityRemaining > 0.0001)) {
+                  throw new Error(`ابتدا باید تمام فاکتورهای برگشت مرتبط با بچ ${lot.lotNumber} ابطال شوند؛ ابطال فروش اصلی فعلاً مجاز نیست.`);
                 }
                 const nextQty = Number((lot.quantityRemaining + allocation.quantity).toFixed(4));
                 if (nextQty > lot.quantityReceived + 0.0001) throw new Error('ابطال باعث افزایش مانده بچ بیش از مقدار دریافتی می‌شود؛ عملیات متوقف شد.');
@@ -2806,6 +2808,14 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
               if (Math.abs(lot.quantityRemaining - lot.quantityReceived) > 0.0001) {
                 throw new Error(`بچ ${lot.lotNumber} پس از ثبت فاکتور مصرف یا تغییر کرده است؛ ابتدا گردش‌های بعدی را تعیین تکلیف کنید.`);
               }
+              if (lot.sourceLotId) {
+                const sourceLot = lotUpdates.get(lot.sourceLotId) ?? inventoryLots.find((candidate) => candidate.id === lot.sourceLotId);
+                if (!sourceLot) throw new Error('بچ اصلی برگشت فروش برای اصلاح مانده برگشت یافت نشد.');
+                const movementReturned = calculateLotReturnedQuantity(sourceLot.id, inventoryLotMovements);
+                const returnedSoFar = Math.max(sourceLot.returnedQuantity ?? 0, movementReturned);
+                if (returnedSoFar + 0.0001 < lot.quantityReceived) throw new Error('مانده برگشت ثبت‌شده در بچ اصلی با فاکتور برگشت سازگار نیست.');
+                lotUpdates.set(sourceLot.id, { ...sourceLot, returnedQuantity: Number((returnedSoFar - lot.quantityReceived).toFixed(4)) });
+              }
               lotUpdates.set(lot.id, { ...lot, quantityRemaining: 0 });
               const originalMovement = inventoryLotMovements.find((movement) =>
                 movement.referenceId === inv.id && movement.lotId === lot.id && movement.quantity > 0);
@@ -2823,7 +2833,9 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         if (user) {
           const cancellationBatch = writeBatch(db);
           lotUpdates.forEach((lot) => cancellationBatch.update(doc(db, 'inventoryLots', lot.id), {
-            quantityRemaining: lot.quantityRemaining, updatedAt: serverTimestamp(),
+            quantityRemaining: lot.quantityRemaining,
+            ...(lot.returnedQuantity !== undefined ? { returnedQuantity: lot.returnedQuantity } : {}),
+            updatedAt: serverTimestamp(),
           }));
           reversalMovements.forEach((movement) => cancellationBatch.set(doc(db, 'inventoryLotMovements', movement.id), movement));
           cancellationBatch.update(doc(db, 'invoices', invoiceId), { status: 'cancelled', updatedAt: serverTimestamp() });
