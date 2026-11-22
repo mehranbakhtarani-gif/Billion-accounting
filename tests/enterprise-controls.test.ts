@@ -13,7 +13,7 @@ import {
   validateSyncOperation,
 } from '../src/lib/enterpriseControls.ts';
 import { computeReceivablesAging, computePayablesAging, computeFxRevaluationReport } from '../src/lib/enterpriseAccounting.ts';
-import { calculateMonthlyDepreciation } from '../src/lib/accountingEngine.ts';
+import { calculateEmployeePayroll, calculateMonthlyDepreciation } from '../src/lib/accountingEngine.ts';
 
 test('CSV parser preserves quoted commas and escaped quotes', () => {
   assert.deepEqual(parseCsvRow('1405/09/01,"کارمزد، انتقال, فوری","شناسه ""ABC""",1250,0'), ['1405/09/01', 'کارمزد، انتقال, فوری', 'شناسه "ABC"', '1250', '0']);
@@ -280,4 +280,32 @@ test('treasury audit detects missing, duplicate and mismatched vouchers', () => 
     { transactionId: 't2', kind: 'duplicate-voucher' },
     { transactionId: 't3', kind: 'amount-mismatch' },
   ]);
+});
+
+
+test('payroll calculation applies insurance, exemption and progressive tax consistently', () => {
+  const employee = {
+    id: 'e1', ownerId: 'o1', personnelCode: 'P001', fullName: 'کارمند نمونه',
+    department: 'مالی', baseSalary: 400_000_000, housingAllowance: 0,
+    foodAllowance: 0, childrenCount: 0, overtimeHours: 0, active: true,
+  };
+  const result = calculateEmployeePayroll(employee);
+  assert.equal(result.grossPay, 400_000_000);
+  assert.equal(result.employeeInsurance, 28_000_000);
+  assert.equal(result.employerInsurance, 92_000_000);
+  assert.equal(result.incomeTax, 14_800_000);
+  assert.equal(result.netPay, 357_200_000);
+  assert.equal(result.totalEmployerCost, 492_000_000);
+});
+
+test('payroll calculation rejects invalid negative, non-finite and fractional employee inputs', () => {
+  const employee = {
+    id: 'e1', ownerId: 'o1', personnelCode: 'P001', fullName: 'کارمند نمونه',
+    department: 'مالی', baseSalary: 220_000_000, housingAllowance: 0,
+    foodAllowance: 0, childrenCount: 0, overtimeHours: 0, active: true,
+  };
+  assert.throws(() => calculateEmployeePayroll({ ...employee, baseSalary: -1 }), /حقوق پایه/);
+  assert.throws(() => calculateEmployeePayroll({ ...employee, overtimeHours: Number.NaN }), /اضافه‌کاری/);
+  assert.throws(() => calculateEmployeePayroll({ ...employee, housingAllowance: Number.POSITIVE_INFINITY }), /مسکن/);
+  assert.throws(() => calculateEmployeePayroll({ ...employee, childrenCount: 1.5 }), /عدد صحیح/);
 });
