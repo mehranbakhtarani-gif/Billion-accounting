@@ -228,6 +228,19 @@ export interface InventoryLotLedgerMovement {
   quantity: number;
 }
 
+/** Net quantity already returned from a source lot, after return cancellations. */
+export function calculateLotReturnedQuantity(
+  sourceLotId: string,
+  movements: Array<{ movementType: string; quantity: number; sourceLotId?: string }>,
+): number {
+  const netReturned = movements
+    .filter((movement) =>
+      movement.sourceLotId === sourceLotId &&
+      (movement.movementType === 'return' || movement.movementType === 'reversal'))
+    .reduce((sum, movement) => sum + movement.quantity, 0);
+  return Number(Math.max(0, netReturned).toFixed(4));
+}
+
 /** Remaining quantity that can be returned against a specific source lot. */
 export function calculateLotReturnableQuantity(
   sourceLotId: string,
@@ -249,13 +262,8 @@ export function calculateLotReturnableQuantity(
       (movement.lotId === sourceLotId && movement.movementType === 'issue' && movement.referenceId?.startsWith('inv_')) ||
       (movement.movementType === 'reversal' && movement.reversalOfMovementId && issueIds.has(movement.reversalOfMovementId)))
     .reduce((sum, movement) => sum + movement.quantity, 0);
-  const netReturned = movements
-    .filter((movement) =>
-      movement.sourceLotId === sourceLotId &&
-      (movement.movementType === 'return' || movement.movementType === 'reversal'))
-    .reduce((sum, movement) => sum + movement.quantity, 0);
   const soldQuantity = Math.max(0, -netIssued);
-  const returnedQuantity = Math.max(0, netReturned);
+  const returnedQuantity = calculateLotReturnedQuantity(sourceLotId, movements);
   return Number(Math.max(0, soldQuantity - returnedQuantity).toFixed(4));
 }
 
