@@ -1830,6 +1830,20 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         }
       }
 
+      let transitionVoucher: Voucher | undefined;
+      if (lines.length >= 2) {
+        const transitionPrefix = 'cheque-status:' + chequeId + ':' + chq.status + ':' + newStatus + ':';
+        const transitionIndex = vouchers.filter((voucher) => voucher.referenceId?.startsWith(transitionPrefix)).length;
+        transitionVoucher = await createVoucher({
+          date: getTodayShamsi(),
+          description: desc,
+          voucherType: 'treasury',
+          status: 'permanent',
+          lines,
+          referenceId: transitionPrefix + transitionIndex,
+        });
+      }
+
       if (user) {
         try {
           await updateDoc(doc(db, 'cheques', chequeId), {
@@ -1837,26 +1851,28 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             updatedAt: serverTimestamp(),
           });
         } catch (err) {
-          handleSupabaseError(err, OperationType.UPDATE, `cheques/${chequeId}`);
+          if (transitionVoucher) {
+            try {
+              await createVoucher({
+                date: getTodayShamsi(),
+                description: 'سند معکوس خودکار بابت عدم ثبت تغییر وضعیت چک ' + chq.sayadiId,
+                voucherType: 'treasury',
+                status: 'permanent',
+                referenceId: 'cheque-status-compensation:' + transitionVoucher.id,
+                lines: transitionVoucher.lines.map((line) => ({ ...line, description: 'برگشت سند #' + transitionVoucher!.voucherNumber + ': ' + line.description, debit: line.credit, credit: line.debit, foreignDebit: line.foreignCredit, foreignCredit: line.foreignDebit })),
+              });
+            } catch (reversalError) {
+              console.error('Cheque status voucher compensation failed', chequeId, reversalError);
+            }
+          }
+          handleSupabaseError(err, OperationType.UPDATE, 'cheques/' + chequeId);
+          throw err;
         }
       } else {
-        setCheques((prev) =>
-          prev.map((c) => (c.id === chequeId ? { ...c, status: newStatus } : c))
-        );
+        setCheques((prev) => prev.map((c) => (c.id === chequeId ? { ...c, status: newStatus } : c)));
       }
 
-      if (lines.length >= 2) {
-        await createVoucher({
-          date: getTodayShamsi(),
-          description: desc,
-          voucherType: 'treasury',
-          status: 'permanent',
-          lines,
-          referenceId: chequeId,
-        });
-      } else {
-        showToast('وضعیت چک صیادی به‌روزرسانی شد.');
-      }
+      if (lines.length < 2) showToast('وضعیت چک صیادی به‌روزرسانی شد.');
     },
     [cheques, accounts, parties, user, createVoucher, showToast]
   );
