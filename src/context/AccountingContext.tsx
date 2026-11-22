@@ -1680,7 +1680,8 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       const orderedLots = currentLots.slice().sort((a, b) => a.receivedDate.localeCompare(b.receivedDate) || a.id.localeCompare(b.id));
       for (const lot of orderedLots) {
         if (remaining <= 0.0001) break;
-        const take = Math.min(remaining, lot.quantityRemaining);
+        const unreservedQuantity = Math.max(0, lot.quantityRemaining - (lot.reservedQuantity || 0));
+        const take = Math.min(remaining, unreservedQuantity);
         if (take <= 0) continue;
         updatedLots.set(lot.id, { ...lot, quantityRemaining: Number((lot.quantityRemaining - take).toFixed(4)) });
         movements.push({
