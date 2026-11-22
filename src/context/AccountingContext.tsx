@@ -4380,6 +4380,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           kgPerCarton: prod?.kgPerCarton,
           cartonCount: it.actualCartons || it.orderedCartons,
           lotNumber: it.lotNumber || prod?.lotNumber,
+          ...(it.lotAllocations?.length ? { lotAllocations: it.lotAllocations } : {}),
           unitPrice: it.unitPriceIrr,
           discount: 0,
           vatAmount: vat,
