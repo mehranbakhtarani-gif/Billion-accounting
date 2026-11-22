@@ -1,3 +1,5 @@
+import { getJalaliMonthLength } from './chequeAlerts';
+
 /**
  * Enterprise controls foundation.
  *
@@ -498,8 +500,9 @@ export function reconcileBankLines(
 
 export function validateTreasuryOperationPayload(payload: { date: string; amount: number; description: string }): void {
   const dateParts = typeof payload.date === 'string' ? payload.date.split('/').map(Number) : [];
-  const maxDay = dateParts[1] >= 1 && dateParts[1] <= 6 ? 31
-    : dateParts[1] >= 7 && dateParts[1] <= 11 ? 30 : dateParts[1] === 12 ? 29 : 0;
+  const maxDay = dateParts.length === 3
+    ? getJalaliMonthLength(dateParts[0], dateParts[1])
+    : 0;
   if (typeof payload.date !== 'string' || !/^14\d{2}\/\d{2}\/\d{2}$/.test(payload.date) ||
       dateParts.length !== 3 || dateParts[1] < 1 || dateParts[1] > 12 ||
       dateParts[2] < 1 || dateParts[2] > maxDay) {
