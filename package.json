@@ -11,7 +11,7 @@
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
     "build:android": "npm run build && cap sync android",
-    "test:controls": "tsx --test tests/enterprise-controls.test.ts"
+    "test:controls": "tsx --test tests/enterprise-controls.test.ts tests/barcode.test.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
