@@ -2997,23 +2997,31 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
   const updateCostCenter = useCallback(
     async (ccId: string, patch: Partial<Omit<CostCenter, 'id' | 'ownerId' | 'code'>>) => {
+      const existing = costCenters.find((center) => center.id === ccId);
+      if (!existing) throw new Error('مرکز هزینه موردنظر برای ویرایش یافت نشد.');
+      const nextName = patch.name === undefined ? existing.name : patch.name.trim();
+      const nextBudget = patch.budget ?? existing.budget;
+      if (!nextName || !Number.isFinite(nextBudget) || nextBudget < 0) {
+        throw new Error('عنوان و بودجه مرکز هزینه باید معتبر باشند.');
+      }
       if (user) {
         try {
           const payload: Record<string, unknown> = { updatedAt: serverTimestamp() };
-          if (patch.name !== undefined) payload.name = patch.name.trim().slice(0, 140);
-          if (patch.budget !== undefined) payload.budget = Math.max(0, Number(patch.budget) || 0);
-          if (patch.manager !== undefined) payload.manager = patch.manager.slice(0, 120);
+          if (patch.name !== undefined) payload.name = nextName.slice(0, 140);
+          if (patch.budget !== undefined) payload.budget = nextBudget;
+          if (patch.manager !== undefined) payload.manager = patch.manager.trim().slice(0, 120);
           if (patch.active !== undefined) payload.active = Boolean(patch.active);
           await updateDoc(doc(db, 'costCenters', ccId), payload);
         } catch (err) {
           handleSupabaseError(err, OperationType.UPDATE, `costCenters/${ccId}`);
+          throw err;
         }
       } else {
-        setCostCenters((prev) => prev.map((c) => (c.id === ccId ? { ...c, ...patch } : c)));
+        setCostCenters((prev) => prev.map((center) => (center.id === ccId ? { ...center, ...patch, name: nextName } : center)));
       }
       showToast('اطلاعات مرکز هزینه ویرایش شد.');
     },
-    [user, showToast]
+    [costCenters, user, showToast]
   );
 
   const deleteCostCenter = useCallback(
@@ -3024,6 +3032,9 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       if (employees.some((employee) => employee.costCenterId === ccId) ||
           assets.some((asset) => asset.costCenterId === ccId)) {
         throw new Error('این مرکز هزینه به پرسنل یا دارایی ثابت متصل است؛ ابتدا تخصیص‌ها را منتقل کنید.');
+      }
+      if (vouchers.some((voucher) => voucher.lines.some((line) => line.costCenterId === ccId))) {
+        throw new Error('این مرکز هزینه در اسناد حسابداری سابقه دارد و حذف آن مجاز نیست.');
       }
       if (user) {
         try {
@@ -3037,7 +3048,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       }
       showToast('مرکز هزینه حذف شد.');
     },
-    [costCenters, employees, assets, user, showToast]
+    [costCenters, employees, assets, vouchers, user, showToast]
   );
 
   const runYearEndClosing = useCallback(async () => {
