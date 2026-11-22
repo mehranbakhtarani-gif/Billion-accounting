@@ -34,7 +34,7 @@ import {
 import { createHolooSeedData } from '../data/holooSeed';
 import { getOrCreateLocalDeviceIdentity, loadLocalAccountingSnapshot, LocalDeviceIdentity, saveLocalAccountingSnapshot } from '../lib/localAccountingStore';
 import { FxRevaluationRow } from '../lib/enterpriseAccounting';
-import { assertSufficientStock, getChequeStatusTransitionError, validateJournalEntryPayload, validateTreasuryOperationPayload, validateTreasuryAccountSelection, validateTreasuryTransferAccounts, validateChequeDateRange, validatePartyTreasuryAccount, validateJalaliDate, validateImportLandedCostPayload, aggregateStockReservations, collectActiveStockReservations, validateSalesOrderDispatchQuantities, validateInvoicePaymentAllocations, buildInvoiceAllocationReversal, getInvoiceStockDirection } from '../lib/enterpriseControls';
+import { assertSufficientStock, getChequeStatusTransitionError, validateJournalEntryPayload, validateTreasuryOperationPayload, validateTreasuryAccountSelection, validateTreasuryTransferAccounts, validateChequeDateRange, validatePartyTreasuryAccount, validateJalaliDate, validateImportLandedCostPayload, aggregateStockReservations, collectActiveStockReservations, validateSalesOrderDispatchQuantities, validateInvoicePaymentAllocations, buildInvoiceAllocationReversal, getInvoiceStockDirection, getInvoiceCancellationBlockReason } from '../lib/enterpriseControls';
 import {
   AuditReport,
   buildInvoiceVoucherLines,
@@ -2430,6 +2430,8 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     async (invoiceId: string) => {
       const inv = invoices.find((invoice) => invoice.id === invoiceId);
       if (!inv || inv.status === 'cancelled') return;
+      const cancellationBlockReason = getInvoiceCancellationBlockReason(inv);
+      if (cancellationBlockReason) throw new Error(cancellationBlockReason);
       const origVoucher = inv.voucherId ? vouchers.find((voucher) => voucher.id === inv.voucherId) : undefined;
       if (inv.voucherId && !origVoucher) throw new Error(`سند اصلی فاکتور ${inv.invoiceNumber} یافت نشد؛ ابطال بدون سند معکوس مجاز نیست.`);
       const appliedStock: Array<{ productId: string; previousStock: number }> = [];

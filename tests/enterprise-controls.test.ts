@@ -21,6 +21,7 @@ import {
   parseCsvRow,
   parseCsvRecords,
   getInvoiceStockDirection,
+  getInvoiceCancellationBlockReason,
   validateAtomicFinancialPlan,
   validateSyncOperation,
   validateJournalEntryPayload,
@@ -29,7 +30,7 @@ import {
   buildInvoiceAllocationReversal,
 } from '../src/lib/enterpriseControls.ts';
 import { calculateLandedCostAllocation, computeReceivablesAging, computePayablesAging, computeFxRevaluationReport } from '../src/lib/enterpriseAccounting.ts';
-import { calculateEmployeePayroll, calculateMonthlyDepreciation, computeAccountLedger, computeAuditReport, computePartyBalances, computePartyLedger, computeTrialBalance } from '../src/lib/accountingEngine.ts';
+import { buildInvoiceVoucherLines, calculateEmployeePayroll, calculateMonthlyDepreciation, computeAccountLedger, computeAuditReport, computePartyBalances, computePartyLedger, computeTrialBalance } from '../src/lib/accountingEngine.ts';
 
 test('CSV parser preserves quoted commas and escaped quotes', () => {
   assert.deepEqual(parseCsvRow('1405/09/01,"کارمزد، انتقال, فوری","شناسه ""ABC""",1250,0'), ['1405/09/01', 'کارمزد، انتقال, فوری', 'شناسه "ABC"', '1250', '0']);
@@ -51,6 +52,14 @@ test('invoice types apply symmetrical stock movement and cancellation directions
   assert.equal(getInvoiceStockDirection('sale_return'), 1);
   assert.equal(getInvoiceStockDirection('proforma'), 0);
   assert.throws(() => getInvoiceStockDirection('unknown'), /معتبر نیست/);
+});
+
+test('invoice cancellation blocks settled invoices and payment allocations before stock changes', () => {
+  const base = { status: 'issued', paidCash: 0, paidBank: 0, paidCheque: 0, paymentAllocations: [] as unknown[] };
+  assert.equal(getInvoiceCancellationBlockReason(base), null);
+  assert.match(getInvoiceCancellationBlockReason({ ...base, paidCash: 100 }) || '', /دارای تسویه/);
+  assert.match(getInvoiceCancellationBlockReason({ ...base, status: 'settled' }) || '', /دارای تسویه/);
+  assert.match(getInvoiceCancellationBlockReason({ ...base, paymentAllocations: [{ id: 'allocation-1' }] }) || '', /تخصیص‌های دریافت/);
 });
 
 test('sale and purchase returns create balanced reversal-side accounting entries', () => {

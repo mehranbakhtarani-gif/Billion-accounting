@@ -96,6 +96,22 @@ export function getInvoiceStockDirection(invoiceType: string): -1 | 0 | 1 {
   throw new Error('نوع فاکتور برای گردش موجودی معتبر نیست.');
 }
 
+export function getInvoiceCancellationBlockReason(invoice: {
+  status: string;
+  paidCash?: number;
+  paidBank?: number;
+  paidCheque?: number;
+  paymentAllocations?: unknown[];
+}): string | null {
+  if (invoice.paymentAllocations?.length) {
+    return 'ابتدا باید تخصیص‌های دریافت/پرداخت مرتبط با فاکتور معکوس شوند؛ ابطال مستقیم مجاز نیست.';
+  }
+  if ((invoice.paidCash ?? 0) > 0 || (invoice.paidBank ?? 0) > 0 || (invoice.paidCheque ?? 0) > 0 || invoice.status === 'settled') {
+    return 'فاکتور دارای تسویه است. ابتدا عملیات تسویه یا استرداد وجه را تعیین تکلیف کنید و سپس اصلاح/ابطال را انجام دهید.';
+  }
+  return null;
+}
+
 export type FiscalPeriodStatus = 'open' | 'closed';
 
 export interface FiscalPeriod {
