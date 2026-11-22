@@ -4458,10 +4458,23 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       let rawLotAllocations = job.rawLotAllocations || [];
       if (!rawLotAllocations.length) {
         const reservedLots = new Map<string, number>();
-        subcontractJobs.filter((item) => item.id !== jobId && item.status === 'sent')
-          .forEach((item) => (item.rawLotAllocations || []).forEach((allocation) => {
+        for (const otherJob of subcontractJobs.filter((item) => item.id !== jobId && item.status === 'sent')) {
+          let otherAllocations = otherJob.rawLotAllocations || [];
+          if (!otherAllocations.length) {
+            const otherProduct = products.find((product) => product.id === otherJob.rawProductId);
+            if (!otherProduct) throw new Error('کالای خام یک حواله باز پیمانکاری یافت نشد.');
+            const otherAvailableLots = inventoryLots.map((lot) => ({
+              ...lot,
+              quantityRemaining: Math.max(0, lot.quantityRemaining - (reservedLots.get(lot.id) || 0)),
+            }));
+            otherAllocations = allocateStockFIFO(otherAvailableLots as any, otherJob.sentWeightKg, {
+              productId: otherProduct.id, warehouse: otherProduct.warehouse, asOfDate: shamsiToGregorianIso(otherJob.date),
+            }).allocations;
+          }
+          otherAllocations.forEach((allocation) => {
             reservedLots.set(allocation.lotId, (reservedLots.get(allocation.lotId) || 0) + allocation.quantity);
-          }));
+          });
+        }
         const availableLots = inventoryLots.map((lot) => ({
           ...lot,
           quantityRemaining: Math.max(0, lot.quantityRemaining - (reservedLots.get(lot.id) || 0)),
