@@ -1602,8 +1602,8 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   }) => {
     const product = products.find((item) => item.id === payload.productId);
     if (!product) throw new Error('کالای موردنظر برای ایجاد بچ افتتاحیه یافت نشد.');
-    if (!payload.lotNumber.trim() || !/^\\d{4}-\\d{2}-\\d{2}$/.test(payload.receivedDate) ||
-        (payload.expiryDate && !/^\\d{4}-\\d{2}-\\d{2}$/.test(payload.expiryDate)) ||
+    if (!payload.lotNumber.trim() || !/^\d{4}-\d{2}-\d{2}$/.test(payload.receivedDate) ||
+        (payload.expiryDate && !/^\d{4}-\d{2}-\d{2}$/.test(payload.expiryDate)) ||
         !Number.isFinite(payload.quantity) || payload.quantity <= 0 ||
         !Number.isFinite(payload.unitCost) || payload.unitCost < 0) {
       throw new Error('شماره بچ، تاریخ، مقدار یا بهای واحد معتبر نیست.');
