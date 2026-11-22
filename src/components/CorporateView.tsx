@@ -20,7 +20,7 @@ import {
   computeCostCenterPnL,
 } from '../lib/accountingEngine';
 import { CostCenter, Employee, FixedAsset } from '../types/accounting';
-import { formatMoney, toPersianDigits } from '../lib/format';
+import { formatMoney, getTodayShamsi, toPersianDigits } from '../lib/format';
 
 interface CorporateViewProps {
   initialIntent?: string;
@@ -49,6 +49,7 @@ export const CorporateView: React.FC<CorporateViewProps> = ({ initialIntent, cle
     updateCostCenter,
     deleteCostCenter,
     runYearEndClosing,
+    showToast,
   } = useAccounting();
   const unit = profile.currencyUnit;
 
@@ -82,6 +83,9 @@ export const CorporateView: React.FC<CorporateViewProps> = ({ initialIntent, cle
   // New asset form
   const [assetTitle, setAssetTitle] = useState('');
   const [assetCost, setAssetCost] = useState(4_000_000_000);
+  const [assetSalvage, setAssetSalvage] = useState(400_000_000);
+  const [assetPurchaseDate, setAssetPurchaseDate] = useState(getTodayShamsi());
+  const [assetCostCenterId, setAssetCostCenterId] = useState(costCenters[0]?.id ?? '');
   const [assetLife, setAssetLife] = useState(5);
 
   // Edit asset modal
@@ -138,7 +142,7 @@ export const CorporateView: React.FC<CorporateViewProps> = ({ initialIntent, cle
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 no-print">
         <div>
           <h1 className="text-xl font-bold text-slate-900 dark:text-white">
-            ماژول‌های شرکتی هلو Apex (F8)
+            ماژول‌های شرکتی بیلیون (F8)
           </h1>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
             حقوق و دستمزد (فیش حقوقی، بیمه ۳۰٪ و پرداخت بانکی)، اموال و استهلاک، سود و زیان مراکز هزینه و بستن حساب پایان سال
@@ -200,6 +204,10 @@ export const CorporateView: React.FC<CorporateViewProps> = ({ initialIntent, cle
             </div>
           </div>
 
+          <div className="rounded-xl border border-amber-200 bg-amber-50 dark:border-amber-900/60 dark:bg-amber-950/20 p-3 text-xs text-amber-900 dark:text-amber-200">
+            <div className="font-semibold mb-1">توجه: مبانی محاسبه حقوق نمونه و قابل بازبینی هستند</div>
+            <p>نرخ‌های بیمه ۷٪ کارمند و ۲۳٪ کارفرما، سقف مشمول بیمه و پله‌های مالیات در این نسخه صرفاً فرض محاسباتی‌اند و تنظیمات قانونی سال جاری شرکت محسوب نمی‌شوند. مالیات، معافیت‌ها، مزایای مشمول/غیرمشمول و کارکرد را پیش از قطعی‌سازی با حسابدار و مقررات جاری تطبیق دهید.</p>
+          </div>
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden">
             <div className="overflow-x-auto">
               <table className="w-full text-right text-xs border-collapse">
@@ -470,16 +478,17 @@ export const CorporateView: React.FC<CorporateViewProps> = ({ initialIntent, cle
           <form
             onSubmit={async (e) => {
               e.preventDefault();
-              if (!assetTitle.trim()) return;
+              if (!assetTitle.trim()) { showToast('شرح دارایی ثابت را وارد کنید.'); return; }
+              if (!Number.isFinite(assetCost) || assetCost <= 0 || !Number.isFinite(assetSalvage) || assetSalvage < 0 || assetSalvage > assetCost || !Number.isInteger(assetLife) || assetLife < 1) { showToast('بهای خرید، ارزش اسقاط و عمر مفید دارایی را بررسی کنید.'); return; }
               await addFixedAsset({
                 assetCode: `FA-${profile.fiscalYear}-0${assets.length + 1}`,
                 title: assetTitle.trim(),
-                purchaseDate: `${profile.fiscalYear}/08/01`,
+                purchaseDate: assetPurchaseDate,
                 purchaseCost: assetCost,
-                salvageValue: Math.round(assetCost * 0.1),
+                salvageValue: assetSalvage,
                 usefulLifeYears: assetLife,
                 accumulatedDepreciation: 0,
-                costCenterId: costCenters[0]?.id,
+                costCenterId: assetCostCenterId || undefined,
               });
               setAssetTitle('');
             }}
@@ -499,9 +508,27 @@ export const CorporateView: React.FC<CorporateViewProps> = ({ initialIntent, cle
               <input
                 type="number"
                 value={assetCost}
-                onChange={(e) => setAssetCost(Number(e.target.value))}
+                onChange={(e) => { const value = Number(e.target.value); setAssetCost(value); setAssetSalvage((current) => Math.min(current, Math.max(0, value))); }}
                 className="w-full px-3 py-2 font-code rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950"
               />
+            </div>
+            <div className="w-40">
+              <label className="block text-slate-500 mb-1">ارزش اسقاط (ریال)</label>
+              <input type="number" min={0} max={assetCost} value={assetSalvage} onChange={(e) => setAssetSalvage(Number(e.target.value))}
+                className="w-full px-3 py-2 font-code rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950" />
+            </div>
+            <div className="w-36">
+              <label className="block text-slate-500 mb-1">تاریخ خرید</label>
+              <input value={assetPurchaseDate} onChange={(e) => setAssetPurchaseDate(e.target.value)} placeholder="۱۴۰۵/۰۹/۰۱"
+                className="w-full px-3 py-2 font-code rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950" />
+            </div>
+            <div className="w-44">
+              <label className="block text-slate-500 mb-1">مرکز هزینه</label>
+              <select value={assetCostCenterId} onChange={(e) => setAssetCostCenterId(e.target.value)}
+                className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950">
+                <option value="">بدون مرکز هزینه</option>
+                {costCenters.filter((cc) => cc.active).map((cc) => <option key={cc.id} value={cc.id}>{cc.name}</option>)}
+              </select>
             </div>
             <div className="w-28">
               <label className="block text-slate-500 mb-1">عمر مفید (سال)</label>

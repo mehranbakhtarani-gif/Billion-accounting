@@ -1,6 +1,6 @@
 {
-  "appId": "ir.atlasris.holooapex",
-  "appName": "هلو شرکتی Apex",
+  "appId": "ir.atlasris.billion",
+  "appName": "بیلیون",
   "webDir": "dist",
   "android": {
     "allowMixedContent": false

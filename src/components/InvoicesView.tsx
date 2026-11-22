@@ -109,6 +109,7 @@ export const InvoicesView: React.FC<{ initialIntent?: string; clearIntent?: () =
   // Composer state
   const [invoiceType, setInvoiceType] = useState<InvoiceType>('sale');
   const [date, setDate] = useState(getTodayShamsi());
+  const [dueDate, setDueDate] = useState(getTodayShamsi());
   const [partyId, setPartyId] = useState(parties[0]?.id ?? '');
   const [warehouse, setWarehouse] = useState('انبار مرکزی نخ شادآباد');
   const [costCenterId, setCostCenterId] = useState(costCenters[1]?.id ?? '');
@@ -602,11 +603,13 @@ export const InvoicesView: React.FC<{ initialIntent?: string; clearIntent?: () =
 
     const selectedBroker = brokerParties.find((b) => b.id === intermediaryId);
 
-    await createInvoice({
+    try {
+      await createInvoice({
       invoiceNumber,
       taxSerial,
       invoiceType,
       date,
+      dueDate: dueDate.trim() || date,
       partyId: party.id,
       partyName: invoiceType === 'waste' ? 'انبار ضایعات داخلی شرکت' : party.name,
       warehouse,
@@ -636,7 +639,11 @@ export const InvoicesView: React.FC<{ initialIntent?: string; clearIntent?: () =
           ? 'settled'
           : 'issued',
       items: computedItems,
-    });
+      });
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'ثبت فاکتور ناموفق بود.');
+      return;
+    }
 
     setShowComposer(false);
     setIntermediaryId('');
@@ -647,7 +654,7 @@ export const InvoicesView: React.FC<{ initialIntent?: string; clearIntent?: () =
 
   const handleExportCsv = () => {
     exportToCsv(
-      `holoo-yarn-invoices-${profile.fiscalYear}.csv`,
+      `billion-yarn-invoices-${profile.fiscalYear}.csv`,
       [
         'شماره فاکتور',
         'شماره مالیاتی مودیان',
@@ -735,7 +742,7 @@ export const InvoicesView: React.FC<{ initialIntent?: string; clearIntent?: () =
   const showCartonCol = printSettings.unitDisplayMode !== '1_unit';
   const showBobbinCol = printSettings.unitDisplayMode === '3_units';
 
-  // Compute Holoo signature "Previous Balance" vs "Current Balance" for the printed invoice
+  // Compute Billion signature "Previous Balance" vs "Current Balance" for the printed invoice
   const printPartyNewBalance = printParty ? (partyBalances.get(printParty.id) ?? 0) : 0;
   const printInvoiceCreditEffect =
     printInvoice && printInvoice.status !== 'cancelled' && printInvoice.invoiceType !== 'proforma'
@@ -934,11 +941,23 @@ export const InvoicesView: React.FC<{ initialIntent?: string; clearIntent?: () =
                 onChange={(e) => {
                   const nextDate = e.target.value;
                   setDate(nextDate);
+                  setDueDate((current) => current === date ? nextDate : current);
                   if (isFxMode && /^\d{4}\/\d{2}\/\d{2}$/.test(nextDate)) {
                     const eff = getEffectiveExchangeRate(currencyCode, nextDate, exchangeRates, currencies);
                     if (eff.rateToIrr > 0) setExchangeRate(eff.rateToIrr);
                   }
                 }}
+                className="w-full px-3 py-2 text-xs font-code rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-white"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">
+                سررسید پرداخت
+              </label>
+              <input
+                value={dueDate}
+                onChange={(e) => setDueDate(e.target.value)}
+                placeholder="۱۴۰۵/۰۹/۱۵"
                 className="w-full px-3 py-2 text-xs font-code rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-white"
               />
             </div>
@@ -961,7 +980,7 @@ export const InvoicesView: React.FC<{ initialIntent?: string; clearIntent?: () =
             </div>
           </div>
 
-          {/* Holoo Live Customer Credit, Balance, Pricing Tier & Broker Strip */}
+          {/* Billion Live Customer Credit, Balance, Pricing Tier & Broker Strip */}
           {invoiceType !== 'waste' && selectedComposerParty && (
             (() => {
               const curBal = partyBalances.get(selectedComposerParty.id) ?? 0;
@@ -2095,7 +2114,7 @@ export const InvoicesView: React.FC<{ initialIntent?: string; clearIntent?: () =
                 </table>
               </div>
 
-              {/* Amount in Words + Financial Summary + Holoo Customer Balance Box */}
+              {/* Amount in Words + Financial Summary + Billion Customer Balance Box */}
               <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-start">
                 <div className="md:col-span-7 space-y-2.5 text-xs">
                   {printSettings.showAmountInWords && (

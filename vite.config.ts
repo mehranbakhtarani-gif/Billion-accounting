@@ -18,9 +18,9 @@ export default defineConfig(() => {
         includeAssets: ['icon.svg', 'apple-touch-icon.png', 'pwa-192x192.png', 'pwa-512x512.png', 'pwa-maskable-512x512.png'],
         manifest: {
           id: appBase,
-          name: 'هلو شرکتی Apex — سامانه جامع حسابداری',
-          short_name: 'هلو Apex',
-          description: 'سامانه جامع حسابداری شرکتی با هسته هلو Apex، داشبورد مدیریت مالی و گزارش‌گیری پیشرفته',
+          name: 'بیلیون — سامانه جامع حسابداری',
+          short_name: 'بیلیون',
+          description: 'سامانه جامع حسابداری شرکتی با هسته بیلیون، داشبورد مدیریت مالی و گزارش‌گیری پیشرفته',
           theme_color: '#0f766e',
           background_color: '#f8fafc',
           display: 'standalone',
@@ -75,12 +75,7 @@ export default defineConfig(() => {
           clientsClaim: true,
           maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,
           globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],
-          navigateFallbackDenylist: [/^\/__\/auth/],
           runtimeCaching: [
-            {
-              urlPattern: /^https:\/\/(firestore|identitytoolkit|securetoken)\.googleapis\.com\/.*/i,
-              handler: 'NetworkOnly',
-            },
             {
               urlPattern: /^https:\/\/fonts\.googleapis\.com\/.*/i,
               handler: 'CacheFirst',

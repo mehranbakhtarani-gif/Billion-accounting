@@ -83,7 +83,7 @@ export const ImportAndSubcontractView: React.FC<{
   const [tab, setTab] = useState<CommercialTab>('imports');
   const unit = profile.currencyUnit;
 
-  // Holoo-style Modal States
+  // Billion Modal States
   const [showImportModal, setShowImportModal] = useState(false);
   const [showOrderModal, setShowOrderModal] = useState(false);
   const [dispatchingOrder, setDispatchingOrder] = useState<SalesOrder | null>(null);
@@ -145,12 +145,27 @@ export const ImportAndSubcontractView: React.FC<{
         foreignUnitPrice: Number(it.foreignUnitPrice) || 0,
       };
     });
-    return calculateLandedCostAllocation(mapped, impCosts, impRate, impMethod);
+    try {
+      return { ...calculateLandedCostAllocation(mapped, impCosts, impRate, impMethod), error: undefined as string | undefined };
+    } catch (error) {
+      return {
+        computedItems: [],
+        totalForeignAmount: 0,
+        totalFobIrr: 0,
+        totalLandedCostsIrr: 0,
+        grandTotalLandedIrr: 0,
+        error: error instanceof Error ? error.message : 'اطلاعات پرونده واردات معتبر نیست.',
+      };
+    }
   }, [impItems, impCosts, impRate, impMethod, products]);
 
   const handleSaveImportDossier = async (e: React.FormEvent) => {
     e.preventDefault();
     const supplier = parties.find((p) => p.id === impSupplierId);
+    if (liveImportPreview.error) {
+      showToast(liveImportPreview.error);
+      return;
+    }
     if (!supplier || liveImportPreview.computedItems.length === 0) {
       showToast('لطفاً تأمین‌کننده و حداقل یک ردیف نخ وارداتی را انتخاب کنید.');
       return;
@@ -730,7 +745,7 @@ export const ImportAndSubcontractView: React.FC<{
         </div>
       )}
 
-      {/* HOLOO MODAL: NEW IMPORT DOSSIER */}
+      {/* BILLION MODAL: NEW IMPORT DOSSIER */}
       {showImportModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 overflow-y-auto">
           <form
@@ -913,6 +928,11 @@ export const ImportAndSubcontractView: React.FC<{
                 ))}
               </div>
 
+              {liveImportPreview.error && (
+                <div role="alert" className="p-3 rounded-lg border border-rose-200 dark:border-rose-900 bg-rose-50 dark:bg-rose-950/30 text-rose-700 dark:text-rose-300">
+                  {liveImportPreview.error}
+                </div>
+              )}
               <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3">
                 <span>ارزش ارزی: <strong className="font-code">{toPersianDigits(liveImportPreview.totalForeignAmount.toLocaleString('en-US'))} {impCurrency}</strong></span>
                 <span>هزینه‌های ترخیص: <strong className="font-code">{formatMoney(liveImportPreview.totalLandedCostsIrr, unit)}</strong></span>
@@ -921,13 +941,13 @@ export const ImportAndSubcontractView: React.FC<{
             </div>
             <div className="px-5 py-3 bg-slate-50 dark:bg-slate-950 border-t border-slate-200 dark:border-slate-800 flex items-center justify-end gap-2">
               <button type="button" onClick={() => setShowImportModal(false)} className="px-4 py-2 text-xs rounded-lg border border-slate-200 dark:border-slate-700">انصراف</button>
-              <button type="submit" className="px-4 py-2 text-xs font-semibold text-white bg-teal-700 hover:bg-teal-800 rounded-lg">ذخیره پرونده واردات</button>
+              <button type="submit" disabled={Boolean(liveImportPreview.error) || liveImportPreview.computedItems.length === 0} className="px-4 py-2 text-xs font-semibold text-white bg-teal-700 hover:bg-teal-800 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg">ذخیره پرونده واردات</button>
             </div>
           </form>
         </div>
       )}
 
-      {/* HOLOO MODAL: NEW SALES ORDER */}
+      {/* BILLION MODAL: NEW SALES ORDER */}
       {showOrderModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4">
           <form onSubmit={handleCreateOrder} className="w-full max-w-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden text-xs">
@@ -983,7 +1003,7 @@ export const ImportAndSubcontractView: React.FC<{
         </div>
       )}
 
-      {/* HOLOO MODAL: WEIGHBRIDGE DISPATCH */}
+      {/* BILLION MODAL: WEIGHBRIDGE DISPATCH */}
       {dispatchingOrder && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4">
           <div className="w-full max-w-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden text-xs">
@@ -1104,7 +1124,7 @@ export const ImportAndSubcontractView: React.FC<{
         </div>
       )}
 
-      {/* HOLOO MODAL: NEW SUBCONTRACT JOB */}
+      {/* BILLION MODAL: NEW SUBCONTRACT JOB */}
       {showSubModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4">
           <form onSubmit={handleCreateSubcontract} className="w-full max-w-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden text-xs">
@@ -1168,7 +1188,7 @@ export const ImportAndSubcontractView: React.FC<{
         </div>
       )}
 
-      {/* HOLOO MODAL: COMPLETE SUBCONTRACT */}
+      {/* BILLION MODAL: COMPLETE SUBCONTRACT */}
       {completingSub && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4">
           <div className="w-full max-w-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden text-xs">

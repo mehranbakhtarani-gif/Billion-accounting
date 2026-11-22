@@ -120,8 +120,27 @@ export function calculateLandedCostAllocation(
   totalLandedCostsIrr: number;
   grandTotalLandedIrr: number;
 } {
+  if (!Array.isArray(items) || items.length === 0) throw new Error('پرونده واردات باید حداقل یک قلم کالا داشته باشد.');
+  if (!Array.isArray(costs)) throw new Error('فهرست هزینه‌های جانبی واردات معتبر نیست.');
+  if (!Number.isFinite(exchangeRate) || exchangeRate <= 0) throw new Error('نرخ تبدیل ارز باید عددی مثبت و معتبر باشد.');
+  if (method !== 'weight' && method !== 'value') throw new Error('روش سرشکن‌کردن هزینه‌های واردات معتبر نیست.');
+  for (const item of items) {
+    if (!item.productId?.trim() || !item.sku?.trim() || !item.productName?.trim() || !item.lotNumber?.trim()) {
+      throw new Error('شناسه، کد یا نام یکی از کالاهای وارداتی ناقص است.');
+    }
+    if (!Number.isFinite(item.weightKg) || item.weightKg <= 0 ||
+        !Number.isFinite(item.foreignUnitPrice) || item.foreignUnitPrice < 0 ||
+        !Number.isFinite(item.cartonCount) || item.cartonCount < 0) {
+      throw new Error('وزن، قیمت ارزی یا تعداد کارتن یکی از اقلام وارداتی معتبر نیست.');
+    }
+  }
+  for (const cost of costs) {
+    if (!cost.accountCode?.trim() || !Number.isFinite(cost.amountIrr) || cost.amountIrr < 0) {
+      throw new Error('حساب یا مبلغ یکی از هزینه‌های جانبی واردات معتبر نیست.');
+    }
+  }
   const totalLandedCostsIrr = Math.round(
-    costs.reduce((s, c) => s + Math.max(0, Math.round(Number(c.amountIrr) || 0)), 0)
+    costs.reduce((sum, cost) => sum + Math.round(cost.amountIrr), 0)
   );
 
   const enriched = items.map((it) => {
@@ -226,7 +245,7 @@ export function computeFxRevaluationReport(
   >();
 
   for (const v of vouchers) {
-    if (!isForeignCurrency(v.currencyCode)) continue;
+    if (v.status !== 'permanent' || !isForeignCurrency(v.currencyCode)) continue;
     const code = normalizeCurrencyCode(v.currencyCode);
     const rate = v.exchangeRate && v.exchangeRate > 0 ? v.exchangeRate : 1;
 
@@ -306,10 +325,10 @@ export function computeReceivablesAging(
     const balance = partyBalances.get(p.id) ?? 0;
     if (balance <= 0) continue; // Only positive debtors (مطالبات)
 
-    // Match open receivable balance against most recent credit sales invoices (FIFO settlement)
+    // Apply open receivable balance to the oldest open sales invoices first (FIFO approximation).
     const salesInvs = invoices
       .filter((inv) => inv.partyId === p.id && inv.invoiceType === 'sale' && inv.status !== 'cancelled')
-      .sort((a, b) => b.date.localeCompare(a.date));
+      .sort((a, b) => a.date.localeCompare(b.date));
 
     let remaining = balance;
     let b0 = 0;
@@ -321,12 +340,13 @@ export function computeReceivablesAging(
 
     for (const inv of salesInvs) {
       if (remaining <= 0) break;
-      const portion = Math.min(remaining, Math.max(inv.creditAmount, inv.grandTotal));
+      // Use the actual outstanding balance, not the original invoice gross amount.
+      const portion = Math.min(remaining, Math.max(0, inv.creditAmount));
       if (portion <= 0) continue;
-      const age = Math.max(0, diffShamsiDays(inv.date, todayShamsi) ?? 0);
+      const age = Math.max(0, diffShamsiDays(todayShamsi, inv.dueDate || inv.date) ?? 0);
       if (age > maxDays) {
         maxDays = age;
-        oldestDate = inv.date;
+        oldestDate = inv.dueDate || inv.date;
       }
       if (age <= 30) b0 += portion;
       else if (age <= 60) b31 += portion;
@@ -357,6 +377,46 @@ export function computeReceivablesAging(
   }
 
   return rows.sort((a, b) => b.totalReceivable - a.totalReceivable);
+}
+
+
+export interface PayablesAgingRow {
+  partyId: string; partyCode: string; partyName: string; phone?: string;
+  totalPayable: number; bucket0to30: number; bucket31to60: number; bucket61to90: number; bucketOver90: number;
+  oldestInvoiceDate?: string; maxOverdueDays: number;
+}
+
+/** Read-only supplier aging based on outstanding purchase invoices and their due dates. */
+export function computePayablesAging(
+  parties: Party[], invoices: Invoice[], partyBalances: Map<string, number>, todayShamsi: string = getTodayShamsi(),
+): PayablesAgingRow[] {
+  const rows: PayablesAgingRow[] = [];
+  for (const party of parties) {
+    const totalPayable = Math.abs(Math.min(0, partyBalances.get(party.id) ?? 0));
+    if (totalPayable <= 0) continue;
+    const purchases = invoices
+      .filter((invoice) => invoice.partyId === party.id && invoice.invoiceType === 'purchase' && invoice.status !== 'cancelled')
+      .sort((a, b) => a.date.localeCompare(b.date));
+    let remaining = totalPayable, bucket0to30 = 0, bucket31to60 = 0, bucket61to90 = 0, bucketOver90 = 0;
+    let maxOverdueDays = 0; let oldestInvoiceDate: string | undefined;
+    for (const invoice of purchases) {
+      if (remaining <= 0) break;
+      const portion = Math.min(remaining, Math.max(0, invoice.creditAmount));
+      if (portion <= 0) continue;
+      const dueDate = invoice.dueDate || invoice.date;
+      const age = Math.max(0, diffShamsiDays(todayShamsi, dueDate) ?? 0);
+      if (age > maxOverdueDays) { maxOverdueDays = age; oldestInvoiceDate = dueDate; }
+      if (age <= 30) bucket0to30 += portion;
+      else if (age <= 60) bucket31to60 += portion;
+      else if (age <= 90) bucket61to90 += portion;
+      else bucketOver90 += portion;
+      remaining -= portion;
+    }
+    if (remaining > 0) { bucketOver90 += remaining; maxOverdueDays = Math.max(maxOverdueDays, 95); }
+    rows.push({ partyId: party.id, partyCode: party.code, partyName: party.name, phone: party.phone, totalPayable,
+      bucket0to30, bucket31to60, bucket61to90, bucketOver90, oldestInvoiceDate, maxOverdueDays });
+  }
+  return rows.sort((a, b) => b.totalPayable - a.totalPayable);
 }
 
 // ---------------- BROKER / INTERMEDIARY COMMISSIONS ----------------

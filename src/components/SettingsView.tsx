@@ -5,8 +5,6 @@ import {
   CloudOff,
   Download,
   HardDrive,
-  LogIn,
-  LogOut,
   Palette,
   RotateCcw,
   Save,
@@ -60,8 +58,9 @@ export const SettingsView: React.FC<{ initialIntent?: string; clearIntent?: () =
     updateRbacOperator,
     deleteRbacOperator,
     auditLogs,
-    loginWithGoogle,
-    logout,
+    bootstrapCloud,
+    joinCloud,
+    createDeviceInvite,
     updateCompanyProfile,
     exportBackupJson,
     importBackupJson,
@@ -73,6 +72,27 @@ export const SettingsView: React.FC<{ initialIntent?: string; clearIntent?: () =
     updateSettings: updateInvSettings,
     reset: resetInvSettings,
   } = useInvoiceSettings();
+
+  const connectSupabase = async () => {
+    const firstDevice = window.confirm('آیا این اولین دستگاه و مدیر اصلی شرکت است؟\nتأیید: کلید راه‌اندازی اولیه\nلغو: کد دعوت');
+    const token = window.prompt(firstDevice ? 'کلید راه‌اندازی اولیه Supabase:' : 'کد دعوت یک‌بارمصرف:');
+    if (!token?.trim()) return;
+    try {
+      if (firstDevice) await bootstrapCloud(token.trim());
+      else await joinCloud(token.trim());
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'اتصال Supabase ناموفق بود.');
+    }
+  };
+
+  const inviteSupabaseDevice = async () => {
+    try {
+      const token = await createDeviceInvite();
+      window.prompt('کد دعوت یک‌بارمصرف با اعتبار ۲۴ ساعت:', token);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'ساخت دعوت‌نامه ناموفق بود.');
+    }
+  };
 
   const [companyName, setCompanyName] = useState(profile.companyName);
   const [displayName, setDisplayName] = useState(profile.displayName);
@@ -159,7 +179,7 @@ export const SettingsView: React.FC<{ initialIntent?: string; clearIntent?: () =
     const link = document.createElement('a');
     const dateStamp = new Date().toISOString().slice(0, 10);
     link.href = url;
-    link.download = `holoo-apex-backup-${profile.fiscalYear}-${dateStamp}.json`;
+    link.download = `billion-backup-${profile.fiscalYear}-${dateStamp}.json`;
     link.click();
     URL.revokeObjectURL(url);
     showToast('فایل پشتیبان کامل حسابداری (JSON) با موفقیت دانلود شد.');
@@ -187,7 +207,7 @@ export const SettingsView: React.FC<{ initialIntent?: string; clearIntent?: () =
           تنظیمات شرکتی، طراحی قالب فاکتور، پشتیبان‌گیری و نصب اپلیکیشن
         </h1>
         <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-          مدیریت اطلاعات رسمی مودیان، سفارشی‌سازی کامل فاکتورهای چندواحدی نخ، پشتیبان‌گیری JSON و همگام‌سازی ابری Firebase
+          مدیریت اطلاعات رسمی مودیان، سفارشی‌سازی کامل فاکتورهای چندواحدی نخ، پشتیبان‌گیری JSON و همگام‌سازی ابری Supabase
         </p>
       </div>
 
@@ -202,38 +222,34 @@ export const SettingsView: React.FC<{ initialIntent?: string; clearIntent?: () =
           <div>
             <div className="text-sm font-bold text-slate-900 dark:text-white">
               {isCloudMode
-                ? `متصل به پایگاه‌داده ابری (${user?.email})`
+                ? `متصل به شرکت در Supabase (${user?.email || 'حساب بدون رمز عبور'})`
                 : 'حالت محلی فعال — اطلاعات روی همین دستگاه ذخیره می‌شود'}
             </div>
             <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 leading-5">
               {isCloudMode
-                ? 'تمامی اسناد، فاکتورها، انبار و چک‌ها به‌صورت آنی در Firestore ذخیره و بین دسکتاپ و موبایل همگام می‌شوند.'
-                : 'بدون ورود هم اطلاعات روی همین دستگاه ذخیره می‌شود. برای همگام‌سازی بین چند دستگاه، اتصال ابری و ورود گوگل به‌صورت اختیاری لازم است.'}
+                ? 'تمامی اسناد، فاکتورها، انبار و چک‌ها به‌صورت آنی در Supabase ذخیره و بین دسکتاپ و موبایل همگام می‌شوند.'
+                : 'بدون ورود هم اطلاعات روی همین دستگاه ذخیره می‌شود. برای همگام‌سازی بین چند دستگاه، اتصال ابری و اتصال بدون رمز عبور و استفاده از کد دعوت لازم است.'}
             </p>
           </div>
         </div>
         <div className="shrink-0">
           {isCloudMode ? (
-            <button
-              onClick={logout}
-              className="inline-flex items-center gap-2 px-4 py-2 text-xs font-medium rounded-lg border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800"
-            >
-              <LogOut className="w-4 h-4" />
-              <span>خروج از حساب</span>
-            </button>
+            <div className="flex flex-wrap gap-2">
+              <button onClick={inviteSupabaseDevice} className="inline-flex items-center gap-2 px-4 py-2 text-xs font-semibold text-teal-700 border border-teal-700 rounded-lg hover:bg-teal-50">
+                <UserPlus className="w-4 h-4" />
+                <span>دعوت دستگاه</span>
+              </button>
+            </div>
           ) : (
-            <button
-              onClick={loginWithGoogle}
-              className="inline-flex items-center gap-2 px-4 py-2 text-xs font-semibold text-white bg-teal-700 hover:bg-teal-800 rounded-lg"
-            >
-              <LogIn className="w-4 h-4" />
-              <span>ورود با حساب گوگل</span>
+            <button onClick={connectSupabase} className="inline-flex items-center gap-2 px-4 py-2 text-xs font-semibold text-white bg-teal-700 hover:bg-teal-800 rounded-lg">
+              <Cloud className="w-4 h-4" />
+              <span>اتصال به Supabase</span>
             </button>
           )}
         </div>
       </div>
 
-      {/* Holoo Invoice Designer & Customization Studio */}
+      {/* Billion Invoice Designer & Customization Studio */}
       <div
         ref={designerRef}
         className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 space-y-5 text-xs scroll-mt-20"
@@ -243,7 +259,7 @@ export const SettingsView: React.FC<{ initialIntent?: string; clearIntent?: () =
             <Palette className="w-4 h-4 text-teal-700 dark:text-teal-400" />
             <div>
               <h2 className="text-sm font-bold text-slate-900 dark:text-white">
-                طراحی و سفارشی‌سازی قالب فاکتور، تعداد واحد و تنظیمات چاپ هلو
+                طراحی و سفارشی‌سازی قالب فاکتور، تعداد واحد و تنظیمات چاپ بیلیون
               </h2>
               <p className="text-[11px] text-slate-500 mt-0.5">
                 تمامی تغییرات به‌صورت زنده در فرم صدور فاکتور، چاپ رسمی و متن ارسالی واتساپ و تلگرام اعمال می‌شوند.
@@ -297,7 +313,7 @@ export const SettingsView: React.FC<{ initialIntent?: string; clearIntent?: () =
         {/* Multi-Unit Mode Selector */}
         <div className="space-y-2">
           <label className="block font-semibold text-slate-700 dark:text-slate-300">
-            تعداد واحدهای فعال در فرم و چاپ فاکتور نخ (چندواحدی هلو)
+            تعداد واحدهای فعال در فرم و چاپ فاکتور نخ (چندواحدی بیلیون)
           </label>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             {(Object.keys(UNIT_MODE_LABELS) as InvoiceUnitMode[]).map((mode) => {
@@ -477,7 +493,7 @@ export const SettingsView: React.FC<{ initialIntent?: string; clearIntent?: () =
         className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 space-y-5 text-xs"
       >
         <h2 className="text-sm font-bold text-slate-900 dark:text-white border-b border-slate-200 dark:border-slate-800 pb-3">
-          مشخصات حقوقی شرکت و تنظیمات پایه هلو
+          مشخصات حقوقی شرکت و تنظیمات پایه بیلیون
         </h2>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
@@ -764,7 +780,7 @@ export const SettingsView: React.FC<{ initialIntent?: string; clearIntent?: () =
               type="button"
               onClick={() =>
                 exportToCsv(
-                  `holoo-audit-log-${profile.fiscalYear}.csv`,
+                  `billion-audit-log-${profile.fiscalYear}.csv`,
                   ['تاریخ و ساعت', 'اپراتور', 'نقش', 'بخش', 'عملیات', 'شرح جزئیات'],
                   filteredAuditLogs.map((l) => [
                     l.timestamp,
@@ -881,7 +897,7 @@ export const SettingsView: React.FC<{ initialIntent?: string; clearIntent?: () =
       <div className="p-4 rounded-xl bg-slate-100/70 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 flex items-start gap-3 text-xs text-slate-600 dark:text-slate-400">
         <ShieldCheck className="w-4 h-4 text-teal-700 dark:text-teal-400 shrink-0 mt-0.5" />
         <span>
-          قوانین امنیتی Firestore با ایزوله‌سازی کامل داده‌های هر شرکت، کنترل تراز اسناد و قفل اسناد دائم پیاده‌سازی شده‌اند.
+          قوانین امنیتی Supabase با ایزوله‌سازی کامل داده‌های هر شرکت، کنترل تراز اسناد و قفل اسناد دائم پیاده‌سازی شده‌اند.
         </span>
       </div>
     </div>

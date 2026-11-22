@@ -236,7 +236,7 @@ export const PartiesView: React.FC<{ initialIntent?: string; clearIntent?: () =>
           <button
             onClick={() =>
               exportToCsv(
-                'holoo-parties.csv',
+                'billion-parties.csv',
                 [
                   'کد',
                   'نام طرف‌حساب',
@@ -379,7 +379,7 @@ export const PartiesView: React.FC<{ initialIntent?: string; clearIntent?: () =>
             {(partyType === 'customer' || partyType === 'both') && (
               <>
                 <div className="md:col-span-2">
-                  <label className="block text-slate-500 mb-1">تیپ قیمتی مشتری (هلو)</label>
+                  <label className="block text-slate-500 mb-1">تیپ قیمتی مشتری</label>
                   <select
                     value={pricingTier}
                     onChange={(e) => {

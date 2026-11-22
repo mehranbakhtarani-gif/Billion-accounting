@@ -22,6 +22,8 @@ import {
 import { addDaysToShamsi, diffShamsiDays, useChequeAlertPreferences } from '../lib/chequeAlerts';
 import { fuzzyFilterAndRank } from '../lib/fuzzySearch';
 import { numberToPersianWords } from '../lib/enterpriseAccounting';
+import { parseCsvRow, reconcileBankLines } from '../lib/enterpriseControls';
+import { computeFxRevaluationReport } from '../lib/enterpriseAccounting';
 import { SmartSearchCombobox, SmartSearchOption } from './SmartSearchCombobox';
 import { FuzzyTableOption, FuzzyTableSearch } from './FuzzyTableSearch';
 
@@ -45,6 +47,8 @@ export const TreasuryView: React.FC<TreasuryViewProps> = ({ initialIntent, clear
     parties,
     accounts,
     vouchers,
+    currencies,
+    exchangeRates,
     trialBalance,
     profile,
     addCheque,
@@ -53,18 +57,21 @@ export const TreasuryView: React.FC<TreasuryViewProps> = ({ initialIntent, clear
     recordQuickTreasury,
     recordBankTransfer,
     createVoucher,
+    postFxRevaluationVoucher,
     showToast,
   } = useAccounting();
   const unit = profile.currencyUnit;
   const { prefs: alertPrefs } = useChequeAlertPreferences();
 
   const [tab, setTab] = useState<
-    'cheques' | 'quick' | 'transfer' | 'rasgiri' | 'reconciliation' | 'cheque-print'
+    'cheques' | 'quick' | 'transfer' | 'rasgiri' | 'reconciliation' | 'cheque-print' | 'fx' | 'fx-revaluation'
   >('cheques');
   const [showAddCheque, setShowAddCheque] = useState(false);
 
   // Bank Reconciliation state
   const [reconBankCode, setReconBankCode] = useState('10201');
+  const [reconWithdrawalOffsetCode, setReconWithdrawalOffsetCode] = useState('80901');
+  const [reconDepositOffsetCode, setReconDepositOffsetCode] = useState('60301');
   const [bankCsvText, setBankCsvText] = useState(
     '1405/08/18,واریز تسویه فاکتور فروش نخ,12500000000,0\n1405/08/22,کارمزد صدور ضمانت‌نامه و حواله ساتنا,0,18500000\n1405/08/25,سود سپرده کوتاه‌مدت ماهانه,42000000,0'
   );
@@ -220,6 +227,10 @@ export const TreasuryView: React.FC<TreasuryViewProps> = ({ initialIntent, clear
       setTab('reconciliation');
     } else if (initialIntent === 'cheque-print') {
       setTab('cheque-print');
+    } else if (initialIntent === 'fx') {
+      setTab('fx');
+    } else if (initialIntent === 'fx-revaluation') {
+      setTab('fx-revaluation');
     }
     clearIntent?.();
   }, [initialIntent, clearIntent]);
@@ -235,67 +246,94 @@ export const TreasuryView: React.FC<TreasuryViewProps> = ({ initialIntent, clear
     [rasItems, baseDate]
   );
 
-  // Bank Reconciliation matching against ledger lines of selected bank account
+  // Match statement lines one-to-one by signed amount and date; ambiguous matches require review.
+  // CSV: date,description,deposit,withdrawal,reference (reference is optional).
   const reconResult = useMemo(() => {
-    const ledgerTx: { voucherNumber: number; date: string; desc: string; debit: number; credit: number }[] = [];
-    vouchers.forEach((v) => {
-      v.lines.forEach((l) => {
-        if (l.accountCode === reconBankCode) {
-          ledgerTx.push({
-            voucherNumber: v.voucherNumber,
-            date: v.date,
-            desc: l.description || v.description,
-            debit: l.debit || 0,
-            credit: l.credit || 0,
-          });
-        }
+    const ledgerTx: { id: string; voucherNumber: number; date: string; desc: string; debit: number; credit: number; amount: number; reference?: string }[] = [];
+    vouchers.filter((voucher) => voucher.status === 'permanent').forEach((v) => v.lines.forEach((l, index) => {
+      if (l.accountCode === reconBankCode) ledgerTx.push({
+        id: `${v.id}:${index}`, voucherNumber: v.voucherNumber, date: v.date,
+        desc: l.description || v.description, debit: l.debit || 0, credit: l.credit || 0,
+        amount: (l.debit || 0) - (l.credit || 0), reference: v.referenceId || v.id,
       });
+    }));
+    const rowOccurrences = new Map<string, number>();
+    let parsedLineIndex = 0;
+    const parsedBankRows = bankCsvText.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).map((line) => {
+      const idx = parsedLineIndex++;
+      const parts = parseCsvRow(line);
+      const date = (parts[0] || '').trim();
+      const desc = (parts[1] || '').trim() || ('تراکنش بانکی ' + (idx + 1));
+      const parseAmount = (raw: string | undefined) => {
+        if (!raw?.trim()) return 0;
+        const normalized = raw.replace(/[،٬,\s]/g, '');
+        return /^-?\d+(\.\d+)?$/.test(normalized) ? Number(normalized) : Number.NaN;
+      };
+      const deposit = parseAmount(parts[2]);
+      const withdrawal = parseAmount(parts[3]);
+      const stableKey = [date, desc, String(deposit), String(withdrawal), parts[4]?.trim() || ''].join('|');
+      const occurrence = rowOccurrences.get(stableKey) ?? 0;
+      rowOccurrences.set(stableKey, occurrence + 1);
+      let validationError: string | undefined;
+      if (!/^14\d{2}\/\d{2}\/\d{2}$/.test(date) || diffShamsiDays(date, date) !== 0) validationError = 'تاریخ شمسی معتبر نیست.';
+      else if (!Number.isFinite(deposit) || !Number.isFinite(withdrawal) || deposit < 0 || withdrawal < 0) validationError = 'مبلغ واریز یا برداشت معتبر نیست.';
+      else if ((deposit > 0 && withdrawal > 0) || (deposit === 0 && withdrawal === 0)) validationError = 'هر ردیف باید فقط یک مبلغ مثبت در ستون واریز یا برداشت داشته باشد.';
+      let hash = 2166136261;
+      for (let index = 0; index < stableKey.length; index++) hash = Math.imul(hash ^ stableKey.charCodeAt(index), 16777619);
+      const stableId = 'bk_' + (hash >>> 0).toString(36) + '_' + occurrence;
+      return { id: stableId, date, desc, deposit, withdrawal, reference: parts[4]?.trim() || undefined, amount: deposit - withdrawal, validationError };
     });
-
-    const parsedBankRows = bankCsvText
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter(Boolean)
-      .map((line, idx) => {
-        const parts = line.split(',').map((p) => p.trim());
-        const date = parts[0] || getTodayShamsi();
-        const desc = parts[1] || `تراکنش بانکی ${idx + 1}`;
-        const deposit = Number((parts[2] || '0').replace(/[^\d.-]/g, '')) || 0;
-        const withdrawal = Number((parts[3] || '0').replace(/[^\d.-]/g, '')) || 0;
-        const matched = ledgerTx.find(
-          (tx) =>
-            (deposit > 0 && Math.abs(tx.debit - deposit) < 1) ||
-            (withdrawal > 0 && Math.abs(tx.credit - withdrawal) < 1)
-        );
-        return { id: `bk_${idx}`, date, desc, deposit, withdrawal, matched };
-      });
-
+    const validBankRows = parsedBankRows.filter((row) => !row.validationError);
+    const matching = reconcileBankLines(
+      validBankRows.map((row) => ({ id: row.id, accountId: reconBankCode, date: row.date, amount: row.amount, reference: row.reference })),
+      ledgerTx.map((tx) => ({ id: tx.id, accountId: reconBankCode, date: tx.date, amount: tx.amount, reference: tx.reference })),
+      2, (from, to) => diffShamsiDays(from, to) ?? Number.POSITIVE_INFINITY,
+    );
+    const matchByStatement = new Map(matching.matches.map((match) => [match.statementLineId, match.ledgerLineId]));
+    const ambiguousIds = new Set(matching.ambiguousStatementIds);
+    const bankRows = parsedBankRows.map((row) => ({ ...row, matched: ledgerTx.find((tx) => tx.id === matchByStatement.get(row.id)), ambiguous: ambiguousIds.has(row.id) }));
     return {
-      ledgerTx,
-      bankRows: parsedBankRows,
-      matchedCount: parsedBankRows.filter((r) => !!r.matched).length,
-      unmatchedRows: parsedBankRows.filter((r) => !r.matched),
+      ledgerTx, bankRows, matchedCount: matching.matches.length,
+      unmatchedRows: bankRows.filter((row) => !row.validationError && !row.matched && !row.ambiguous),
+      invalidCount: bankRows.filter((row) => row.validationError).length,
+      ambiguousCount: matching.ambiguousStatementIds.length, unmatchedLedgerCount: matching.unmatchedLedgerIds.length,
     };
   }, [bankCsvText, reconBankCode, vouchers]);
 
   const handlePostBankAdjustment = async (row: {
+    id: string;
     date: string;
     desc: string;
     deposit: number;
     withdrawal: number;
   }) => {
-    const bankAcc = accounts.find((a) => a.code === reconBankCode);
-    const bankTitle = bankAcc?.title || 'حساب بانکی شرکت';
+    const bankAcc = accounts.find((a) => a.code === reconBankCode && a.level === 'moein' && a.code.startsWith('102'));
+    if (!bankAcc) throw new Error('حساب بانکی انتخاب‌شده معتبر نیست.');
+    if (!/^14\d{2}\/\d{2}\/\d{2}$/.test(row.date) || diffShamsiDays(row.date, row.date) !== 0 ||
+        !Number.isFinite(row.deposit) || !Number.isFinite(row.withdrawal) || row.deposit < 0 || row.withdrawal < 0 ||
+        (row.deposit > 0 && row.withdrawal > 0) || (row.deposit === 0 && row.withdrawal === 0)) {
+      throw new Error('ردیف صورت‌حساب بانک دارای تاریخ یا مبلغ نامعتبر است.');
+    }
+    const bankTitle = bankAcc.title;
+    const offsetCode = row.withdrawal > 0 ? reconWithdrawalOffsetCode : reconDepositOffsetCode;
+    const offsetAccount = accounts.find((account) => account.code === offsetCode && account.level === 'moein' && !account.code.startsWith('102'));
+    if (!offsetAccount) throw new Error('برای ثبت سند مغایرت، حساب طرف مقابل معتبر را انتخاب کنید.');
+    const referenceId = 'bank-recon:' + reconBankCode + ':' + row.date + ':' + row.id + ':' + row.deposit + ':' + row.withdrawal;
+    if (vouchers.some((voucher) => voucher.referenceId === referenceId)) {
+      showToast('برای این ردیف صورت‌حساب قبلاً سند مغایرت ثبت شده است.');
+      return;
+    }
     if (row.withdrawal > 0) {
       await createVoucher({
         date: row.date,
         description: `سند مغایرت‌گیری بانکی (کارمزد/برداشت): ${row.desc}`,
         voucherType: 'treasury',
         status: 'permanent',
+        referenceId,
         lines: [
           {
-            accountCode: '80901',
-            accountTitle: 'زیان تسعیر ارز و کارمزد خدمات بانکی',
+            accountCode: offsetAccount.code,
+            accountTitle: offsetAccount.title,
             description: row.desc,
             debit: row.withdrawal,
             credit: 0,
@@ -315,6 +353,7 @@ export const TreasuryView: React.FC<TreasuryViewProps> = ({ initialIntent, clear
         description: `سند مغایرت‌گیری بانکی (سود/واریزی): ${row.desc}`,
         voucherType: 'treasury',
         status: 'permanent',
+        referenceId,
         lines: [
           {
             accountCode: reconBankCode,
@@ -324,8 +363,8 @@ export const TreasuryView: React.FC<TreasuryViewProps> = ({ initialIntent, clear
             credit: 0,
           },
           {
-            accountCode: '60301',
-            accountTitle: 'اضافی انبارگردانی و درآمدهای متفرقه',
+            accountCode: offsetAccount.code,
+            accountTitle: offsetAccount.title,
             description: `درآمد بانکی — ${row.desc}`,
             debit: 0,
             credit: row.deposit,
@@ -335,6 +374,29 @@ export const TreasuryView: React.FC<TreasuryViewProps> = ({ initialIntent, clear
     }
   };
 
+  const [fxAsOfDate, setFxAsOfDate] = useState(getTodayShamsi());
+  const fxRevaluationRows = useMemo(
+    () => computeFxRevaluationReport(vouchers, exchangeRates, currencies, fxAsOfDate),
+    [vouchers, exchangeRates, currencies, fxAsOfDate]
+  );
+  const fxRevaluationNet = fxRevaluationRows.reduce((sum, row) => sum + row.revaluationDiffIrr, 0);
+  const foreignBalances = useMemo(() => {
+    const balances = new Map<string, { currencyCode: string; accountCode: string; accountTitle: string; foreignBalance: number; baseBalance: number }>();
+    vouchers.filter((voucher) => voucher.status === 'permanent' && voucher.currencyCode && voucher.currencyCode !== 'IRR').forEach((voucher) => {
+      voucher.lines.forEach((line) => {
+        if (!['101', '102', '103', '104', '301', '302'].some((prefix) => line.accountCode.startsWith(prefix))) return;
+        const key = `${voucher.currencyCode}:${line.accountCode}`;
+        const current = balances.get(key) || { currencyCode: voucher.currencyCode!, accountCode: line.accountCode, accountTitle: line.accountTitle, foreignBalance: 0, baseBalance: 0 };
+        const rate = voucher.exchangeRate && voucher.exchangeRate > 0 ? voucher.exchangeRate : 1;
+        const foreignDebit = line.foreignDebit ?? ((line.debit || 0) > 0 ? (line.debit || 0) / rate : 0);
+        const foreignCredit = line.foreignCredit ?? ((line.credit || 0) > 0 ? (line.credit || 0) / rate : 0);
+        current.foreignBalance += foreignDebit - foreignCredit;
+        current.baseBalance += (line.debit || 0) - (line.credit || 0);
+        balances.set(key, current);
+      });
+    });
+    return [...balances.values()].filter((row) => Math.abs(row.foreignBalance) > 0.000001 || Math.abs(row.baseBalance) > 0.5).sort((a, b) => a.currencyCode.localeCompare(b.currencyCode) || a.accountCode.localeCompare(b.accountCode));
+  }, [vouchers]);
   const selectedPrintCheque = useMemo(() => {
     const target = cheques.find((c) => c.id === printChequeId);
     return target || cheques.find((c) => c.direction === 'payable') || cheques[0] || null;
@@ -530,6 +592,8 @@ export const TreasuryView: React.FC<TreasuryViewProps> = ({ initialIntent, clear
             { id: 'rasgiri', label: 'راس‌گیری چک' },
             { id: 'reconciliation', label: 'مغایرت‌گیری بانکی' },
             { id: 'cheque-print', label: 'چاپ چک صیادی' },
+            { id: 'fx', label: 'مانده حساب‌های ارزی' },
+            { id: 'fx-revaluation', label: 'گزارش و سند تسعیر ارز' },
           ].map((t) => (
             <button
               key={t.id}
@@ -573,9 +637,72 @@ export const TreasuryView: React.FC<TreasuryViewProps> = ({ initialIntent, clear
         })}
       </div>
 
+      {tab === 'fx-revaluation' && (
+        <div className="space-y-4">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4 flex flex-wrap items-end justify-between gap-3">
+            <div><label className="block text-xs text-slate-500 mb-1">تاریخ مبنای تسعیر</label>
+              <input value={fxAsOfDate} onChange={(e) => setFxAsOfDate(e.target.value)} className="px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 font-code text-xs" /></div>
+            <div className="text-xs"><div className="text-slate-500">خالص سود / (زیان) تسعیر</div>
+              <strong className={`font-code text-base ${fxRevaluationNet >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>{formatMoney(fxRevaluationNet, unit)}</strong></div>
+            <button disabled={fxRevaluationRows.every((row) => Math.abs(row.revaluationDiffIrr) < 1) || vouchers.some((v) => v.referenceId === `fx-revaluation:${fxAsOfDate}`)}
+              onClick={async () => {
+                await postFxRevaluationVoucher(fxRevaluationRows, fxAsOfDate);
+              }} className="px-4 py-2 rounded-lg bg-teal-700 text-white text-xs font-semibold disabled:opacity-40">صدور سند تسعیر ارز</button>
+          </div>
+          <div className="rounded-xl border border-amber-200 bg-amber-50 dark:border-amber-900/60 dark:bg-amber-950/20 p-3 text-xs text-amber-900 dark:text-amber-200">
+            این گزارش فقط اسناد دائم و حساب‌های پولی ارزی را لحاظ می‌کند. نرخ مؤثر از نرخ‌های ثبت‌شده تا تاریخ مبنا گرفته می‌شود؛ قبل از صدور سند، نرخ‌های روز و طبقه‌بندی حساب‌ها را بررسی کنید. سند هر تاریخ فقط یک‌بار قابل صدور است.
+          </div>
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden">
+            <div className="overflow-x-auto"><table className="w-full text-right text-xs">
+              <thead><tr className="bg-slate-50 dark:bg-slate-950 text-slate-500 border-b border-slate-200 dark:border-slate-800">
+                <th className="px-3 py-3">حساب / طرف‌حساب</th><th className="px-3 py-3">ارز</th><th className="px-3 py-3 text-left">مانده ارزی</th>
+                <th className="px-3 py-3 text-left">نرخ مبنا</th><th className="px-3 py-3 text-left">مانده تسعیرشده</th><th className="px-3 py-3 text-left">اختلاف تسعیر</th>
+              </tr></thead><tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                {fxRevaluationRows.length === 0 ? <tr><td colSpan={6} className="px-4 py-10 text-center text-slate-500">مانده پولی ارزی برای تسعیر وجود ندارد یا نرخ معتبری ثبت نشده است.</td></tr> : fxRevaluationRows.map((row) => (
+                  <tr key={row.key}><td className="px-3 py-3"><div className="font-semibold">{row.accountTitle}</div><div className="text-[10px] text-slate-500">{row.accountCode}{row.partyName ? ` · ${row.partyName}` : ''}</div></td>
+                    <td className="px-3 py-3 font-bold text-sky-700">{row.currencyCode}</td>
+                    <td className="px-3 py-3 text-left font-code">{toPersianDigits(row.netForeignBalance.toLocaleString('en-US', { maximumFractionDigits: 4 }))}</td>
+                    <td className="px-3 py-3 text-left font-code">{toPersianDigits(row.currentRateToIrr.toLocaleString('en-US'))}</td>
+                    <td className="px-3 py-3 text-left font-code">{formatMoney(row.revaluedIrrBalance, unit, false)}</td>
+                    <td className={`px-3 py-3 text-left font-code font-bold ${row.revaluationDiffIrr >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>{formatMoney(row.revaluationDiffIrr, unit, false)}</td>
+                  </tr>
+                ))}
+              </tbody></table></div>
+          </div>
+        </div>
+      )}
+
+      {tab === 'fx' && (
+        <div className="space-y-4">
+          <div className="rounded-xl border border-sky-200 bg-sky-50 dark:border-sky-900/60 dark:bg-sky-950/20 p-4 text-xs text-sky-900 dark:text-sky-200">
+            مانده ارزی بر اساس اسناد دائم دارای ارز و مبالغ ارزی ثبت‌شده در ردیف‌های سند محاسبه می‌شود. این گزارش جایگزین دفتر تفصیلی بانک ارزی یا تطبیق صورت‌حساب ارزی نیست.
+          </div>
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden">
+            <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
+              <h2 className="font-bold text-sm text-slate-900 dark:text-white">دفتر مانده حساب‌های ارزی</h2>
+              <span className="text-[11px] text-slate-500">{toPersianDigits(foreignBalances.length)} ردیف حساب / ارز</span>
+            </div>
+            <div className="overflow-x-auto"><table className="w-full text-right text-xs">
+              <thead><tr className="bg-slate-50 dark:bg-slate-950 text-slate-500 border-b border-slate-200 dark:border-slate-800">
+                <th className="px-4 py-3">ارز</th><th className="px-4 py-3">کد حساب</th><th className="px-4 py-3">عنوان حساب</th>
+                <th className="px-4 py-3 text-left">مانده ارزی</th><th className="px-4 py-3 text-left">معادل ریالی ثبت‌شده</th>
+              </tr></thead><tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                {foreignBalances.length === 0 ? <tr><td colSpan={5} className="px-4 py-10 text-center text-slate-500">سند دائم ارزی برای نمایش مانده ثبت نشده است.</td></tr> : foreignBalances.map((row) => (
+                  <tr key={`${row.currencyCode}:${row.accountCode}`} className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
+                    <td className="px-4 py-3 font-bold text-sky-700 dark:text-sky-300">{row.currencyCode}</td>
+                    <td className="px-4 py-3 font-code">{row.accountCode}</td><td className="px-4 py-3">{row.accountTitle}</td>
+                    <td className="px-4 py-3 text-left font-code font-bold">{toPersianDigits(row.foreignBalance.toLocaleString('en-US', { maximumFractionDigits: 4 }))}</td>
+                    <td className="px-4 py-3 text-left font-code">{formatMoney(row.baseBalance, unit, false)}</td>
+                  </tr>
+                ))}
+              </tbody></table></div>
+          </div>
+        </div>
+      )}
+
       {tab === 'cheques' && (
         <div className="space-y-4">
-          {/* Holoo Smart Cheque Search Bar */}
+          {/* Smart Cheque Search Bar */}
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4 flex flex-col lg:flex-row lg:items-end justify-between gap-3">
             <div className="flex-1 min-w-[260px]">
               <label className="block text-[11px] font-medium text-slate-500 mb-1">
@@ -1064,7 +1191,7 @@ export const TreasuryView: React.FC<TreasuryViewProps> = ({ initialIntent, clear
             <div className="flex flex-wrap items-center justify-between gap-2">
               <h2 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
                 <Calculator className="w-4 h-4 text-teal-700 dark:text-teal-400" />
-                <span>محاسبه‌گر راس‌گیری چک‌های هلو</span>
+                <span>محاسبه‌گر راس‌گیری چک</span>
               </h2>
               <div className="flex items-center gap-2">
                 <span className="text-slate-500">تاریخ مبنا:</span>
@@ -1217,6 +1344,18 @@ export const TreasuryView: React.FC<TreasuryViewProps> = ({ initialIntent, clear
                     </option>
                   ))}
                 </select>
+                <label className="flex items-center gap-2 text-[11px] text-slate-500">
+                  حساب طرف مقابل برداشت
+                  <select value={reconWithdrawalOffsetCode} onChange={(e) => setReconWithdrawalOffsetCode(e.target.value)} className="max-w-44 px-2 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950">
+                    {accounts.filter((account) => account.level === 'moein' && !account.code.startsWith('102')).map((account) => <option key={account.id} value={account.code}>{account.code} — {account.title}</option>)}
+                  </select>
+                </label>
+                <label className="flex items-center gap-2 text-[11px] text-slate-500">
+                  حساب طرف مقابل واریز
+                  <select value={reconDepositOffsetCode} onChange={(e) => setReconDepositOffsetCode(e.target.value)} className="max-w-44 px-2 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950">
+                    {accounts.filter((account) => account.level === 'moein' && !account.code.startsWith('102')).map((account) => <option key={account.id} value={account.code}>{account.code} — {account.title}</option>)}
+                  </select>
+                </label>
                 <label className="cursor-pointer px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 font-medium">
                   <span>بارگذاری فایل CSV بانک</span>
                   <input
@@ -1241,10 +1380,10 @@ export const TreasuryView: React.FC<TreasuryViewProps> = ({ initialIntent, clear
               value={bankCsvText}
               onChange={(e) => setBankCsvText(e.target.value)}
               className="w-full p-3 font-code text-xs rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 text-left"
-              placeholder="1405/08/22,کارمزد حواله ساتنا,0,18500000"
+              placeholder="1405/08/22,کارمزد حواله ساتنا,0,18500000,شناسه تراکنش (اختیاری)"
             />
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 p-3 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800">
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 p-3 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800">
               <div>
                 <span className="text-slate-500">تعداد ردیف صورت‌حساب بانک:</span>{' '}
                 <strong className="font-code">{toPersianDigits(reconResult.bankRows.length)}</strong>
@@ -1260,6 +1399,18 @@ export const TreasuryView: React.FC<TreasuryViewProps> = ({ initialIntent, clear
                 <strong className="font-code text-rose-700 dark:text-rose-400">
                   {toPersianDigits(reconResult.unmatchedRows.length)}
                 </strong>
+              <div>
+                <span className="text-rose-700 dark:text-rose-400">ردیف‌های نامعتبر فایل:</span>{' '}
+                <strong className="font-code text-rose-700 dark:text-rose-400">{toPersianDigits(reconResult.invalidCount)}</strong>
+              </div>
+              <div>
+                <span className="text-amber-700 dark:text-amber-400">تطبیق‌های مبهم (نیازمند بررسی):</span>{' '}
+                <strong className="font-code text-amber-700 dark:text-amber-400">{toPersianDigits(reconResult.ambiguousCount)}</strong>
+              </div>
+              <div>
+                <span className="text-slate-500">ردیف‌های باز دفتر بانک:</span>{' '}
+                <strong className="font-code">{toPersianDigits(reconResult.unmatchedLedgerCount)}</strong>
+              </div>
               </div>
             </div>
 
@@ -1287,21 +1438,29 @@ export const TreasuryView: React.FC<TreasuryViewProps> = ({ initialIntent, clear
                         {row.withdrawal > 0 ? formatMoney(row.withdrawal, unit, false) : '—'}
                       </td>
                       <td className="py-2.5 px-3">
-                        {row.matched ? (
+                        {row.validationError ? (
+                          <span className="text-rose-700 dark:text-rose-400 font-semibold">{row.validationError}</span>
+                        ) : row.matched ? (
                           <span className="text-emerald-700 dark:text-emerald-400 font-semibold">
-                            تطبیق با سند #{toPersianDigits(row.matched.voucherNumber)}
+                            تطبیق یکتای سند #{toPersianDigits(row.matched.voucherNumber)}
                           </span>
+                        ) : row.ambiguous ? (
+                          <span className="text-amber-700 dark:text-amber-400 font-semibold">چند گزینه هم‌مبلغ؛ بررسی دستی الزامی</span>
                         ) : (
-                          <span className="text-amber-700 dark:text-amber-400 font-semibold">
-                            مغایر (ثبت‌نشده در دفتر)
-                          </span>
+                          <span className="text-rose-700 dark:text-rose-400 font-semibold">بدون تطبیق در دفتر</span>
                         )}
                       </td>
                       <td className="py-2.5 px-3 text-left">
-                        {!row.matched ? (
+                        {!row.validationError && !row.matched && !row.ambiguous ? (
                           <button
                             type="button"
-                            onClick={() => handlePostBankAdjustment(row)}
+                            onClick={async () => {
+                              try {
+                                await handlePostBankAdjustment(row);
+                              } catch (error) {
+                                showToast(error instanceof Error ? error.message : 'ثبت سند مغایرت بانکی ناموفق بود.');
+                              }
+                            }}
                             className="px-2.5 py-1 rounded bg-teal-700 hover:bg-teal-800 text-white font-semibold"
                           >
                             ثبت سند مغایرت

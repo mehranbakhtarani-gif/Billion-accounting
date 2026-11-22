@@ -22,6 +22,7 @@ export function computeTrialBalance(accounts: Account[], vouchers: Voucher[]): T
   >();
 
   for (const v of vouchers) {
+    if (v.status !== 'permanent') continue;
     const isOpening = v.voucherType === 'opening';
     for (const line of v.lines) {
       const prev = totals.get(line.accountCode) ?? {
@@ -195,6 +196,7 @@ export function computePartyBalances(parties: Party[], vouchers: Voucher[]): Map
     balances.set(p.id, 0);
   }
   for (const v of vouchers) {
+    if (v.status !== 'permanent') continue;
     for (const line of v.lines) {
       if (!line.partyId || !balances.has(line.partyId)) continue;
       // Exclude cheque tracking accounts (اسناد دریافتنی/پرداختنی) from open party AR/AP balance
@@ -227,7 +229,7 @@ export function computeAccountLedger(
 ): LedgerEntry[] {
   const entries: LedgerEntry[] = [];
   let running = 0;
-  const sorted = [...vouchers].sort((a, b) => a.voucherNumber - b.voucherNumber);
+  const sorted = vouchers.filter((voucher) => voucher.status === 'permanent').sort((a, b) => a.voucherNumber - b.voucherNumber);
   for (const v of sorted) {
     if (toDate && v.date > toDate) continue;
     for (const line of v.lines) {
@@ -263,7 +265,7 @@ export function computePartyLedger(
 ): LedgerEntry[] {
   const entries: LedgerEntry[] = [];
   let running = 0;
-  const sorted = [...vouchers].sort((a, b) => a.voucherNumber - b.voucherNumber);
+  const sorted = vouchers.filter((voucher) => voucher.status === 'permanent').sort((a, b) => a.voucherNumber - b.voucherNumber);
   for (const v of sorted) {
     if (toDate && v.date > toDate) continue;
     for (const line of v.lines) {
@@ -375,6 +377,7 @@ export function computeCostCenterPnL(
   costCenters.forEach((cc) => stats.set(cc.id, { revenue: 0, cogs: 0, expenses: 0 }));
 
   for (const v of vouchers) {
+    if (v.status !== 'permanent') continue;
     for (const l of v.lines) {
       if (!l.costCenterId || !stats.has(l.costCenterId)) continue;
       const s = stats.get(l.costCenterId)!;
@@ -542,6 +545,7 @@ export function computeAuditReport(input: {
   let subReceivables = 0;
   let subPayables = 0;
   for (const v of vouchers) {
+    if (v.status !== 'permanent') continue;
     for (const l of v.lines) {
       if (l.accountCode === '10401' && l.partyId) {
         subReceivables += (Number(l.debit) || 0) - (Number(l.credit) || 0);
@@ -641,6 +645,15 @@ export function computeAuditReport(input: {
   // 9. Draft vouchers, bounced cheques & credit limit breaches
   const draftVouchers = vouchers.filter((v) => v.status === 'draft');
   const bouncedCheques = cheques.filter((c) => c.status === 'bounced');
+  const sayadiCounts = new Map<string, number>();
+  for (const cheque of cheques) {
+    const key = cheque.sayadiId.trim();
+    if (key) sayadiCounts.set(key, (sayadiCounts.get(key) ?? 0) + 1);
+  }
+  const duplicateSayadiIds = [...sayadiCounts.entries()].filter(([, count]) => count > 1).map(([id]) => id);
+  const invalidCheques = cheques.filter((cheque) =>
+    !cheque.sayadiId.trim() || !cheque.partyId || !Number.isFinite(cheque.amount) || cheque.amount <= 0
+  );
   const overLimitParties = parties.filter((p) => {
     const bal = partyBalances.get(p.id) ?? 0;
     return p.creditLimit > 0 && bal > p.creditLimit;
@@ -648,6 +661,8 @@ export function computeAuditReport(input: {
   const opDetails: string[] = [
     ...draftVouchers.map((v) => `سند موقت #${v.voucherNumber} (${v.date}) هنوز دائم نشده است.`),
     ...bouncedCheques.map((c) => `چک برگشتی صیادی ${c.sayadiId} — ${c.partyName}`),
+    ...duplicateSayadiIds.map((id) => `شناسه صیادی تکراری در پرونده چک‌ها: ${id}`),
+    ...invalidCheques.map((c) => `اطلاعات چک ${c.sayadiId || c.serial} ناقص است یا مبلغ معتبر ندارد.`),
     ...overLimitParties.map((p) => `عبور طرف‌حساب «${p.name}» از سقف اعتبار مصوب.`),
   ];
   checks.push({
@@ -660,7 +675,7 @@ export function computeAuditReport(input: {
         ? 'تمامی اسناد دائم هستند، چک برگشتی وجود ندارد و سقف اعتبار مشتریان رعایت شده است.'
         : `${opDetails.length} مورد نیازمند پیگیری حسابدار یا مدیر مالی شناسایی شد.`,
     details: opDetails,
-    targetModule: draftVouchers.length > 0 ? 'vouchers' : bouncedCheques.length > 0 ? 'treasury' : 'parties',
+    targetModule: draftVouchers.length > 0 ? 'vouchers' : (bouncedCheques.length > 0 || duplicateSayadiIds.length > 0 || invalidCheques.length > 0) ? 'treasury' : 'parties',
   });
 
   const passedCount = checks.filter((c) => c.status === 'pass').length;
@@ -700,6 +715,21 @@ export interface PayrollCalculation {
 }
 
 export function calculateEmployeePayroll(emp: Employee): PayrollCalculation {
+  const numericInputs: Array<[string, number]> = [
+    ['حقوق پایه', emp.baseSalary],
+    ['حق مسکن', emp.housingAllowance],
+    ['بن خواربار', emp.foodAllowance],
+    ['تعداد فرزند', emp.childrenCount],
+    ['ساعات اضافه‌کاری', emp.overtimeHours],
+  ];
+  for (const [label, value] of numericInputs) {
+    if (!Number.isFinite(value) || value < 0) {
+      throw new Error(`${label} باید عددی معتبر و غیرمنفی باشد.`);
+    }
+  }
+  if (!Number.isInteger(emp.childrenCount)) {
+    throw new Error('تعداد فرزند باید عدد صحیح باشد.');
+  }
   const hourlyRate = emp.baseSalary / 220;
   const overtimePay = Math.round(emp.overtimeHours * hourlyRate * 1.4);
   const childAllowance = emp.childrenCount * 14_000_000;
@@ -736,7 +766,13 @@ export function calculateEmployeePayroll(emp: Employee): PayrollCalculation {
 }
 
 export function calculateMonthlyDepreciation(asset: FixedAsset): number {
-  const depreciable = Math.max(0, asset.purchaseCost - asset.salvageValue);
+  if (
+    !Number.isFinite(asset.purchaseCost) || asset.purchaseCost <= 0 ||
+    !Number.isFinite(asset.salvageValue) || asset.salvageValue < 0 || asset.salvageValue > asset.purchaseCost ||
+    !Number.isFinite(asset.usefulLifeYears) || asset.usefulLifeYears <= 0 ||
+    !Number.isFinite(asset.accumulatedDepreciation) || asset.accumulatedDepreciation < 0
+  ) return 0;
+  const depreciable = asset.purchaseCost - asset.salvageValue;
   const remaining = Math.max(0, depreciable - asset.accumulatedDepreciation);
   if (remaining <= 0) return 0;
   const monthly = Math.round(depreciable / (asset.usefulLifeYears * 12));
@@ -1073,7 +1109,7 @@ export function computeAccountReview(
   }
 
   for (const v of vouchers) {
-    if (toDate && v.date > toDate) continue;
+    if (v.status !== 'permanent' || (toDate && v.date > toDate)) continue;
     const isOpening = v.voucherType === 'opening' || (!!fromDate && v.date < fromDate);
     for (const l of v.lines) {
       if (parentPrefix && !l.accountCode.startsWith(parentPrefix)) continue;

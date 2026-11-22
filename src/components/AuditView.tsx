@@ -189,7 +189,7 @@ export const AuditView: React.FC<{
       <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden print-container">
         <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-800">
           <h2 className="text-sm font-bold text-slate-900 dark:text-white">
-            چک‌لیست کنترل‌های حسابرسی استاندارد هلو شرکتی
+            چک‌لیست کنترل‌های حسابرسی استاندارد بیلیون
           </h2>
         </div>
         <div className="divide-y divide-slate-100 dark:divide-slate-800">

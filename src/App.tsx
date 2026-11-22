@@ -7,13 +7,11 @@ import {
   Calculator,
   ChevronDown,
   ChevronLeft,
-  Cloud,
   FileText,
   FolderTree,
   Keyboard,
   Landmark,
   LayoutDashboard,
-  LogIn,
   Menu,
   Moon,
   Package,
@@ -67,7 +65,7 @@ interface MenuGroup {
   items?: SubMenuItem[];
 }
 
-const HOLOO_MENU_TREE: MenuGroup[] = [
+const BILLION_MENU_TREE: MenuGroup[] = [
   {
     id: 'dashboard',
     label: 'داشبورد مدیریت مالی',
@@ -131,7 +129,7 @@ const HOLOO_MENU_TREE: MenuGroup[] = [
     icon: Package,
     items: [
       { key: 'inv-products', label: 'فهرست کالاها و موجودی انبار', module: 'inventory' },
-      { key: 'inv-kardex', label: 'کاردکس ریالی (میانگین موزون هلو)', module: 'inventory', intent: 'kardex' },
+      { key: 'inv-kardex', label: 'کاردکس ریالی (میانگین موزون)', module: 'inventory', intent: 'kardex' },
       { key: 'inv-stocktaking', label: 'انبارگردانی گروهی و تعدیل', module: 'inventory', intent: 'stocktaking' },
       { key: 'inv-bulk-price', label: 'تغییر گروهی قیمت کالاها', module: 'inventory', intent: 'bulk-price' },
       { key: 'inv-transfer', label: 'حواله انتقال بین انبارها', module: 'inventory', intent: 'transfer' },
@@ -212,13 +210,13 @@ const ALL_MODULES: ActiveModule[] = [
 ];
 
 function findGroupIdForModule(mod: ActiveModule, intent?: string): string {
-  for (const g of HOLOO_MENU_TREE) {
+  for (const g of BILLION_MENU_TREE) {
     if (g.directModule === mod) return g.id;
     if (g.items?.some((it) => it.module === mod && (!intent || it.intent === intent))) {
       return g.id;
     }
   }
-  for (const g of HOLOO_MENU_TREE) {
+  for (const g of BILLION_MENU_TREE) {
     if (g.items?.some((it) => it.module === mod)) return g.id;
   }
   return 'dashboard';
@@ -226,17 +224,17 @@ function findGroupIdForModule(mod: ActiveModule, intent?: string): string {
 
 function getBreadcrumbLabel(mod: ActiveModule, subKey: string | null): string {
   if (mod === 'dashboard') return 'داشبورد مدیریت مالی';
-  for (const g of HOLOO_MENU_TREE) {
+  for (const g of BILLION_MENU_TREE) {
     if (g.items) {
       const exact = subKey ? g.items.find((it) => it.key === subKey) : undefined;
       if (exact) return `${g.label} / ${exact.label}`;
     }
   }
-  for (const g of HOLOO_MENU_TREE) {
+  for (const g of BILLION_MENU_TREE) {
     const match = g.items?.find((it) => it.module === mod);
     if (match) return `${g.label} / ${match.label}`;
   }
-  return 'هلو شرکتی Apex';
+  return 'بیلیون';
 }
 
 export default function App() {
@@ -251,11 +249,39 @@ export default function App() {
     isCloudMode,
     isSyncing,
     toast,
-    loginWithGoogle,
+    bootstrapCloud,
+    joinCloud,
+    createDeviceInvite,
+    showToast,
     setCurrencyUnit,
   } = useAccounting();
 
   const { prefs: chequeAlertPrefs } = useChequeAlertPreferences();
+
+  const inviteAnotherDevice = useCallback(async () => {
+    try {
+      const token = await createDeviceInvite();
+      window.prompt('کد دعوت یک‌بارمصرف (اعتبار ۲۴ ساعت):', token);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'ساخت کد دعوت ناموفق بود.');
+    }
+  }, [createDeviceInvite, showToast]);
+
+
+
+  const connectToCloud = useCallback(async () => {
+    const isFirstDevice = window.confirm('آیا این دستگاه، اولین دستگاه و مدیر اصلی شرکت است؟\n\nتأیید: راه‌اندازی شرکت با کلید اولیه\nلغو: پیوستن به شرکت با کد دعوت');
+    const token = window.prompt(isFirstDevice ? 'کلید راه‌اندازی اولیه را وارد کنید:' : 'کد دعوت یک‌بارمصرف شرکت را وارد کنید:');
+    if (!token?.trim()) return;
+    try {
+      if (isFirstDevice) await bootstrapCloud(token.trim());
+      else await joinCloud(token.trim());
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'اتصال به Supabase ناموفق بود.');
+    }
+  }, [bootstrapCloud, joinCloud, showToast]);
+
+
 
   const chequeAlertSummary = useMemo(
     () =>
@@ -323,7 +349,7 @@ export default function App() {
     }
   }, [navigate]);
 
-  // Global Holoo Sherkati Apex Keyboard Shortcuts (F1 - F10, Ctrl+K, Alt+C, Esc)
+  // Global Billion Keyboard Shortcuts (F1 - F10, Ctrl+K, Alt+C, Esc)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
@@ -402,7 +428,7 @@ export default function App() {
 
   const renderMenuTree = () => (
     <div className="space-y-1">
-      {HOLOO_MENU_TREE.map((group) => {
+      {BILLION_MENU_TREE.map((group) => {
         const Icon = group.icon;
         if (group.directModule) {
           const isActive = activeModule === group.directModule;
@@ -540,14 +566,14 @@ export default function App() {
       <aside className="hidden lg:flex lg:flex-col w-68 shrink-0 bg-white dark:bg-slate-900 border-l border-slate-200 dark:border-slate-800 sticky top-0 h-screen no-print">
         <div className="h-14 px-4 flex items-center justify-between border-b border-slate-200 dark:border-slate-800">
           <span className="text-base font-extrabold tracking-tight text-slate-900 dark:text-white whitespace-nowrap">
-            هلو شرکتی Apex
+            بیلیون
           </span>
           <span className="font-code text-[11px] font-semibold text-teal-700 dark:text-teal-400">
             سال {toPersianDigits(profile.fiscalYear)}
           </span>
         </div>
 
-        <nav className="flex-1 overflow-y-auto p-3" aria-label="منوی اصلی هلو شرکتی آپکس">
+        <nav className="flex-1 overflow-y-auto p-3" aria-label="منوی اصلی بیلیون">
           {renderMenuTree()}
         </nav>
 
@@ -602,11 +628,11 @@ export default function App() {
             </button>
             {!isCloudMode && (
               <button
-                onClick={loginWithGoogle}
-                title="ورود با حساب گوگل برای ذخیره ابری"
+                onClick={connectToCloud}
+                title="اتصال امن به شرکت در Supabase"
                 className="p-1.5 rounded-lg text-teal-700 dark:text-teal-400 hover:bg-teal-50 dark:hover:bg-teal-950/40 shrink-0"
               >
-                <LogIn className="w-4 h-4" />
+                <span className="text-xs font-bold">ابر</span>
               </button>
             )}
           </div>
@@ -619,7 +645,7 @@ export default function App() {
           <div className="w-72 max-w-[84vw] bg-white dark:bg-slate-900 h-full border-l border-slate-200 dark:border-slate-800 flex flex-col">
             <div className="h-14 px-4 flex items-center justify-between border-b border-slate-200 dark:border-slate-800">
               <span className="font-extrabold text-sm text-slate-900 dark:text-white">
-                هلو شرکتی Apex
+                بیلیون
               </span>
               <button
                 onClick={() => setMobileMenuOpen(false)}
@@ -656,7 +682,7 @@ export default function App() {
             </button>
             <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400 truncate">
               <span className="hidden sm:inline font-medium text-slate-700 dark:text-slate-300">
-                هلو Apex
+                بیلیون
               </span>
               <span className="hidden sm:inline" aria-hidden="true">
                 /
@@ -861,13 +887,20 @@ export default function App() {
 
             {!isCloudMode ? (
               <button
-                onClick={loginWithGoogle}
+                onClick={connectToCloud}
                 className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold text-white bg-teal-700 hover:bg-teal-800 rounded-lg transition-colors whitespace-nowrap shrink-0"
               >
-                <Cloud className="w-3.5 h-3.5" />
-                <span>ذخیره ابری</span>
+                <span className="text-sm">☁</span>
+                <span>اتصال به شرکت</span>
               </button>
             ) : (
+              <>
+              <button
+                onClick={inviteAnotherDevice}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-teal-700 border border-teal-700 rounded-lg hover:bg-teal-50 whitespace-nowrap shrink-0"
+              >
+                دعوت دستگاه
+              </button>
               <button
                 onClick={() => navigate('invoices', 'new-sale', 'inv-sale')}
                 className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold text-white bg-teal-700 hover:bg-teal-800 rounded-lg transition-colors whitespace-nowrap shrink-0"
@@ -875,6 +908,7 @@ export default function App() {
                 <FileText className="w-3.5 h-3.5" />
                 <span>فاکتور فروش</span>
               </button>
+              </>
             )}
           </div>
         </header>

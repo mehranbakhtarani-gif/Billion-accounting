@@ -186,6 +186,7 @@ export interface Invoice {
   taxSerial?: string;
   invoiceType: InvoiceType;
   date: string;
+  dueDate?: string; // Shamsi payment due date; legacy invoices fall back to invoice date
   partyId: string;
   partyName: string;
   warehouse: string;

@@ -25,6 +25,7 @@ import {
   buildTtmsSalaryCsv,
   computeBrokerCommissions,
   computeReceivablesAging,
+  computePayablesAging,
 } from '../lib/enterpriseAccounting';
 import { exportToCsv, formatMoney, getTodayShamsi, toPersianDigits } from '../lib/format';
 import { SmartSearchCombobox, SmartSearchOption } from './SmartSearchCombobox';
@@ -207,6 +208,11 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ initialIntent, clearIn
     [parties, invoices, partyBalances]
   );
 
+  const payablesAgingRows = useMemo(
+    () => computePayablesAging(parties, invoices, partyBalances, getTodayShamsi()),
+    [parties, invoices, partyBalances]
+  );
+
   const commissionRows = useMemo(
     () => computeBrokerCommissions(parties, invoices),
     [parties, invoices]
@@ -275,7 +281,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ initialIntent, clearIn
   const handleExportCurrentReport = () => {
     if (tab === 'trial') {
       exportToCsv(
-        `holoo-trial-balance-8col-${profile.fiscalYear}.csv`,
+        `billion-trial-balance-8col-${profile.fiscalYear}.csv`,
         [
           'کد حساب',
           'عنوان حساب',
@@ -303,7 +309,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ initialIntent, clearIn
       );
     } else if (tab === 'ledger') {
       exportToCsv(
-        `holoo-ledger-${ledgerCode}-${profile.fiscalYear}.csv`,
+        `billion-ledger-${ledgerCode}-${profile.fiscalYear}.csv`,
         ['شماره سند', 'تاریخ', 'کد حساب', 'شرح', 'بدهکار', 'بستانکار', 'مانده'],
         ledgerEntries.map((r) => [
           r.voucherNumber,
@@ -318,7 +324,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ initialIntent, clearIn
     } else if (tab === 'party-ledger') {
       const pName = parties.find((p) => p.id === selectedPartyId)?.code ?? 'party';
       exportToCsv(
-        `holoo-party-ledger-${pName}-${profile.fiscalYear}.csv`,
+        `billion-party-ledger-${pName}-${profile.fiscalYear}.csv`,
         ['شماره سند', 'تاریخ', 'حساب', 'شرح', 'بدهکار', 'بستانکار', 'مانده'],
         partyLedgerEntries.map((r) => [
           r.voucherNumber,
@@ -332,7 +338,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ initialIntent, clearIn
       );
     } else if (tab === 'moroor') {
       exportToCsv(
-        `holoo-moroor-${moroorLevel}-${profile.fiscalYear}.csv`,
+        `billion-moroor-${moroorLevel}-${profile.fiscalYear}.csv`,
         ['کد', 'عنوان حساب', 'تعداد آرتیکل', 'گردش بدهکار', 'گردش بستانکار', 'مانده بدهکار', 'مانده بستانکار'],
         moroorRows.map((r) => [
           r.code,
@@ -346,7 +352,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ initialIntent, clearIn
       );
     } else if (tab === 'seasonal-169') {
       exportToCsv(
-        `holoo-seasonal-169-${profile.fiscalYear}.csv`,
+        `billion-seasonal-169-${profile.fiscalYear}.csv`,
         ['کد طرف‌حساب', 'نام شخص/شرکت', 'شناسه ملی', 'کد اقتصادی', 'تعداد فاکتور', 'فروش خالص', 'مالیات فروش', 'خرید خالص', 'مالیات خرید'],
         seasonal169Rows.map((r) => [
           r.partyCode,
@@ -363,7 +369,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ initialIntent, clearIn
     } else if (tab === 'product-profit') {
       if (profitMode === 'invoice') {
         exportToCsv(
-          `holoo-invoice-profit-${profile.fiscalYear}.csv`,
+          `billion-invoice-profit-${profile.fiscalYear}.csv`,
           ['شماره فاکتور', 'تاریخ', 'مشتری', 'فروش خالص', 'بهای تمام‌شده', 'سود ناخالص', 'حاشیه سود %'],
           invoiceProfitability.map((r) => [
             r.invoiceNumber,
@@ -377,7 +383,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ initialIntent, clearIn
         );
       } else {
         exportToCsv(
-          `holoo-product-profit-${profile.fiscalYear}.csv`,
+          `billion-product-profit-${profile.fiscalYear}.csv`,
           ['کد کالا', 'نام کالا', 'تعداد فروش', 'برگشت از فروش', 'خالص تعداد', 'فروش خالص', 'بهای تمام‌شده', 'سود ناخالص', 'حاشیه سود %'],
           productProfitability.map((r) => [
             r.sku,
@@ -394,7 +400,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ initialIntent, clearIn
       }
     } else {
       exportToCsv(
-        `holoo-trial-balance-${profile.fiscalYear}.csv`,
+        `billion-trial-balance-${profile.fiscalYear}.csv`,
         ['کد حساب', 'عنوان حساب', 'مانده بدهکار', 'مانده بستانکار'],
         trialBalance.map((r) => [r.accountCode, r.accountTitle, r.balanceDebit, r.balanceCredit])
       );
@@ -1024,7 +1030,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ initialIntent, clearIn
                           type="button"
                           onClick={() => openVoucherByNumber(row.voucherNumber)}
                           className="text-teal-700 dark:text-teal-400 hover:underline"
-                          title="مشاهده جزئیات سند حسابداری (دریل‌داون هلو)"
+                          title="مشاهده جزئیات سند حسابداری (دریل‌داون بیلیون)"
                         >
                           #{toPersianDigits(row.voucherNumber)}
                         </button>
@@ -1159,7 +1165,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ initialIntent, clearIn
                           type="button"
                           onClick={() => openVoucherByNumber(row.voucherNumber)}
                           className="text-teal-700 dark:text-teal-400 hover:underline"
-                          title="مشاهده جزئیات سند حسابداری (دریل‌داون هلو)"
+                          title="مشاهده جزئیات سند حسابداری (دریل‌داون بیلیون)"
                         >
                           #{toPersianDigits(row.voucherNumber)}
                         </button>
@@ -1633,13 +1639,14 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ initialIntent, clearIn
 
       {/* Receivables Aging Report (گزارش سنی مطالبات) */}
       {tab === 'aging' && (
+        <>
         <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden print-container">
           <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-800">
             <h2 className="text-sm font-bold text-slate-900 dark:text-white">
-              گزارش سنی مطالبات مشتریان (Aging Report) — مبنای تاریخ {toPersianDigits(getTodayShamsi())}
+              گزارش سنی مطالبات مشتریان و بدهی تأمین‌کنندگان (Aging Report) — مبنای تاریخ {toPersianDigits(getTodayShamsi())}
             </h2>
             <p className="text-xs text-slate-500 mt-0.5">
-              تفکیک مانده بدهی مشتریان به بازه‌های ۰ تا ۳۰ روز، ۳۱ تا ۶۰ روز، ۶۱ تا ۹۰ روز و معوقات بالای ۹۰ روز همراه با یادآوری مستقیم واتس‌اپ و تلگرام
+              تفکیک مانده باز مشتریان و تأمین‌کنندگان به بازه‌های ۰ تا ۳۰ روز، ۳۱ تا ۶۰ روز، ۶۱ تا ۹۰ روز و معوقات بالای ۹۰ روز همراه با یادآوری مستقیم واتس‌اپ و تلگرام
             </p>
           </div>
           <div className="overflow-x-auto">
@@ -1747,6 +1754,43 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ initialIntent, clearIn
             </table>
           </div>
         </div>
+          <div className="mt-5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden print-container">
+            <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-800">
+              <h2 className="text-sm font-bold text-slate-900 dark:text-white">گزارش سنی بدهی به تأمین‌کنندگان</h2>
+              <p className="text-xs text-slate-500 mt-0.5">مانده باز فاکتورهای خرید بر اساس سررسید؛ مبالغ بدون فاکتور متناظر به‌صورت محافظه‌کارانه در بازه بیش از ۹۰ روز نمایش داده می‌شوند.</p>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-right text-xs border-collapse">
+                <thead><tr className="border-b border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/60 text-slate-500">
+                  <th className="py-3 px-4">تأمین‌کننده</th><th className="py-3 px-3 text-left">۰ تا ۳۰ روز</th>
+                  <th className="py-3 px-3 text-left">۳۱ تا ۶۰ روز</th><th className="py-3 px-3 text-left">۶۱ تا ۹۰ روز</th>
+                  <th className="py-3 px-3 text-left">بالای ۹۰ روز</th><th className="py-3 px-4 text-left">جمع بدهی باز</th>
+                </tr></thead>
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                  {payablesAgingRows.length === 0 ? <tr><td colSpan={6} className="py-8 text-center text-slate-500">بدهی باز ثبت‌شده‌ای برای تأمین‌کنندگان وجود ندارد.</td></tr> :
+                    payablesAgingRows.map((r) => <tr key={r.partyId} className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
+                      <td className="py-2.5 px-4"><div className="font-semibold text-slate-900 dark:text-white">{r.partyName}</div>
+                        <div className="text-[11px] text-slate-500 font-code">کد {toPersianDigits(r.partyCode)} · قدیمی‌ترین سررسید: {r.oldestInvoiceDate ? toPersianDigits(r.oldestInvoiceDate) : 'مانده اول دوره'}</div></td>
+                      <td className="py-2.5 px-3 text-left font-code">{r.bucket0to30 > 0 ? formatMoney(r.bucket0to30, unit, false) : '—'}</td>
+                      <td className="py-2.5 px-3 text-left font-code text-amber-700">{r.bucket31to60 > 0 ? formatMoney(r.bucket31to60, unit, false) : '—'}</td>
+                      <td className="py-2.5 px-3 text-left font-code text-orange-700">{r.bucket61to90 > 0 ? formatMoney(r.bucket61to90, unit, false) : '—'}</td>
+                      <td className="py-2.5 px-3 text-left font-code font-bold text-rose-700">{r.bucketOver90 > 0 ? formatMoney(r.bucketOver90, unit, false) : '—'}</td>
+                      <td className="py-2.5 px-4 text-left font-code font-bold">{formatMoney(r.totalPayable, unit, false)}</td>
+                    </tr>)
+                  }
+                </tbody>
+                {payablesAgingRows.length > 0 && <tfoot><tr className="border-t-2 border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 font-bold">
+                  <td className="py-3 px-4">جمع کل بدهی‌ها</td>
+                  <td className="py-3 px-3 text-left font-code">{formatMoney(payablesAgingRows.reduce((s, r) => s + r.bucket0to30, 0), unit, false)}</td>
+                  <td className="py-3 px-3 text-left font-code">{formatMoney(payablesAgingRows.reduce((s, r) => s + r.bucket31to60, 0), unit, false)}</td>
+                  <td className="py-3 px-3 text-left font-code">{formatMoney(payablesAgingRows.reduce((s, r) => s + r.bucket61to90, 0), unit, false)}</td>
+                  <td className="py-3 px-3 text-left font-code text-rose-700">{formatMoney(payablesAgingRows.reduce((s, r) => s + r.bucketOver90, 0), unit, false)}</td>
+                  <td className="py-3 px-4 text-left font-code">{formatMoney(payablesAgingRows.reduce((s, r) => s + r.totalPayable, 0), unit, false)}</td>
+                </tr></tfoot>}
+              </table>
+            </div>
+          </div>
+        </>
       )}
 
       {/* Broker / Intermediary Commissions Report */}

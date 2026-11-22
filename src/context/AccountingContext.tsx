@@ -1,29 +1,12 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
-import { onAuthStateChanged, User } from 'firebase/auth';
+import type { User } from '@supabase/supabase-js';
 import {
-  collection,
-  deleteDoc,
-  doc,
-  getDoc,
-  getDocs,
-  onSnapshot,
-  query,
-  serverTimestamp,
-  setDoc,
-  updateDoc,
-  where,
-  writeBatch,
-} from 'firebase/firestore';
-import {
-  auth,
-  db,
-  handleFirestoreError,
-  isFirestoreOfflineError,
-  OperationType,
-  signInWithGoogle,
-  signOutAccount,
-  testFirestoreConnection,
-} from '../lib/firebase';
+  auth, db, collection, deleteDoc, doc, getDoc, getDocs, onAuthStateChanged,
+  onSnapshot, query, serverTimestamp, setDoc, updateDoc, where, writeBatch,
+  handleSupabaseError, isSupabaseOfflineError, OperationType, signOutAccount,
+  testSupabaseConnection, setActiveCompanyId,
+} from '../lib/supabaseStore';
+import { ensurePasswordlessSession, getBillionMembership, acceptBillionInvite, bootstrapBillionCompany, createBillionInvite } from '../lib/supabaseEnrollment';
 import {
   Account,
   AuditActivityLog,
@@ -49,8 +32,9 @@ import {
   VoucherType,
 } from '../types/accounting';
 import { createHolooSeedData } from '../data/holooSeed';
-import { loadLocalAccountingSnapshot, saveLocalAccountingSnapshot } from '../lib/localAccountingStore';
+import { getOrCreateLocalDeviceIdentity, loadLocalAccountingSnapshot, LocalDeviceIdentity, saveLocalAccountingSnapshot } from '../lib/localAccountingStore';
 import { FxRevaluationRow } from '../lib/enterpriseAccounting';
+import { assertSufficientStock, validateJournalEntryPayload } from '../lib/enterpriseControls';
 import {
   AuditReport,
   buildInvoiceVoucherLines,
@@ -76,6 +60,7 @@ interface AccountingContextValue {
   authReady: boolean;
   isCloudMode: boolean;
   isSyncing: boolean;
+  deviceIdentity: LocalDeviceIdentity | null;
   profile: CompanyProfile;
   accounts: Account[];
   parties: Party[];
@@ -102,7 +87,9 @@ interface AccountingContextValue {
   auditReport: AuditReport;
   toast: string | null;
   showToast: (msg: string) => void;
-  loginWithGoogle: () => Promise<void>;
+  bootstrapCloud: (token: string) => Promise<void>;
+  joinCloud: (token: string) => Promise<void>;
+  createDeviceInvite: () => Promise<string>;
   logout: () => Promise<void>;
   updateCompanyProfile: (patch: Partial<CompanyProfile>) => Promise<void>;
   setCurrencyUnit: (unit: CurrencyUnit) => Promise<void>;
@@ -254,6 +241,31 @@ const AccountingContext = createContext<AccountingContextValue | null>(null);
 
 const DEMO_OWNER = 'demo_holoo_apex';
 
+const getShamsiYearEndDate = (yearLabel: string): string => {
+  const year = Number(yearLabel);
+  if (!Number.isInteger(year) || year < 1200 || year > 1600) {
+    throw new Error('سال مالی برای محاسبه تاریخ اختتامیه معتبر نیست.');
+  }
+  const formatter = new Intl.DateTimeFormat('en-US-u-ca-persian', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  });
+  const targetNextYear = year + 1;
+  for (let day = 19; day <= 22; day += 1) {
+    const newYearDate = new Date(Date.UTC(year + 622, 2, day, 12));
+    const parts = formatter.formatToParts(newYearDate);
+    const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+    if (Number(values.year) === targetNextYear && Number(values.month) === 1 && Number(values.day) === 1) {
+      const lastDay = new Date(newYearDate.getTime() - 24 * 60 * 60 * 1000);
+      const endParts = formatter.formatToParts(lastDay);
+      const endValues = Object.fromEntries(endParts.map((part) => [part.type, part.value]));
+      return `${year}/12/${String(Number(endValues.day)).padStart(2, '0')}`;
+    }
+  }
+  throw new Error(`تاریخ پایان سال شمسی ${year} قابل محاسبه نیست.`);
+};
+
 const DEFAULT_PROFILE: CompanyProfile = {
   uid: DEMO_OWNER,
   displayName: 'مهندس مهران باختری',
@@ -273,6 +285,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const [authReady, setAuthReady] = useState(false);
   const [localDataReady, setLocalDataReady] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [deviceIdentity, setDeviceIdentity] = useState<LocalDeviceIdentity | null>(null);
   const [toast, setToast] = useState<string | null>(null);
 
   const [profile, setProfile] = useState<CompanyProfile>(DEFAULT_PROFILE);
@@ -313,8 +326,10 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     let cancelled = false;
     let unsubscribe: (() => void) | undefined;
 
-    loadLocalAccountingSnapshot()
-      .then((saved) => {
+    Promise.all([loadLocalAccountingSnapshot(), getOrCreateLocalDeviceIdentity()])
+      .then(([saved, identity]) => {
+        if (cancelled) return;
+        setDeviceIdentity(identity);
         if (cancelled) return;
         if (saved) {
           if (saved.profile) setProfile(saved.profile as CompanyProfile);
@@ -343,10 +358,29 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       .finally(() => {
         if (cancelled) return;
         setLocalDataReady(true);
-        testFirestoreConnection();
-        unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
-          setUser(firebaseUser);
-          setAuthReady(true);
+        void testSupabaseConnection();
+        unsubscribe = onAuthStateChanged(auth, (supabaseUser) => {
+          if (!supabaseUser) {
+            setActiveCompanyId(null);
+            setUser(null);
+            setAuthReady(true);
+            return;
+          }
+          void getBillionMembership().then((membership) => {
+            if (membership) {
+              setActiveCompanyId(membership.company_id);
+              setUser(supabaseUser);
+            } else {
+              setActiveCompanyId(null);
+              setUser(null);
+            }
+            setAuthReady(true);
+          }).catch((error) => {
+            console.error('Supabase membership check failed:', error);
+            setActiveCompanyId(null);
+            setUser(null);
+            setAuthReady(true);
+          });
         });
       });
 
@@ -372,47 +406,49 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   ]);
 
   const ensureCloudSeed = useCallback(
-    async (firebaseUser: User) => {
-      const uid = firebaseUser.uid;
+    async (supabaseUser: User) => {
       setIsSyncing(true);
       try {
+        const membership = await getBillionMembership();
+        if (!membership) {
+          setActiveCompanyId(null);
+          showToast('این دستگاه هنوز عضو شرکت نیست؛ با کلید راه‌اندازی یا کد دعوت به شرکت متصل شوید.');
+          return;
+        }
+        setActiveCompanyId(membership.company_id);
+        const uid = supabaseUser.id;
         const profileRef = doc(db, 'users', uid);
         const profileSnap = await getDoc(profileRef);
         if (!profileSnap.exists()) {
           await setDoc(profileRef, {
             uid,
-            displayName: (firebaseUser.displayName || 'مدیر مالی').slice(0, 120),
-            email: (firebaseUser.email || '').slice(0, 200),
+            displayName: String(supabaseUser.user_metadata?.full_name || 'مدیر مالی').slice(0, 120),
+            email: (supabaseUser.email || '').slice(0, 200),
             companyName: DEFAULT_PROFILE.companyName,
             economicCode: DEFAULT_PROFILE.economicCode,
             nationalId: DEFAULT_PROFILE.nationalId,
             fiscalYear: DEFAULT_PROFILE.fiscalYear,
             currencyUnit: DEFAULT_PROFILE.currencyUnit,
-            role: 'accountant',
+            role: membership.role,
             createdAt: serverTimestamp(),
             updatedAt: serverTimestamp(),
           });
         }
-
-        const accQuery = query(collection(db, 'accounts'), where('ownerId', '==', uid));
-        const existingAccs = await getDocs(accQuery);
+        const existingAccs = await getDocs(query(collection(db, 'accounts'), where('ownerId', '==', uid)));
         if (existingAccs.empty) {
           const seed = createHolooSeedData(uid);
           const batch = writeBatch(db);
-          const now = serverTimestamp();
-
           const putAll = <T extends { id: string }>(colName: string, items: T[]) => {
             items.forEach((item) => {
               const { id, ...rest } = item;
-              const docId = `${uid.slice(0, 10)}_${id}`;
-              batch.set(doc(db, colName, docId), {
+              batch.set(doc(db, colName, id), {
                 ...rest,
-                createdAt: now,
-                updatedAt: now,
+                ownerId: uid,
+                createdAt: serverTimestamp(),
+                updatedAt: serverTimestamp(),
               });
             });
           };
-
           putAll('accounts', seed.accounts);
           putAll('parties', seed.parties);
           putAll('products', seed.products);
@@ -424,44 +460,28 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           putAll('assets', seed.assets);
           putAll('currencies', seed.currencies);
           putAll('exchangeRates', seed.exchangeRates);
-
           await batch.commit();
-          showToast('فضای کاری شرکتی هلو Apex در فضای ابری با موفقیت ایجاد و همگام‌سازی شد.');
+          showToast('فضای کاری اولیه در Supabase ایجاد شد.');
         } else {
-          // Ensure multi-currency collections are bootstrapped for existing cloud workspaces
-          const curQuery = query(collection(db, 'currencies'), where('ownerId', '==', uid));
-          const existingCurs = await getDocs(curQuery);
-          if (existingCurs.empty) {
+          const existingCurrencies = await getDocs(query(collection(db, 'currencies'), where('ownerId', '==', uid)));
+          if (existingCurrencies.empty) {
             const seed = createHolooSeedData(uid);
             const batch = writeBatch(db);
-            const now = serverTimestamp();
-            seed.currencies.forEach((item) => {
-              const { id, ...rest } = item;
-              batch.set(doc(db, 'currencies', `${uid.slice(0, 10)}_${id}`), {
-                ...rest,
-                createdAt: now,
-                updatedAt: now,
-              });
-            });
-            seed.exchangeRates.forEach((item) => {
-              const { id, ...rest } = item;
-              batch.set(doc(db, 'exchangeRates', `${uid.slice(0, 10)}_${id}`), {
-                ...rest,
-                createdAt: now,
-                updatedAt: now,
-              });
-            });
+            seed.currencies.forEach((item) => batch.set(doc(db, 'currencies', item.id), {
+              ...item, ownerId: uid, createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
+            }));
+            seed.exchangeRates.forEach((item) => batch.set(doc(db, 'exchangeRates', item.id), {
+              ...item, ownerId: uid, createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
+            }));
             await batch.commit();
           }
         }
       } catch (error) {
-        if (isFirestoreOfflineError(error)) {
-          showToast(
-            'ارتباط موقت با سرور ابری برقرار نشد؛ برنامه در حالت آفلاین فعال است و پس از اتصال همگام‌سازی می‌شود.'
-          );
+        if (isSupabaseOfflineError(error)) {
+          showToast('ارتباط با Supabase برقرار نیست؛ داده‌های محلی در دسترس می‌مانند.');
           return;
         }
-        handleFirestoreError(error, OperationType.WRITE, `users/${uid}`);
+        handleSupabaseError(error, OperationType.WRITE, 'billion_records');
       } finally {
         setIsSyncing(false);
       }
@@ -479,7 +499,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     ensureCloudSeed(user)
       .then(() => {
         if (cancelled) return;
-        const uid = user.uid;
+        const uid = user.id;
 
         unsubs.push(
           onSnapshot(
@@ -501,8 +521,8 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
               }
             },
             (err) => {
-              if (isFirestoreOfflineError(err)) return;
-              handleFirestoreError(err, OperationType.GET, `users/${uid}`);
+              if (isSupabaseOfflineError(err)) return;
+              handleSupabaseError(err, OperationType.GET, `users/${uid}`);
             }
           )
         );
@@ -520,8 +540,8 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
                 setter(list);
               },
               (err) => {
-                if (isFirestoreOfflineError(err)) return;
-                handleFirestoreError(err, OperationType.LIST, colName);
+                if (isSupabaseOfflineError(err)) return;
+                handleSupabaseError(err, OperationType.LIST, colName);
               }
             )
           );
@@ -549,7 +569,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     };
   }, [authReady, user, ensureCloudSeed]);
 
-  const ownerId = user?.uid ?? DEMO_OWNER;
+  const ownerId = user?.id ?? DEMO_OWNER;
   const isCloudMode = !!user;
 
   const trialBalance = useMemo(() => computeTrialBalance(accounts, vouchers), [accounts, vouchers]);
@@ -572,15 +592,42 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     [accounts, vouchers, invoices, parties, products, cheques, trialBalance, balanceSheet, partyBalances]
   );
 
-  const loginWithGoogle = useCallback(async () => {
-    try {
-      await signInWithGoogle();
-      showToast('ورود با حساب گوگل انجام شد. همگام‌سازی ابری فعال است.');
-    } catch (err) {
-      console.error(err);
-      showToast('ورود با حساب گوگل لغو شد یا با خطا مواجه گردید.');
+  const completeEnrollment = useCallback(async (mode: 'bootstrap' | 'invite', token: string) => {
+    const session = await ensurePasswordlessSession();
+    const deviceId = deviceIdentity?.deviceId;
+    if (!deviceId) throw new Error('شناسه این دستگاه آماده نیست.');
+    const platform = typeof navigator !== 'undefined' && /android/i.test(navigator.userAgent)
+      ? 'android'
+      : typeof navigator !== 'undefined' && /iphone|ipad/i.test(navigator.userAgent) ? 'ios' : 'web';
+    const deviceLabel = platform === 'android' ? 'دستگاه Android' : platform === 'ios' ? 'دستگاه iOS' : 'دستگاه مرورگر';
+    if (mode === 'bootstrap') {
+      await bootstrapBillionCompany({
+        bootstrapToken: token,
+        companyName: DEFAULT_PROFILE.companyName,
+        deviceId,
+        deviceLabel,
+        platform,
+      });
+    } else {
+      await acceptBillionInvite({ token, deviceId, deviceLabel, platform });
     }
-  }, [showToast]);
+    const membership = await getBillionMembership();
+    if (!membership) throw new Error('عضویت شرکت پس از ثبت دعوت‌نامه تأیید نشد.');
+    setActiveCompanyId(membership.company_id);
+    setUser(session.user);
+    setAuthReady(true);
+    showToast(mode === 'bootstrap' ? 'شرکت در Supabase راه‌اندازی شد.' : 'این دستگاه به شرکت متصل شد.');
+  }, [deviceIdentity, ensureCloudSeed, showToast]);
+
+  const bootstrapCloud = useCallback((token: string) => completeEnrollment('bootstrap', token), [completeEnrollment]);
+  const joinCloud = useCallback((token: string) => completeEnrollment('invite', token), [completeEnrollment]);
+
+  const createDeviceInvite = useCallback(async () => {
+    const result = await createBillionInvite('member');
+    const token = String(result.invite_token ?? '');
+    if (!token) throw new Error('کد دعوت از Supabase دریافت نشد.');
+    return token;
+  }, []);
 
   const logout = useCallback(async () => {
     await signOutAccount();
@@ -592,9 +639,9 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       const next = { ...profile, ...patch };
       setProfile(next);
       if (user) {
-        const path = `users/${user.uid}`;
+        const path = `users/${user.id}`;
         try {
-          await updateDoc(doc(db, 'users', user.uid), {
+          await updateDoc(doc(db, 'users', user.id), {
             displayName: next.displayName.slice(0, 120),
             companyName: next.companyName.slice(0, 160),
             economicCode: (next.economicCode || '').slice(0, 32),
@@ -604,7 +651,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             updatedAt: serverTimestamp(),
           });
         } catch (err) {
-          handleFirestoreError(err, OperationType.UPDATE, path);
+          handleSupabaseError(err, OperationType.UPDATE, path);
         }
       }
       showToast('مشخصات شرکتی و سال مالی ذخیره شد.');
@@ -639,7 +686,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             updatedAt: serverTimestamp(),
           });
         } catch (err) {
-          handleFirestoreError(err, OperationType.CREATE, `accounts/${id}`);
+          handleSupabaseError(err, OperationType.CREATE, `accounts/${id}`);
         }
       } else {
         setAccounts((prev) => [...prev, full]);
@@ -666,7 +713,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         try {
           await updateDoc(doc(db, 'accounts', accountId), updatePayload);
         } catch (err) {
-          handleFirestoreError(err, OperationType.UPDATE, `accounts/${accountId}`);
+          handleSupabaseError(err, OperationType.UPDATE, `accounts/${accountId}`);
         }
       } else {
         setAccounts((prev) =>
@@ -695,7 +742,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         try {
           await deleteDoc(doc(db, 'accounts', accountId));
         } catch (err) {
-          handleFirestoreError(err, OperationType.DELETE, `accounts/${accountId}`);
+          handleSupabaseError(err, OperationType.DELETE, `accounts/${accountId}`);
         }
       } else {
         setAccounts((prev) => prev.filter((a) => a.id !== accountId));
@@ -736,7 +783,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             updatedAt: serverTimestamp(),
           });
         } catch (err) {
-          handleFirestoreError(err, OperationType.CREATE, `parties/${id}`);
+          handleSupabaseError(err, OperationType.CREATE, `parties/${id}`);
         }
       } else {
         setParties((prev) => [full, ...prev]);
@@ -771,7 +818,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           }
           await updateDoc(doc(db, 'parties', partyId), payload);
         } catch (err) {
-          handleFirestoreError(err, OperationType.UPDATE, `parties/${partyId}`);
+          handleSupabaseError(err, OperationType.UPDATE, `parties/${partyId}`);
         }
       } else {
         setParties((prev) => prev.map((p) => (p.id === partyId ? { ...p, ...patch } : p)));
@@ -795,7 +842,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         try {
           await deleteDoc(doc(db, 'parties', partyId));
         } catch (err) {
-          handleFirestoreError(err, OperationType.DELETE, `parties/${partyId}`);
+          handleSupabaseError(err, OperationType.DELETE, `parties/${partyId}`);
         }
       } else {
         setParties((prev) => prev.filter((p) => p.id !== partyId));
@@ -818,6 +865,8 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       currencyCode?: string;
       exchangeRate?: number;
     }): Promise<Voucher> => {
+      validateJournalEntryPayload(payload);
+      if (payload.voucherType !== 'closing' && vouchers.some((voucher) => voucher.voucherType === 'closing' && voucher.date.slice(0, 4) === payload.date.slice(0, 4))) { const message = `دوره مالی ${payload.date.slice(0, 4)} بسته شده است؛ ثبت سند جدید مجاز نیست.`; showToast(message); throw new Error(message); }
       const totalDebit = payload.lines.reduce((s, l) => s + (Number(l.debit) || 0), 0);
       const totalCredit = payload.lines.reduce((s, l) => s + (Number(l.credit) || 0), 0);
       if (Math.abs(totalDebit - totalCredit) > 0 || payload.lines.length < 2) {
@@ -891,7 +940,8 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             updatedAt: serverTimestamp(),
           });
         } catch (err) {
-          handleFirestoreError(err, OperationType.CREATE, `vouchers/${id}`);
+          handleSupabaseError(err, OperationType.CREATE, `vouchers/${id}`);
+          throw err;
         }
       } else {
         setVouchers((prev) => [...prev, full]);
@@ -919,8 +969,10 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         exchangeRate?: number;
       }
     ) => {
+      validateJournalEntryPayload(payload);
       const existing = vouchers.find((v) => v.id === voucherId);
       if (!existing) return;
+      if (vouchers.some((voucher) => voucher.voucherType === 'closing' && (voucher.date.slice(0, 4) === existing.date.slice(0, 4) || voucher.date.slice(0, 4) === payload.date.slice(0, 4)))) { const message = `دوره مالی ${existing.date.slice(0, 4)} بسته شده است؛ ویرایش سند مجاز نیست.`; showToast(message); throw new Error(message); }
       if (existing.status === 'permanent') {
         showToast('اسناد دائم طبق قانون دفاتر قابل ویرایش مستقیم نیستند؛ از دکمه «صدور سند اصلاحی/معکوس» استفاده کنید.');
         return;
@@ -966,7 +1018,8 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             updatedAt: serverTimestamp(),
           });
         } catch (err) {
-          handleFirestoreError(err, OperationType.UPDATE, `vouchers/${voucherId}`);
+          handleSupabaseError(err, OperationType.UPDATE, `vouchers/${voucherId}`);
+          throw err;
         }
       } else {
         setVouchers((prev) =>
@@ -999,6 +1052,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     async (voucherId: string): Promise<boolean> => {
       const existing = vouchers.find((v) => v.id === voucherId);
       if (!existing) return false;
+      if (vouchers.some((voucher) => voucher.voucherType === 'closing' && voucher.date.slice(0, 4) === existing.date.slice(0, 4))) { showToast(`دوره مالی ${existing.date.slice(0, 4)} بسته شده است؛ حذف سند مجاز نیست.`); return false; }
       if (existing.status === 'permanent') {
         showToast('حذف سند دائم مجاز نیست! برای ابطال اثر سند دائم، «سند معکوس» صادر کنید.');
         return false;
@@ -1007,7 +1061,8 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         try {
           await deleteDoc(doc(db, 'vouchers', voucherId));
         } catch (err) {
-          handleFirestoreError(err, OperationType.DELETE, `vouchers/${voucherId}`);
+          handleSupabaseError(err, OperationType.DELETE, `vouchers/${voucherId}`);
+          throw err;
         }
       } else {
         setVouchers((prev) => prev.filter((v) => v.id !== voucherId));
@@ -1020,6 +1075,9 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
   const finalizeVoucher = useCallback(
     async (voucherId: string) => {
+      const existing = vouchers.find((voucher) => voucher.id === voucherId);
+      if (!existing) return;
+      if (vouchers.some((voucher) => voucher.voucherType === 'closing' && voucher.date.slice(0, 4) === existing.date.slice(0, 4))) { const message = `دوره مالی ${existing.date.slice(0, 4)} بسته شده است؛ قطعی‌سازی سند مجاز نیست.`; showToast(message); throw new Error(message); }
       if (user) {
         try {
           await updateDoc(doc(db, 'vouchers', voucherId), {
@@ -1027,7 +1085,8 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             updatedAt: serverTimestamp(),
           });
         } catch (err) {
-          handleFirestoreError(err, OperationType.UPDATE, `vouchers/${voucherId}`);
+          handleSupabaseError(err, OperationType.UPDATE, `vouchers/${voucherId}`);
+          throw err;
         }
       } else {
         setVouchers((prev) =>
@@ -1036,7 +1095,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       }
       showToast('سند حسابداری به وضعیت «دائم و قطعی» تبدیل شد.');
     },
-    [user, showToast]
+    [vouchers, user, showToast]
   );
 
   const createReversingVoucher = useCallback(
@@ -1090,7 +1149,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         });
         await batch.commit();
       } catch (err) {
-        handleFirestoreError(err, OperationType.UPDATE, 'vouchers');
+        handleSupabaseError(err, OperationType.UPDATE, 'vouchers');
       }
     } else {
       const numMap = new Map<string, number>();
@@ -1136,7 +1195,8 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             updatedAt: serverTimestamp(),
           });
         } catch (err) {
-          handleFirestoreError(err, OperationType.CREATE, `products/${id}`);
+          handleSupabaseError(err, OperationType.CREATE, `products/${id}`);
+          throw err;
         }
       } else {
         setProducts((prev) => [full, ...prev]);
@@ -1149,7 +1209,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const updateProduct = useCallback(
     async (productId: string, patch: Partial<Omit<Product, 'id' | 'ownerId' | 'sku'>>) => {
       const existing = products.find((p) => p.id === productId);
-      if (!existing) return;
+      if (!existing) throw new Error(`کالای موردنظر برای ویرایش یافت نشد: ${productId}`);
       if (user) {
         try {
           const payload: Record<string, unknown> = { updatedAt: serverTimestamp() };
@@ -1175,7 +1235,8 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           if (patch.vatExempt !== undefined) payload.vatExempt = Boolean(patch.vatExempt);
           await updateDoc(doc(db, 'products', productId), payload);
         } catch (err) {
-          handleFirestoreError(err, OperationType.UPDATE, `products/${productId}`);
+          handleSupabaseError(err, OperationType.UPDATE, `products/${productId}`);
+          throw err;
         }
       } else {
         setProducts((prev) => prev.map((p) => (p.id === productId ? { ...p, ...patch } : p)));
@@ -1198,7 +1259,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         try {
           await deleteDoc(doc(db, 'products', productId));
         } catch (err) {
-          handleFirestoreError(err, OperationType.DELETE, `products/${productId}`);
+          handleSupabaseError(err, OperationType.DELETE, `products/${productId}`);
         }
       } else {
         setProducts((prev) => prev.filter((p) => p.id !== productId));
@@ -1211,6 +1272,9 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
   const adjustProductStock = useCallback(
     async (productId: string, newStock: number) => {
+      const product = products.find((item) => item.id === productId);
+      if (!product) throw new Error(`کالای موردنظر برای تعدیل موجودی یافت نشد: ${productId}`);
+      if (!Number.isFinite(newStock) || newStock < 0) throw new Error('موجودی جدید باید عددی معتبر و غیرمنفی باشد.');
       if (user) {
         try {
           await updateDoc(doc(db, 'products', productId), {
@@ -1218,7 +1282,8 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             updatedAt: serverTimestamp(),
           });
         } catch (err) {
-          handleFirestoreError(err, OperationType.UPDATE, `products/${productId}`);
+          handleSupabaseError(err, OperationType.UPDATE, `products/${productId}`);
+          throw err;
         }
       } else {
         setProducts((prev) =>
@@ -1226,13 +1291,14 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         );
       }
     },
-    [user]
+    [user, products]
   );
 
   const adjustProductStockWithVoucher = useCallback(
     async (productId: string, countedStock: number, reason: string) => {
       const prod = products.find((p) => p.id === productId);
-      if (!prod) return;
+      if (!prod) throw new Error(`کالای موردنظر برای انبارگردانی یافت نشد: ${productId}`);
+      if (!Number.isFinite(countedStock) || countedStock < 0) throw new Error('موجودی شمارش‌شده باید عددی معتبر و غیرمنفی باشد.');
       const cleanCounted = Math.max(0, Number(countedStock.toFixed(2)));
       const diffQty = Number((cleanCounted - prod.stock).toFixed(2));
       if (diffQty === 0) {
@@ -1279,14 +1345,24 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
                 },
               ];
 
-        await createVoucher({
-          date: getTodayShamsi(),
-          description: `سند تعدیل انبارگردانی کالا ${prod.sku} (${diffQty > 0 ? 'اضافی' : 'کسری'} ${Math.abs(diffQty)} ${prod.unit})`,
-          voucherType: 'general',
-          status: 'permanent',
-          lines,
-          referenceId: prod.id,
-        });
+        try {
+          await createVoucher({
+            date: getTodayShamsi(),
+            description: `سند تعدیل انبارگردانی کالا ${prod.sku} (${diffQty > 0 ? 'اضافی' : 'کسری'} ${Math.abs(diffQty)} ${prod.unit})`,
+            voucherType: 'general',
+            status: 'permanent',
+            lines,
+            referenceId: prod.id,
+          });
+        } catch (error) {
+          try {
+            await adjustProductStock(productId, prod.stock);
+          } catch (rollbackError) {
+            console.error('Inventory adjustment rollback failed:', rollbackError);
+            throw new Error(`ثبت سند انبارگردانی ناموفق بود و برگشت موجودی کالا ${prod.sku} نیز شکست خورد؛ مغایرت موجودی نیازمند رسیدگی دستی است. علت ثبت سند: ${error instanceof Error ? error.message : String(error)}؛ علت برگشت: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`);
+          }
+          throw error;
+        }
       } else {
         showToast('موجودی انبارگردانی با موفقیت تعدیل شد.');
       }
@@ -1297,16 +1373,24 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const bulkStocktakingWithVoucher = useCallback(
     async (items: { productId: string; countedStock: number }[], reason: string) => {
       const voucherLines: VoucherLine[] = [];
+      const changedProducts: Array<{ productId: string; previousStock: number }> = [];
       let changedCount = 0;
-
+      const requestedIds = items.map((entry) => entry.productId);
+      if (new Set(requestedIds).size !== requestedIds.length) throw new Error('در فهرست انبارگردانی، یک کالا بیش از یک بار تکرار شده است.');
       for (const entry of items) {
-        const prod = products.find((p) => p.id === entry.productId);
-        if (!prod) continue;
+        if (!Number.isFinite(entry.countedStock) || entry.countedStock < 0) throw new Error(`موجودی شمارش‌شده برای کالا ${entry.productId} معتبر نیست.`);
+        if (!products.some((product) => product.id === entry.productId)) throw new Error(`کالای انبارگردانی یافت نشد: ${entry.productId}`);
+      }
+
+      try {
+      for (const entry of items) {
+        const prod = products.find((p) => p.id === entry.productId)!;
         const safeCounted = Math.max(0, Number(entry.countedStock.toFixed(2)));
         const diffQty = Number((safeCounted - prod.stock).toFixed(2));
         if (diffQty === 0) continue;
 
         changedCount += 1;
+        changedProducts.push({ productId: prod.id, previousStock: prod.stock });
         await adjustProductStock(prod.id, safeCounted);
         const valueDiff = Math.round(Math.abs(diffQty) * prod.buyPrice);
         if (valueDiff > 0) {
@@ -1366,6 +1450,21 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       } else {
         showToast(`موجودی ${changedCount} قلم کالا با موفقیت اصلاح شد.`);
       }
+      } catch (error) {
+        const rollbackResults = await Promise.allSettled(
+          changedProducts.map((entry) => adjustProductStock(entry.productId, entry.previousStock)),
+        );
+        const rollbackFailures = rollbackResults.flatMap((result, index) =>
+          result.status === 'rejected'
+            ? [`${changedProducts[index].productId}: ${result.reason instanceof Error ? result.reason.message : String(result.reason)}`]
+            : [],
+        );
+        if (rollbackFailures.length > 0) {
+          console.error('Bulk stocktake rollback failures:', rollbackFailures);
+          throw new Error(`ثبت سند انبارگردانی تجمیعی ناموفق بود و برگشت موجودی ${rollbackFailures.length} کالا نیز شکست خورد؛ مغایرت این کالاها نیازمند رسیدگی دستی است: ${rollbackFailures.join(' | ')}. علت اولیه: ${error instanceof Error ? error.message : String(error)}`);
+        }
+        throw error;
+      }
     },
     [products, adjustProductStock, createVoucher, showToast]
   );
@@ -1418,7 +1517,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             updatedAt: serverTimestamp(),
           });
         } catch (err) {
-          handleFirestoreError(err, OperationType.UPDATE, `products/${productId}`);
+          handleSupabaseError(err, OperationType.UPDATE, `products/${productId}`);
         }
       } else {
         setProducts((prev) =>
@@ -1433,6 +1532,16 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   // ---------------- CHEQUES & TREASURY ----------------
   const addCheque = useCallback(
     async (payload: Omit<Cheque, 'id' | 'ownerId'>, skipVoucher = false) => {
+      const normalizedSayadiId = payload.sayadiId.trim();
+      if (normalizedSayadiId.length < 6 || !payload.serial.trim() || !payload.partyId ||
+          !Number.isFinite(payload.amount) || payload.amount <= 0 ||
+          !/^14\d{2}\/\d{2}\/\d{2}$/.test(payload.issueDate) ||
+          !/^14\d{2}\/\d{2}\/\d{2}$/.test(payload.dueDate)) {
+        throw new Error('شناسه صیادی، سریال، طرف‌حساب، مبلغ یا تاریخ چک معتبر نیست.');
+      }
+      if (cheques.some((cheque) => cheque.sayadiId.trim() === normalizedSayadiId)) {
+        throw new Error('شناسه صیادی این چک قبلاً در سیستم ثبت شده است.');
+      }
       const id = generateSafeId('chq');
       const full: Cheque = { ...payload, id, ownerId };
 
@@ -1456,7 +1565,8 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             updatedAt: serverTimestamp(),
           });
         } catch (err) {
-          handleFirestoreError(err, OperationType.CREATE, `cheques/${id}`);
+          handleSupabaseError(err, OperationType.CREATE, `cheques/${id}`);
+          throw err;
         }
       } else {
         setCheques((prev) => [full, ...prev]);
@@ -1506,17 +1616,27 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
                 },
               ];
 
-        await createVoucher({
-          date: payload.issueDate,
-          description: `ثبت چک صیادی ${payload.sayadiId} — ${payload.partyName}`,
-          voucherType: 'treasury',
-          status: 'permanent',
-          lines,
-          referenceId: id,
-        });
+        try {
+          await createVoucher({
+            date: payload.issueDate,
+            description: `ثبت چک صیادی ${payload.sayadiId} — ${payload.partyName}`,
+            voucherType: 'treasury',
+            status: 'permanent',
+            lines,
+            referenceId: id,
+          });
+        } catch (error) {
+          if (user) {
+            try { await deleteDoc(doc(db, 'cheques', id)); }
+            catch (rollbackError) { console.error('Cheque creation rollback failed', id, rollbackError); }
+          } else {
+            setCheques((prev) => prev.filter((cheque) => cheque.id !== id));
+          }
+          throw error;
+        }
       }
     },
-    [ownerId, user, createVoucher]
+    [ownerId, user, cheques, createVoucher]
   );
 
   const updateCheque = useCallback(
@@ -1533,7 +1653,8 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           if (patch.notes !== undefined) payload.notes = patch.notes.slice(0, 300);
           await updateDoc(doc(db, 'cheques', chequeId), payload);
         } catch (err) {
-          handleFirestoreError(err, OperationType.UPDATE, `cheques/${chequeId}`);
+          handleSupabaseError(err, OperationType.UPDATE, `cheques/${chequeId}`);
+          throw err;
         }
       } else {
         setCheques((prev) => prev.map((c) => (c.id === chequeId ? { ...c, ...patch } : c)));
@@ -1779,6 +1900,20 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         }
       }
 
+      let transitionVoucher: Voucher | undefined;
+      if (lines.length >= 2) {
+        const transitionPrefix = 'cheque-status:' + chequeId + ':' + chq.status + ':' + newStatus + ':';
+        const transitionIndex = vouchers.filter((voucher) => voucher.referenceId?.startsWith(transitionPrefix)).length;
+        transitionVoucher = await createVoucher({
+          date: getTodayShamsi(),
+          description: desc,
+          voucherType: 'treasury',
+          status: 'permanent',
+          lines,
+          referenceId: transitionPrefix + transitionIndex,
+        });
+      }
+
       if (user) {
         try {
           await updateDoc(doc(db, 'cheques', chequeId), {
@@ -1786,28 +1921,30 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             updatedAt: serverTimestamp(),
           });
         } catch (err) {
-          handleFirestoreError(err, OperationType.UPDATE, `cheques/${chequeId}`);
+          if (transitionVoucher) {
+            try {
+              await createVoucher({
+                date: getTodayShamsi(),
+                description: 'سند معکوس خودکار بابت عدم ثبت تغییر وضعیت چک ' + chq.sayadiId,
+                voucherType: 'treasury',
+                status: 'permanent',
+                referenceId: 'cheque-status-compensation:' + transitionVoucher.id,
+                lines: transitionVoucher.lines.map((line) => ({ ...line, description: 'برگشت سند #' + transitionVoucher!.voucherNumber + ': ' + line.description, debit: line.credit, credit: line.debit, foreignDebit: line.foreignCredit, foreignCredit: line.foreignDebit })),
+              });
+            } catch (reversalError) {
+              console.error('Cheque status voucher compensation failed', chequeId, reversalError);
+            }
+          }
+          handleSupabaseError(err, OperationType.UPDATE, 'cheques/' + chequeId);
+          throw err;
         }
       } else {
-        setCheques((prev) =>
-          prev.map((c) => (c.id === chequeId ? { ...c, status: newStatus } : c))
-        );
+        setCheques((prev) => prev.map((c) => (c.id === chequeId ? { ...c, status: newStatus } : c)));
       }
 
-      if (lines.length >= 2) {
-        await createVoucher({
-          date: getTodayShamsi(),
-          description: desc,
-          voucherType: 'treasury',
-          status: 'permanent',
-          lines,
-          referenceId: chequeId,
-        });
-      } else {
-        showToast('وضعیت چک صیادی به‌روزرسانی شد.');
-      }
+      if (lines.length < 2) showToast('وضعیت چک صیادی به‌روزرسانی شد.');
     },
-    [cheques, accounts, parties, user, createVoucher, showToast]
+    [cheques, accounts, parties, vouchers, user, createVoucher, showToast]
   );
 
   const recordQuickTreasury = useCallback(
@@ -1926,72 +2063,68 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       const id = generateSafeId('inv');
       let voucherId: string | undefined;
 
+      const isStockOut = ['sale', 'purchase_return', 'waste'].includes(payload.invoiceType);
+      if (isStockOut) {
+        const subcontractReservations = new Map<string, number>();
+        for (const job of subcontractJobs) {
+          if (job.status !== 'sent') continue;
+          subcontractReservations.set(job.rawProductId, (subcontractReservations.get(job.rawProductId) ?? 0) + job.sentWeightKg);
+        }
+        assertSufficientStock(
+          new Map(products.map((product) => [product.id, Math.max(0, product.stock - (subcontractReservations.get(product.id) ?? 0))])),
+          payload.items.map((item) => ({ productId: item.productId, quantity: item.quantity })),
+        );
+      }
+
       let cogsTotal = 0;
       if (payload.invoiceType !== 'proforma') {
+        const stockDeltas = new Map<string, number>();
         for (const item of payload.items) {
-          const prod = products.find((p) => p.id === item.productId);
-          if (prod) {
-            cogsTotal += Math.round(prod.buyPrice * item.quantity);
-            const isOut =
-              payload.invoiceType === 'sale' ||
-              payload.invoiceType === 'purchase_return' ||
-              payload.invoiceType === 'waste';
-            const delta = isOut ? -item.quantity : item.quantity;
-            await adjustProductStock(prod.id, Math.max(0, Number((prod.stock + delta).toFixed(2))));
+          const product = products.find((candidate) => candidate.id === item.productId);
+          if (!product) throw new Error(`کالای ردیف فاکتور یافت نشد: ${item.productName || item.productId}`);
+          if (!Number.isFinite(item.quantity) || item.quantity <= 0) throw new Error(`مقدار کالا در فاکتور معتبر نیست: ${item.productName || item.productId}`);
+          cogsTotal += Math.round(product.buyPrice * item.quantity);
+          const outgoing = ['sale', 'purchase_return', 'waste'].includes(payload.invoiceType);
+          stockDeltas.set(product.id, (stockDeltas.get(product.id) ?? 0) + (outgoing ? -item.quantity : item.quantity));
+        }
+        const appliedStock: Array<{ productId: string; previousStock: number }> = [];
+        let createdVoucher: Voucher | undefined;
+        try {
+          for (const [productId, delta] of stockDeltas) {
+            const product = products.find((candidate) => candidate.id === productId);
+            if (!product) throw new Error(`کالای فاکتور یافت نشد: ${productId}`);
+            const nextStock = Number((product.stock + delta).toFixed(2));
+            if (!Number.isFinite(nextStock) || nextStock < -1e-9) throw new Error(`موجودی کالا برای ثبت فاکتور کافی نیست: ${product.name}`);
+            await adjustProductStock(product.id, Math.max(0, nextStock));
+            appliedStock.push({ productId, previousStock: product.stock });
           }
-        }
-
-        const rawLines = buildInvoiceVoucherLines(payload, cogsTotal);
-        const isFx = isForeignCurrency(payload.currencyCode) && Number(payload.exchangeRate) > 0;
-        const fxCode = isFx ? normalizeCurrencyCode(payload.currencyCode) : undefined;
-        const fxRate = isFx ? Number(payload.exchangeRate) : undefined;
-        const fxCurDef = fxCode
-          ? currencies.find((c) => normalizeCurrencyCode(c.code) === fxCode)
-          : undefined;
-        const lines =
-          isFx && fxRate
-            ? annotateVoucherLinesWithCurrency(rawLines, fxRate, fxCurDef?.decimalPlaces ?? 2)
-            : rawLines;
-
-        if (lines.length >= 2) {
-          const vType: VoucherType =
-            payload.invoiceType === 'purchase' || payload.invoiceType === 'purchase_return'
-              ? 'purchase'
-              : payload.invoiceType === 'waste'
-                ? 'general'
-                : 'sales';
-          const fxSuffix = isFx && fxCode && fxRate ? ` (ارزی ${fxCode} @ نرخ ${fxRate.toLocaleString('en-US')})` : '';
-          const createdVoucher = await createVoucher({
-            date: payload.date,
-            description: `سند اتوماتیک فاکتور ${payload.invoiceNumber} — ${payload.partyName}${fxSuffix}`,
-            voucherType: vType,
-            status: 'permanent',
-            lines,
-            referenceId: id,
-            ...(isFx && fxCode && fxRate ? { currencyCode: fxCode, exchangeRate: fxRate } : {}),
-          });
-          voucherId = createdVoucher.id;
-        }
-
-        // Auto-register Sayadi cheque record in Treasury if paidCheque > 0 (without double-posting GL)
-        if (payload.paidCheque > 0 && (payload.invoiceType === 'sale' || payload.invoiceType === 'purchase')) {
-          await addCheque(
-            {
-              sayadiId: `SYD${Math.floor(1000000000000 + Math.random() * 8999999999999)}`,
-              serial: `INV-${payload.invoiceNumber.slice(-3)}`,
-              direction: payload.invoiceType === 'sale' ? 'receivable' : 'payable',
-              partyId: payload.partyId,
-              partyName: payload.partyName,
-              bankName: 'بانک ملت',
-              branch: 'ثبت خودکار از فاکتور',
-              amount: payload.paidCheque,
-              issueDate: payload.date,
-              dueDate: payload.date,
-              status: 'in_box',
-              notes: `ثبت خودکار بابت فاکتور ${payload.invoiceNumber}`,
-            },
-            true
-          );
+          const rawLines = buildInvoiceVoucherLines(payload, cogsTotal);
+          const isFx = isForeignCurrency(payload.currencyCode) && Number(payload.exchangeRate) > 0;
+          const fxCode = isFx ? normalizeCurrencyCode(payload.currencyCode) : undefined;
+          const fxRate = isFx ? Number(payload.exchangeRate) : undefined;
+          const fxCurDef = fxCode ? currencies.find((currency) => normalizeCurrencyCode(currency.code) === fxCode) : undefined;
+          const lines = isFx && fxRate ? annotateVoucherLinesWithCurrency(rawLines, fxRate, fxCurDef?.decimalPlaces ?? 2) : rawLines;
+          if (lines.length >= 2) {
+            const voucherType: VoucherType = payload.invoiceType === 'purchase' || payload.invoiceType === 'purchase_return' ? 'purchase' : payload.invoiceType === 'waste' ? 'general' : 'sales';
+            const fxSuffix = isFx && fxCode && fxRate ? ` (ارزی ${fxCode} @ نرخ ${fxRate.toLocaleString('en-US')})` : '';
+            createdVoucher = await createVoucher({ date: payload.date, description: `سند اتوماتیک فاکتور ${payload.invoiceNumber} — ${payload.partyName}${fxSuffix}`, voucherType, status: 'permanent', lines, referenceId: id, ...(isFx && fxCode && fxRate ? { currencyCode: fxCode, exchangeRate: fxRate } : {}) });
+            voucherId = createdVoucher.id;
+          }
+          if (payload.paidCheque > 0 && (payload.invoiceType === 'sale' || payload.invoiceType === 'purchase')) {
+            await addCheque({ sayadiId: `SYD${Math.floor(1000000000000 + Math.random() * 8999999999999)}`, serial: `INV-${payload.invoiceNumber.slice(-3)}`, direction: payload.invoiceType === 'sale' ? 'receivable' : 'payable', partyId: payload.partyId, partyName: payload.partyName, bankName: 'بانک ملت', branch: 'ثبت خودکار از فاکتور', amount: payload.paidCheque, issueDate: payload.date, dueDate: payload.date, status: 'in_box', notes: `ثبت خودکار بابت فاکتور ${payload.invoiceNumber}` }, true);
+          }
+        } catch (error) {
+          for (const snapshot of appliedStock.reverse()) {
+            const product = products.find((candidate) => candidate.id === snapshot.productId);
+            if (!product) continue;
+            try { await adjustProductStock(snapshot.productId, snapshot.previousStock); }
+            catch (rollbackError) { console.error('Invoice stock rollback failed', snapshot.productId, rollbackError); }
+          }
+          if (createdVoucher) {
+            try { await createVoucher({ date: getTodayShamsi(), description: `سند معکوس خودکار بابت عدم تکمیل فاکتور ${payload.invoiceNumber}`, voucherType: 'general', status: 'permanent', referenceId: `invoice-compensation:${id}`, lines: createdVoucher.lines.map((line) => ({ ...line, description: `برگشت سند فاکتور #${createdVoucher!.voucherNumber}: ${line.description}`, debit: line.credit, credit: line.debit, foreignDebit: line.foreignCredit, foreignCredit: line.foreignDebit })) }); }
+            catch (reversalError) { console.error('Invoice voucher compensation failed', createdVoucher.id, reversalError); }
+          }
+          throw new Error(`ثبت فاکتور کامل نشد؛ تلاش برای برگشت موجودی و سند انجام شد. علت: ${error instanceof Error ? error.message : String(error)}`);
         }
       }
 
@@ -2037,7 +2170,8 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             updatedAt: serverTimestamp(),
           });
         } catch (err) {
-          handleFirestoreError(err, OperationType.CREATE, `invoices/${id}`);
+          handleSupabaseError(err, OperationType.CREATE, `invoices/${id}`);
+          throw new Error(`ذخیره فاکتور در فضای ابری ناموفق بود؛ فاکتور صادرشده تلقی نمی‌شود. علت: ${String(err)}`);
         }
       } else {
         setInvoices((prev) => [full, ...prev]);
@@ -2052,80 +2186,96 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       );
       return full;
     },
-    [products, currencies, adjustProductStock, createVoucher, addCheque, ownerId, user, showToast]
+    [products, subcontractJobs, currencies, adjustProductStock, createVoucher, addCheque, ownerId, user, showToast]
   );
 
   const cancelInvoice = useCallback(
     async (invoiceId: string) => {
-      const inv = invoices.find((i) => i.id === invoiceId);
+      const inv = invoices.find((invoice) => invoice.id === invoiceId);
       if (!inv || inv.status === 'cancelled') return;
-
-      if (inv.invoiceType !== 'proforma') {
-        // Restore stock accurately
-        for (const item of inv.items) {
-          const prod = products.find((p) => p.id === item.productId);
-          if (prod) {
-            const wasOut =
-              inv.invoiceType === 'sale' ||
-              inv.invoiceType === 'purchase_return' ||
-              inv.invoiceType === 'waste';
-            const restoreDelta = wasOut ? item.quantity : -item.quantity;
-            await adjustProductStock(prod.id, Math.max(0, Number((prod.stock + restoreDelta).toFixed(2))));
+      const origVoucher = inv.voucherId ? vouchers.find((voucher) => voucher.id === inv.voucherId) : undefined;
+      if (inv.voucherId && !origVoucher) throw new Error(`سند اصلی فاکتور ${inv.invoiceNumber} یافت نشد؛ ابطال بدون سند معکوس مجاز نیست.`);
+      const appliedStock: Array<{ productId: string; previousStock: number }> = [];
+      let reversalVoucher: Voucher | undefined;
+      try {
+        if (inv.invoiceType !== 'proforma') {
+          const wasOut = ['sale', 'purchase_return', 'waste'].includes(inv.invoiceType);
+          const stockDeltas = new Map<string, number>();
+          for (const item of inv.items) {
+            if (!Number.isFinite(item.quantity) || item.quantity <= 0) throw new Error(`مقدار کالای فاکتور ${inv.invoiceNumber} معتبر نیست.`);
+            const product = products.find((candidate) => candidate.id === item.productId);
+            if (!product) throw new Error(`کالای فاکتور یافت نشد: ${item.productName || item.productId}`);
+            stockDeltas.set(product.id, (stockDeltas.get(product.id) || 0) + (wasOut ? item.quantity : -item.quantity));
           }
-        }
-
-        // Issue reversing voucher for linked accounting voucher
-        if (inv.voucherId) {
-          const origVoucher = vouchers.find((v) => v.id === inv.voucherId);
+          if (!wasOut) {
+            const subcontractReservations = new Map<string, number>();
+            for (const job of subcontractJobs) {
+              if (job.status !== 'sent') continue;
+              subcontractReservations.set(job.rawProductId, (subcontractReservations.get(job.rawProductId) ?? 0) + job.sentWeightKg);
+            }
+            assertSufficientStock(
+              new Map(products.map((product) => [product.id, Math.max(0, product.stock - (subcontractReservations.get(product.id) ?? 0))])),
+              inv.items.map((item) => ({ productId: item.productId, quantity: item.quantity })),
+            );
+          }
+          for (const [productId, delta] of stockDeltas) {
+            const product = products.find((candidate) => candidate.id === productId);
+            if (!product) throw new Error(`کالای فاکتور یافت نشد: ${productId}`);
+            const nextStock = Number((product.stock + delta).toFixed(2));
+            if (!Number.isFinite(nextStock) || nextStock < -1e-9) throw new Error(`موجودی کالا برای ابطال فاکتور کافی نیست: ${product.name}`);
+            await adjustProductStock(productId, Math.max(0, nextStock));
+            appliedStock.push({ productId, previousStock: product.stock });
+          }
           if (origVoucher) {
-            await createVoucher({
-              date: getTodayShamsi(),
-              description: `سند ابطال فاکتور ${inv.invoiceNumber} (معکوس سند #${origVoucher.voucherNumber})`,
-              voucherType: 'general',
-              status: 'permanent',
-              lines: origVoucher.lines.map((l) => ({
-                ...l,
-                description: `ابطال فاکتور ${inv.invoiceNumber}: ${l.description}`,
-                debit: l.credit,
-                credit: l.debit,
-              })),
-              referenceId: inv.id,
-            });
+            reversalVoucher = await createVoucher({ date: getTodayShamsi(), description: `سند ابطال فاکتور ${inv.invoiceNumber} (معکوس سند #${origVoucher.voucherNumber})`, voucherType: 'general', status: 'permanent', lines: origVoucher.lines.map((line) => ({ ...line, description: `ابطال فاکتور ${inv.invoiceNumber}: ${line.description}`, debit: line.credit, credit: line.debit, foreignDebit: line.foreignCredit, foreignCredit: line.foreignDebit })), referenceId: inv.id });
           }
         }
-      }
-
-      if (user) {
-        try {
-          await updateDoc(doc(db, 'invoices', invoiceId), {
-            status: 'cancelled',
-            updatedAt: serverTimestamp(),
-          });
-        } catch (err) {
-          handleFirestoreError(err, OperationType.UPDATE, `invoices/${invoiceId}`);
+        if (user) await updateDoc(doc(db, 'invoices', invoiceId), { status: 'cancelled', updatedAt: serverTimestamp() });
+        else setInvoices((prev) => prev.map((invoice) => invoice.id === invoiceId ? { ...invoice, status: 'cancelled' } : invoice));
+      } catch (error) {
+        for (const snapshot of appliedStock.reverse()) {
+          try { await adjustProductStock(snapshot.productId, snapshot.previousStock); }
+          catch (rollbackError) { console.error('Invoice cancellation stock rollback failed', snapshot.productId, rollbackError); }
         }
-      } else {
-        setInvoices((prev) =>
-          prev.map((i) => (i.id === invoiceId ? { ...i, status: 'cancelled' } : i))
-        );
+        if (reversalVoucher) {
+          try { await createVoucher({ date: getTodayShamsi(), description: `سند جبرانی خودکار بابت عدم تکمیل ابطال فاکتور ${inv.invoiceNumber}`, voucherType: 'general', status: 'permanent', referenceId: `invoice-cancel-compensation:${inv.id}`, lines: reversalVoucher.lines.map((line) => ({ ...line, description: `برگشت سند ابطال فاکتور #${reversalVoucher!.voucherNumber}: ${line.description}`, debit: line.credit, credit: line.debit, foreignDebit: line.foreignCredit, foreignCredit: line.foreignDebit })) }); }
+          catch (compensationError) { console.error('Invoice cancellation voucher compensation failed', reversalVoucher.id, compensationError); }
+        }
+        throw new Error(`ابطال فاکتور کامل نشد؛ تلاش برای جبران موجودی و اسناد انجام شد. علت: ${error instanceof Error ? error.message : String(error)}`);
       }
-      showToast(`فاکتور ${inv.invoiceNumber} ابطال شد، موجودی انبار برگشت خورد و سند معکوس ثبت گردید.`);
+      showToast(`فاکتور ${inv.invoiceNumber} ابطال شد و گردش موجودی/سند معکوس ثبت گردید.`);
     },
-    [invoices, products, vouchers, adjustProductStock, createVoucher, user, showToast]
+    [invoices, products, vouchers, subcontractJobs, adjustProductStock, createVoucher, user, showToast]
   );
 
   const convertProformaToSale = useCallback(
     async (invoiceId: string) => {
       const inv = invoices.find((i) => i.id === invoiceId);
       if (!inv || inv.invoiceType !== 'proforma' || inv.status === 'cancelled') return;
+      if (invoices.some((item) => item.id !== invoiceId && item.invoiceNumber === inv.invoiceNumber.replace(/^PF-/, 'F-') && item.status !== 'cancelled')) {
+        throw new Error(`شماره فاکتور فروش ${inv.invoiceNumber.replace(/^PF-/, 'F-')} قبلاً استفاده شده است.`);
+      }
+
+      const subcontractReservations = new Map<string, number>();
+      for (const job of subcontractJobs) {
+        if (job.status !== 'sent') continue;
+        subcontractReservations.set(job.rawProductId, (subcontractReservations.get(job.rawProductId) ?? 0) + job.sentWeightKg);
+      }
+      assertSufficientStock(
+        new Map(products.map((product) => [product.id, Math.max(0, product.stock - (subcontractReservations.get(product.id) ?? 0))])),
+        inv.items.map((item) => ({ productId: item.productId, quantity: item.quantity })),
+      );
 
       let cogsTotal = 0;
+      const stockDeltas = new Map<string, number>();
       for (const item of inv.items) {
         const prod = products.find((p) => p.id === item.productId);
-        if (prod) {
-          cogsTotal += prod.buyPrice * item.quantity;
-          await adjustProductStock(prod.id, Math.max(0, prod.stock - item.quantity));
+        if (!prod) throw new Error(`کالای پیش‌فاکتور یافت نشد: ${item.productName || item.productId}`);
+        if (!Number.isFinite(item.quantity) || item.quantity <= 0) {
+          throw new Error(`مقدار کالای پیش‌فاکتور معتبر نیست: ${item.productName || item.productId}`);
         }
+        cogsTotal += Math.round(prod.buyPrice * item.quantity);
+        stockDeltas.set(prod.id, (stockDeltas.get(prod.id) ?? 0) - item.quantity);
       }
 
       const saleNumber = inv.invoiceNumber.replace(/^PF-/, 'F-');
@@ -2135,27 +2285,39 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         invoiceType: 'sale',
         status: inv.creditAmount === 0 ? 'settled' : 'issued',
       };
-
       const rawLines = buildInvoiceVoucherLines(salePayload, cogsTotal);
       const isFx = isForeignCurrency(inv.currencyCode) && Number(inv.exchangeRate) > 0;
-      const lines =
-        isFx && inv.exchangeRate
-          ? annotateVoucherLinesWithCurrency(rawLines, inv.exchangeRate, 2)
-          : rawLines;
-      const createdVoucher = await createVoucher({
-        date: getTodayShamsi(),
-        description: `سند اتوماتیک تبدیل پیش‌فاکتور به فروش رسمی ${saleNumber} — ${inv.partyName}`,
-        voucherType: 'sales',
-        status: 'permanent',
-        lines,
-        referenceId: inv.id,
-        ...(isFx && inv.currencyCode && inv.exchangeRate
-          ? { currencyCode: inv.currencyCode, exchangeRate: inv.exchangeRate }
-          : {}),
-      });
+      const lines = isFx && inv.exchangeRate
+        ? annotateVoucherLinesWithCurrency(rawLines, inv.exchangeRate, 2)
+        : rawLines;
 
-      if (user) {
-        try {
+      const appliedStock: Array<{ productId: string; previousStock: number }> = [];
+      let createdVoucher: Voucher | undefined;
+      try {
+        for (const [productId, delta] of stockDeltas) {
+          const prod = products.find((p) => p.id === productId);
+          if (!prod) throw new Error(`کالای پیش‌فاکتور یافت نشد: ${productId}`);
+          const nextStock = Number((prod.stock + delta).toFixed(2));
+          if (!Number.isFinite(nextStock) || nextStock < -1e-9) {
+            throw new Error(`موجودی کالا برای تبدیل پیش‌فاکتور کافی نیست: ${prod.name}`);
+          }
+          await adjustProductStock(productId, Math.max(0, nextStock));
+          appliedStock.push({ productId, previousStock: prod.stock });
+        }
+
+        createdVoucher = await createVoucher({
+          date: getTodayShamsi(),
+          description: `سند اتوماتیک تبدیل پیش‌فاکتور به فروش رسمی ${saleNumber} — ${inv.partyName}`,
+          voucherType: 'sales',
+          status: 'permanent',
+          lines,
+          referenceId: inv.id,
+          ...(isFx && inv.currencyCode && inv.exchangeRate
+            ? { currencyCode: inv.currencyCode, exchangeRate: inv.exchangeRate }
+            : {}),
+        });
+
+        if (user) {
           await updateDoc(doc(db, 'invoices', invoiceId), {
             invoiceNumber: saleNumber,
             invoiceType: 'sale',
@@ -2163,27 +2325,53 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             voucherId: createdVoucher.id,
             updatedAt: serverTimestamp(),
           });
-        } catch (err) {
-          handleFirestoreError(err, OperationType.UPDATE, `invoices/${invoiceId}`);
+        } else {
+          setInvoices((prev) =>
+            prev.map((i) => i.id === invoiceId
+              ? { ...i, invoiceNumber: saleNumber, invoiceType: 'sale', status: salePayload.status, voucherId: createdVoucher!.id }
+              : i)
+          );
         }
-      } else {
-        setInvoices((prev) =>
-          prev.map((i) =>
-            i.id === invoiceId
-              ? {
-                  ...i,
-                  invoiceNumber: saleNumber,
-                  invoiceType: 'sale',
-                  status: salePayload.status,
-                  voucherId: createdVoucher.id,
-                }
-              : i
-          )
-        );
+      } catch (error) {
+        const compensationFailures: string[] = [];
+        for (const snapshot of appliedStock.reverse()) {
+          try {
+            await adjustProductStock(snapshot.productId, snapshot.previousStock);
+          } catch (rollbackError) {
+            compensationFailures.push(`برگشت موجودی کالای ${snapshot.productId} ناموفق بود: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`);
+          }
+        }
+        if (createdVoucher) {
+          try {
+            await createVoucher({
+              date: getTodayShamsi(),
+              description: `سند معکوس خودکار بابت شکست تبدیل پیش‌فاکتور ${inv.invoiceNumber}`,
+              voucherType: 'general',
+              status: 'permanent',
+              referenceId: `proforma-conversion-compensation:${inv.id}`,
+              lines: createdVoucher.lines.map((line) => ({
+                ...line,
+                description: `برگشت سند تبدیل پیش‌فاکتور #${createdVoucher!.voucherNumber}: ${line.description}`,
+                debit: line.credit,
+                credit: line.debit,
+                foreignDebit: line.foreignCredit,
+                foreignCredit: line.foreignDebit,
+              })),
+            });
+          } catch (reversalError) {
+            compensationFailures.push(`صدور سند معکوس #${createdVoucher.voucherNumber} ناموفق بود: ${reversalError instanceof Error ? reversalError.message : String(reversalError)}`);
+          }
+        }
+        const originalMessage = error instanceof Error ? error.message : String(error);
+        const compensationMessage = compensationFailures.length
+          ? ` جبران کامل نشد و رسیدگی دستی لازم است: ${compensationFailures.join(' | ')}`
+          : ' برگشت موجودی و سند با موفقیت انجام شد.';
+        throw new Error(`تبدیل پیش‌فاکتور ${inv.invoiceNumber} کامل نشد. علت: ${originalMessage}.${compensationMessage}`);
       }
+
       showToast(`پیش‌فاکتور به فاکتور فروش رسمی ${saleNumber} تبدیل و سند حسابداری آن صادر شد.`);
     },
-    [invoices, products, adjustProductStock, createVoucher, user, showToast]
+    [invoices, products, subcontractJobs, adjustProductStock, createVoucher, user, showToast]
   );
 
   // ---------------- CORPORATE MODULES CRUD ----------------
@@ -2209,7 +2397,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             updatedAt: serverTimestamp(),
           });
         } catch (err) {
-          handleFirestoreError(err, OperationType.CREATE, `employees/${id}`);
+          handleSupabaseError(err, OperationType.CREATE, `employees/${id}`);
         }
       } else {
         setEmployees((prev) => [...prev, full]);
@@ -2235,7 +2423,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           if (patch.active !== undefined) payload.active = Boolean(patch.active);
           await updateDoc(doc(db, 'employees', empId), payload);
         } catch (err) {
-          handleFirestoreError(err, OperationType.UPDATE, `employees/${empId}`);
+          handleSupabaseError(err, OperationType.UPDATE, `employees/${empId}`);
         }
       } else {
         setEmployees((prev) => prev.map((e) => (e.id === empId ? { ...e, ...patch } : e)));
@@ -2251,7 +2439,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         try {
           await deleteDoc(doc(db, 'employees', empId));
         } catch (err) {
-          handleFirestoreError(err, OperationType.DELETE, `employees/${empId}`);
+          handleSupabaseError(err, OperationType.DELETE, `employees/${empId}`);
         }
       } else {
         setEmployees((prev) => prev.filter((e) => e.id !== empId));
@@ -2263,37 +2451,54 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
   const postMonthlyPayrollVoucher = useCallback(
     async (monthName: string) => {
+      const normalizedMonth = monthName.trim();
+      if (!normalizedMonth) throw new Error('ماه حقوق و دستمزد را مشخص کنید.');
+      const payrollReference = `payroll:${normalizedMonth}`;
+      if (vouchers.some((voucher) => voucher.referenceId === payrollReference)) {
+        throw new Error(`سند حقوق ماه «${normalizedMonth}» قبلاً صادر شده است.`);
+      }
       const activeEmps = employees.filter((e) => e.active);
-      if (activeEmps.length === 0) return;
+      if (activeEmps.length === 0) throw new Error('برای صدور لیست حقوق، کارمند فعال ثبت نشده است.');
       const calcs = activeEmps.map(calculateEmployeePayroll);
-      const totalExpense = calcs.reduce((s, c) => s + c.totalEmployerCost, 0);
       const totalNet = calcs.reduce((s, c) => s + c.netPay, 0);
       const totalInsurance = calcs.reduce(
         (s, c) => s + c.employeeInsurance + c.employerInsurance,
         0
       );
       const totalTax = calcs.reduce((s, c) => s + c.incomeTax, 0);
+      const validCostCenterIds = new Set(costCenters.map((center) => center.id));
+      const payrollExpenseByCostCenter = new Map<string, number>();
+      for (const calc of calcs) {
+        const requestedCenter = calc.employee.costCenterId;
+        const costCenterId = requestedCenter && validCostCenterIds.has(requestedCenter)
+          ? requestedCenter
+          : 'cc_hq';
+        payrollExpenseByCostCenter.set(
+          costCenterId,
+          (payrollExpenseByCostCenter.get(costCenterId) || 0) + calc.totalEmployerCost
+        );
+      }
 
       const lines: VoucherLine[] = [
-        {
+        ...[...payrollExpenseByCostCenter.entries()].map(([costCenterId, debit]) => ({
           accountCode: '80101',
           accountTitle: 'هزینه حقوق، مزایا و بیمه سهم کارفرما',
-          costCenterId: 'cc_hq',
-          description: `هزینه حقوق و دستمزد ${monthName}`,
-          debit: totalExpense,
+          costCenterId,
+          description: `هزینه حقوق و دستمزد ${normalizedMonth}`,
+          debit,
           credit: 0,
-        },
+        })),
         {
           accountCode: '30401',
           accountTitle: 'حقوق پرداختنی کارکنان',
-          description: `خالص پرداختنی حقوق ${monthName}`,
+          description: `خالص پرداختنی حقوق ${normalizedMonth}`,
           debit: 0,
           credit: totalNet,
         },
         {
           accountCode: '30402',
           accountTitle: 'سازمان تأمین اجتماعی (بیمه ۳۰٪)',
-          description: `بیمه سهم کارمند و کارفرما ${monthName}`,
+          description: `بیمه سهم کارمند و کارفرما ${normalizedMonth}`,
           debit: 0,
           credit: totalInsurance,
         },
@@ -2302,7 +2507,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         lines.push({
           accountCode: '30403',
           accountTitle: 'مالیات حقوق پرداختنی',
-          description: `مالیات حقوق ${monthName}`,
+          description: `مالیات حقوق ${normalizedMonth}`,
           debit: 0,
           credit: totalTax,
         });
@@ -2310,48 +2515,73 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
       await createVoucher({
         date: getTodayShamsi(),
-        description: `سند اتوماتیک حقوق و دستمزد ${monthName} (${activeEmps.length} نفر)`,
+        description: `سند اتوماتیک حقوق و دستمزد ${normalizedMonth} (${activeEmps.length} نفر)`,
         voucherType: 'payroll',
         status: 'permanent',
+        referenceId: payrollReference,
         lines,
       });
     },
-    [employees, createVoucher]
+    [employees, costCenters, vouchers, createVoucher]
   );
 
   const paySalariesVoucher = useCallback(
     async (monthName: string, bankAccountCode: string, amount: number) => {
-      if (amount <= 0) return;
-      const bankAcc = accounts.find((a) => a.code === bankAccountCode);
+      const normalizedMonth = monthName.trim();
+      if (!normalizedMonth) throw new Error('ماه حقوق را مشخص کنید.');
+      if (!Number.isFinite(amount) || amount <= 0) throw new Error('مبلغ پرداخت حقوق باید عددی مثبت و معتبر باشد.');
+      const bankAcc = accounts.find((a) => a.code === bankAccountCode && a.level === 'moein' && a.code.startsWith('102'));
+      if (!bankAcc) throw new Error('حساب بانکی انتخاب‌شده معتبر نیست.');
+      const payrollVoucher = vouchers.find((voucher) => voucher.referenceId === `payroll:${normalizedMonth}`);
+      if (!payrollVoucher || payrollVoucher.status !== 'permanent') {
+        throw new Error(`ابتدا سند قطعی حقوق ماه «${normalizedMonth}» را صادر کنید.`);
+      }
+      const payableCredit = payrollVoucher.lines
+        .filter((line) => line.accountCode === '30401')
+        .reduce((sum, line) => sum + (Number(line.credit) || 0) - (Number(line.debit) || 0), 0);
+      const priorPayments = vouchers
+        .filter((voucher) =>
+          voucher.status === 'permanent' &&
+          voucher.voucherType === 'payroll' &&
+          voucher.description.startsWith(`پرداخت خالص حقوق کارکنان ${normalizedMonth} از `)
+        )
+        .reduce((sum, voucher) => sum + voucher.lines
+          .filter((line) => line.accountCode === '30401')
+          .reduce((lineSum, line) => lineSum + (Number(line.debit) || 0) - (Number(line.credit) || 0), 0), 0);
+      const outstanding = Math.max(0, payableCredit - priorPayments);
+      if (amount > outstanding + 0.000001) {
+        throw new Error(`مبلغ پرداخت از حقوق پرداختنی باقیمانده بیشتر است. مانده قابل پرداخت: ${outstanding.toLocaleString('en-US')}`);
+      }
       const bankTitle = bankAcc?.title || 'بانک ملت — حساب جاری شرکتی';
       await createVoucher({
         date: getTodayShamsi(),
-        description: `پرداخت خالص حقوق کارکنان ${monthName} از ${bankTitle}`,
+        description: `پرداخت خالص حقوق کارکنان ${normalizedMonth} از ${bankTitle}`,
         voucherType: 'payroll',
         status: 'permanent',
         lines: [
           {
             accountCode: '30401',
             accountTitle: 'حقوق پرداختنی کارکنان',
-            description: `تسویه حقوق پرداختنی ${monthName}`,
+            description: `تسویه حقوق پرداختنی ${normalizedMonth}`,
             debit: amount,
             credit: 0,
           },
           {
             accountCode: bankAccountCode,
             accountTitle: bankTitle,
-            description: `واریز حقوق پرسنل ${monthName}`,
+            description: `واریز حقوق پرسنل ${normalizedMonth}`,
             debit: 0,
             credit: amount,
           },
         ],
       });
     },
-    [accounts, createVoucher]
+    [accounts, vouchers, createVoucher]
   );
 
   const addFixedAsset = useCallback(
     async (asset: Omit<FixedAsset, 'id' | 'ownerId'>) => {
+      if (!asset.title.trim() || !Number.isFinite(asset.purchaseCost) || asset.purchaseCost <= 0 || !Number.isFinite(asset.salvageValue) || asset.salvageValue < 0 || asset.salvageValue > asset.purchaseCost || !Number.isFinite(asset.usefulLifeYears) || asset.usefulLifeYears <= 0 || !Number.isFinite(asset.accumulatedDepreciation) || asset.accumulatedDepreciation < 0 || asset.accumulatedDepreciation > asset.purchaseCost - asset.salvageValue) throw new Error('مشخصات مالی دارایی ثابت معتبر نیست.');
       const id = generateSafeId('ast');
       const full: FixedAsset = { ...asset, id, ownerId };
       if (user) {
@@ -2370,7 +2600,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             updatedAt: serverTimestamp(),
           });
         } catch (err) {
-          handleFirestoreError(err, OperationType.CREATE, `assets/${id}`);
+          handleSupabaseError(err, OperationType.CREATE, `assets/${id}`);
         }
       } else {
         setAssets((prev) => [...prev, full]);
@@ -2382,6 +2612,13 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
   const updateFixedAsset = useCallback(
     async (assetId: string, patch: Partial<Omit<FixedAsset, 'id' | 'ownerId' | 'assetCode'>>) => {
+      const existing = assets.find((asset) => asset.id === assetId);
+      if (!existing) return;
+      const nextCost = patch.purchaseCost ?? existing.purchaseCost;
+      const nextSalvage = patch.salvageValue ?? existing.salvageValue;
+      const nextAccumulated = patch.accumulatedDepreciation ?? existing.accumulatedDepreciation;
+      const nextLife = patch.usefulLifeYears ?? existing.usefulLifeYears;
+      if (!Number.isFinite(nextCost) || nextCost <= 0 || !Number.isFinite(nextSalvage) || nextSalvage < 0 || nextSalvage > nextCost || !Number.isFinite(nextAccumulated) || nextAccumulated < 0 || nextAccumulated > nextCost - nextSalvage || !Number.isFinite(nextLife) || nextLife <= 0) throw new Error('ویرایش بهای خرید، ارزش اسقاط، عمر مفید یا استهلاک انباشته دارایی معتبر نیست.');
       if (user) {
         try {
           const payload: Record<string, unknown> = { updatedAt: serverTimestamp() };
@@ -2394,14 +2631,14 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           if (patch.costCenterId !== undefined) payload.costCenterId = patch.costCenterId.slice(0, 128);
           await updateDoc(doc(db, 'assets', assetId), payload);
         } catch (err) {
-          handleFirestoreError(err, OperationType.UPDATE, `assets/${assetId}`);
+          handleSupabaseError(err, OperationType.UPDATE, `assets/${assetId}`);
         }
       } else {
         setAssets((prev) => prev.map((a) => (a.id === assetId ? { ...a, ...patch } : a)));
       }
       showToast('مشخصات دارایی ثابت ویرایش شد.');
     },
-    [user, showToast]
+    [assets, user, showToast]
   );
 
   const deleteFixedAsset = useCallback(
@@ -2410,7 +2647,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         try {
           await deleteDoc(doc(db, 'assets', assetId));
         } catch (err) {
-          handleFirestoreError(err, OperationType.DELETE, `assets/${assetId}`);
+          handleSupabaseError(err, OperationType.DELETE, `assets/${assetId}`);
         }
       } else {
         setAssets((prev) => prev.filter((a) => a.id !== assetId));
@@ -2422,59 +2659,72 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
   const postDepreciationVoucher = useCallback(
     async (periodLabel: string) => {
-      let totalDep = 0;
-      for (const a of assets) {
-        const dep = calculateMonthlyDepreciation(a);
-        if (dep > 0) {
-          totalDep += dep;
-          const nextAccum = a.accumulatedDepreciation + dep;
-          if (user) {
-            try {
-              await updateDoc(doc(db, 'assets', a.id), {
-                accumulatedDepreciation: nextAccum,
-                updatedAt: serverTimestamp(),
-              });
-            } catch (err) {
-              handleFirestoreError(err, OperationType.UPDATE, `assets/${a.id}`);
-            }
-          } else {
-            setAssets((prev) =>
-              prev.map((x) =>
-                x.id === a.id ? { ...x, accumulatedDepreciation: nextAccum } : x
-              )
-            );
-          }
-        }
+      const normalizedPeriod = periodLabel.trim();
+      if (!normalizedPeriod) throw new Error('دوره استهلاک را مشخص کنید.');
+      const referenceId = `depreciation:${normalizedPeriod}`;
+      if (vouchers.some((voucher) => voucher.voucherType === 'depreciation' && (voucher.referenceId === referenceId || voucher.description === `سند اتوماتیک استهلاک دارایی‌های ثابت — ${normalizedPeriod}`))) {
+        throw new Error(`برای دوره «${normalizedPeriod}» قبلاً سند استهلاک ثبت شده است.`);
       }
+      const allocations = assets.map((asset) => {
+        if (!Number.isFinite(asset.purchaseCost) || asset.purchaseCost <= 0 || !Number.isFinite(asset.salvageValue) || asset.salvageValue < 0 || asset.salvageValue > asset.purchaseCost || !Number.isFinite(asset.usefulLifeYears) || asset.usefulLifeYears <= 0 || !Number.isFinite(asset.accumulatedDepreciation) || asset.accumulatedDepreciation < 0) {
+          throw new Error(`اطلاعات بهای تمام‌شده، ارزش اسقاط، عمر مفید یا استهلاک انباشته دارایی «${asset.title}» معتبر نیست.`);
+        }
+        const amount = calculateMonthlyDepreciation(asset);
+        return { asset, amount, nextAccumulated: asset.accumulatedDepreciation + amount };
+      }).filter((row) => row.amount > 0);
+      const totalDep = allocations.reduce((sum, row) => sum + row.amount, 0);
       if (totalDep <= 0) {
         showToast('دارایی قابل استهلاک برای این دوره وجود ندارد.');
         return;
       }
-      await createVoucher({
-        date: getTodayShamsi(),
-        description: `سند اتوماتیک استهلاک دارایی‌های ثابت — ${periodLabel}`,
-        voucherType: 'depreciation',
-        status: 'permanent',
-        lines: [
-          {
-            accountCode: '80301',
-            accountTitle: 'هزینه استهلاک اموال و تجهیزات',
-            costCenterId: 'cc_hq',
-            description: `هزینه استهلاک ${periodLabel}`,
-            debit: totalDep,
-            credit: 0,
-          },
-          {
-            accountCode: '20201',
-            accountTitle: 'استهلاک انباشته تجهیزات اداری',
-            description: `افزایش استهلاک انباشته ${periodLabel}`,
-            debit: 0,
-            credit: totalDep,
-          },
-        ],
+      const expenseByCostCenter = new Map<string, number>();
+      for (const row of allocations) {
+        const key = row.asset.costCenterId || 'cc_hq';
+        expenseByCostCenter.set(key, (expenseByCostCenter.get(key) || 0) + row.amount);
+      }
+      const expenseLines: VoucherLine[] = [...expenseByCostCenter.entries()].map(([costCenterId, debit]) => ({
+        accountCode: '80301', accountTitle: 'هزینه استهلاک اموال و تجهیزات', costCenterId,
+        description: `هزینه استهلاک ${normalizedPeriod}`, debit, credit: 0,
+      }));
+      expenseLines.push({
+        accountCode: '20201', accountTitle: 'استهلاک انباشته تجهیزات اداری',
+        description: `افزایش استهلاک انباشته ${normalizedPeriod}`, debit: 0, credit: totalDep,
       });
+      const voucher = await createVoucher({
+        date: getTodayShamsi(),
+        description: `سند اتوماتیک استهلاک دارایی‌های ثابت — ${normalizedPeriod}`,
+        voucherType: 'depreciation', status: 'permanent', referenceId, lines: expenseLines,
+      });
+      // Update asset subledger only after the depreciation voucher has been created.
+      const updatedRows: typeof allocations = [];
+      try {
+        if (user) {
+          for (const row of allocations) {
+            await updateDoc(doc(db, 'assets', row.asset.id), { accumulatedDepreciation: row.nextAccumulated, updatedAt: serverTimestamp() });
+            updatedRows.push(row);
+          }
+        } else {
+          const nextById = new Map(allocations.map((row) => [row.asset.id, row.nextAccumulated]));
+          setAssets((prev) => prev.map((asset) => nextById.has(asset.id) ? { ...asset, accumulatedDepreciation: nextById.get(asset.id)! } : asset));
+          updatedRows.push(...allocations);
+        }
+      } catch (error) {
+        for (const row of updatedRows) {
+          if (user) {
+            try { await updateDoc(doc(db, 'assets', row.asset.id), { accumulatedDepreciation: row.asset.accumulatedDepreciation, updatedAt: serverTimestamp() }); }
+            catch (rollbackError) { console.error('Depreciation asset rollback failed', row.asset.id, rollbackError); }
+          }
+        }
+        if (!user) setAssets((prev) => prev.map((asset) => { const original = updatedRows.find((row) => row.asset.id === asset.id); return original ? { ...asset, accumulatedDepreciation: original.asset.accumulatedDepreciation } : asset; }));
+        try {
+          await createVoucher({ date: getTodayShamsi(), description: `سند معکوس خودکار بابت عدم تکمیل دفتر اموال — ${normalizedPeriod}`, voucherType: 'general', status: 'permanent', referenceId: voucher.id,
+            lines: voucher.lines.map((line) => ({ ...line, description: `برگشت سند استهلاک #${voucher.voucherNumber}: ${line.description}`, debit: line.credit, credit: line.debit, foreignDebit: line.foreignCredit, foreignCredit: line.foreignDebit })) });
+        } catch (reversalError) { console.error('Depreciation voucher compensation failed', voucher.id, reversalError); }
+        throw new Error(`سند استهلاک صادر شد اما به‌روزرسانی دفتر اموال کامل نشد؛ تلاش برای سند معکوس انجام شد. علت: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      showToast(`سند استهلاک دوره «${normalizedPeriod}» با شماره ${voucher.voucherNumber} صادر شد.`);
     },
-    [assets, user, createVoucher, showToast]
+    [assets, vouchers, user, createVoucher, showToast]
   );
 
   const addCostCenter = useCallback(
@@ -2494,7 +2744,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             updatedAt: serverTimestamp(),
           });
         } catch (err) {
-          handleFirestoreError(err, OperationType.CREATE, `costCenters/${id}`);
+          handleSupabaseError(err, OperationType.CREATE, `costCenters/${id}`);
         }
       } else {
         setCostCenters((prev) => [...prev, full]);
@@ -2515,7 +2765,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           if (patch.active !== undefined) payload.active = Boolean(patch.active);
           await updateDoc(doc(db, 'costCenters', ccId), payload);
         } catch (err) {
-          handleFirestoreError(err, OperationType.UPDATE, `costCenters/${ccId}`);
+          handleSupabaseError(err, OperationType.UPDATE, `costCenters/${ccId}`);
         }
       } else {
         setCostCenters((prev) => prev.map((c) => (c.id === ccId ? { ...c, ...patch } : c)));
@@ -2531,7 +2781,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         try {
           await deleteDoc(doc(db, 'costCenters', ccId));
         } catch (err) {
-          handleFirestoreError(err, OperationType.DELETE, `costCenters/${ccId}`);
+          handleSupabaseError(err, OperationType.DELETE, `costCenters/${ccId}`);
         }
       } else {
         setCostCenters((prev) => prev.filter((c) => c.id !== ccId));
@@ -2542,7 +2792,17 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   );
 
   const runYearEndClosing = useCallback(async () => {
-    const tempRows = trialBalance.filter(
+    const closingReference = `year-end-closing:${profile.fiscalYear}`;
+    if (vouchers.some((voucher) => voucher.referenceId === closingReference || (voucher.voucherType === 'closing' && voucher.date.startsWith(`${profile.fiscalYear}/`)))) throw new Error(`دوره مالی ${profile.fiscalYear} قبلاً بسته شده است.`);
+    const draftCount = vouchers.filter((voucher) => voucher.status === 'draft' && voucher.date.startsWith(`${profile.fiscalYear}/`)).length;
+    if (draftCount > 0) throw new Error(`برای بستن سال مالی ابتدا ${draftCount} سند پیش‌نویس را تعیین تکلیف کنید.`);
+    const fiscalYearVouchers = vouchers.filter((voucher) =>
+      voucher.status === 'permanent' &&
+      voucher.date.startsWith(`${profile.fiscalYear}/`) &&
+      voucher.voucherType !== 'opening'
+    );
+    const fiscalYearTrialBalance = computeTrialBalance(accounts, fiscalYearVouchers);
+    const tempRows = fiscalYearTrialBalance.filter(
       (r) =>
         (r.category === 'revenue' || r.category === 'cogs' || r.category === 'expense') &&
         (r.balanceDebit > 0 || r.balanceCredit > 0)
@@ -2596,13 +2856,14 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     }
 
     await createVoucher({
-      date: `${profile.fiscalYear}/12/29`,
+      date: getShamsiYearEndDate(profile.fiscalYear),
       description: `سند بستن حساب‌های موقت و انتقال سود سال مالی ${profile.fiscalYear}`,
       voucherType: 'closing',
       status: 'permanent',
+      referenceId: closingReference,
       lines,
     });
-  }, [trialBalance, profile.fiscalYear, createVoucher, showToast]);
+  }, [accounts, vouchers, profile.fiscalYear, createVoucher, showToast]);
 
   // ---------------- MULTI-CURRENCY & DAILY EXCHANGE RATES ----------------
   const addCurrency = useCallback(
@@ -2644,7 +2905,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             updatedAt: serverTimestamp(),
           });
         } catch (err) {
-          handleFirestoreError(err, OperationType.CREATE, `currencies/${id}`);
+          handleSupabaseError(err, OperationType.CREATE, `currencies/${id}`);
           return false;
         }
       } else {
@@ -2676,7 +2937,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             updatedAt: serverTimestamp(),
           });
         } catch (err) {
-          handleFirestoreError(err, OperationType.CREATE, `exchangeRates/${rateId}`);
+          handleSupabaseError(err, OperationType.CREATE, `exchangeRates/${rateId}`);
         }
       } else {
         setExchangeRates((prev) => [rateEntry, ...prev]);
@@ -2719,7 +2980,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             updatedAt: serverTimestamp(),
           });
         } catch (err) {
-          handleFirestoreError(err, OperationType.UPDATE, `currencies/${currencyId}`);
+          handleSupabaseError(err, OperationType.UPDATE, `currencies/${currencyId}`);
         }
       } else {
         setCurrencies((prev) =>
@@ -2750,7 +3011,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         try {
           await deleteDoc(doc(db, 'currencies', currencyId));
         } catch (err) {
-          handleFirestoreError(err, OperationType.DELETE, `currencies/${currencyId}`);
+          handleSupabaseError(err, OperationType.DELETE, `currencies/${currencyId}`);
           return false;
         }
       } else {
@@ -2789,7 +3050,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
               updatedAt: serverTimestamp(),
             });
           } catch (err) {
-            handleFirestoreError(err, OperationType.UPDATE, `exchangeRates/${existing.id}`);
+            handleSupabaseError(err, OperationType.UPDATE, `exchangeRates/${existing.id}`);
           }
         } else {
           setExchangeRates((prev) =>
@@ -2830,7 +3091,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
               updatedAt: serverTimestamp(),
             });
           } catch (err) {
-            handleFirestoreError(err, OperationType.CREATE, `exchangeRates/${id}`);
+            handleSupabaseError(err, OperationType.CREATE, `exchangeRates/${id}`);
           }
         } else {
           setExchangeRates((prev) => [full, ...prev]);
@@ -2872,7 +3133,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         try {
           await deleteDoc(doc(db, 'exchangeRates', rateId));
         } catch (err) {
-          handleFirestoreError(err, OperationType.DELETE, `exchangeRates/${rateId}`);
+          handleSupabaseError(err, OperationType.DELETE, `exchangeRates/${rateId}`);
         }
       } else {
         setExchangeRates((prev) => prev.filter((r) => r.id !== rateId));
@@ -2907,6 +3168,43 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   // ---------------- IMPORT DOSSIERS & LANDED COST ----------------
   const addImportDossier = useCallback(
     async (dossier: Omit<ImportDossier, 'id' | 'ownerId'>) => {
+      if (!dossier.dossierNumber.trim() || !dossier.proformaNumber.trim() || !dossier.supplierId ||
+          !parties.some((party) => party.id === dossier.supplierId) || !dossier.originCountry.trim() ||
+          !dossier.warehouse.trim() || !/^14\d{2}\/\d{2}\/\d{2}$/.test(dossier.date) ||
+          !dossier.currencyCode.trim() || !Number.isFinite(dossier.exchangeRate) || dossier.exchangeRate <= 0) {
+        throw new Error('اطلاعات اصلی پرونده واردات ناقص یا نامعتبر است.');
+      }
+      if (importDossiers.some((item) => item.dossierNumber.trim() === dossier.dossierNumber.trim())) {
+        throw new Error('شماره پرونده واردات تکراری است.');
+      }
+      if (!dossier.items.length || dossier.items.some((item) =>
+        !products.some((product) => product.id === item.productId) ||
+        !item.lotNumber.trim() || !Number.isFinite(item.weightKg) || item.weightKg <= 0 ||
+        !Number.isFinite(item.foreignUnitPrice) || item.foreignUnitPrice < 0 ||
+        !Number.isFinite(item.finalUnitCostIrr) || item.finalUnitCostIrr < 0
+      )) {
+        throw new Error('اقلام یا شماره لات پرونده واردات معتبر نیستند.');
+      }
+      const lotByProduct = new Map<string, string>();
+      for (const item of dossier.items) {
+        const existingLot = lotByProduct.get(item.productId);
+        if (existingLot !== undefined && existingLot !== item.lotNumber.trim()) {
+          throw new Error('برای یک کالا چند شماره لات متفاوت ثبت شده است؛ برای حفظ ردیابی لات‌ها، هر لات را به‌عنوان کالای انبار جداگانه تعریف کنید.');
+        }
+        lotByProduct.set(item.productId, item.lotNumber.trim());
+      }
+      if (dossier.costs.some((cost) => !Number.isFinite(cost.amountIrr) || cost.amountIrr < 0 ||
+          !accounts.some((account) => account.code === cost.accountCode && (account.category === 'asset' || account.category === 'liability')))) {
+        throw new Error('حساب تسویه هزینه‌های جانبی باید حساب دارایی (بانک/صندوق) یا بدهی (بستانکاران) باشد و مبلغ آن معتبر باشد.');
+      }
+      const costsTotal = dossier.costs.reduce((sum, cost) => sum + Math.round(cost.amountIrr), 0);
+      if (!Number.isFinite(dossier.totalForeignAmount) || dossier.totalForeignAmount <= 0 ||
+          !Number.isFinite(dossier.totalFobIrr) || dossier.totalFobIrr <= 0 ||
+          !Number.isFinite(dossier.totalLandedCostsIrr) || dossier.totalLandedCostsIrr !== costsTotal ||
+          !Number.isFinite(dossier.grandTotalLandedIrr) ||
+          dossier.grandTotalLandedIrr !== dossier.totalFobIrr + dossier.totalLandedCostsIrr) {
+        throw new Error('جمع بهای تمام‌شده پرونده با ارزش ارزی و هزینه‌های جانبی سازگار نیست.');
+      }
       const full: ImportDossier = {
         ...dossier,
         id: generateSafeId('imp'),
@@ -2920,106 +3218,105 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       );
       showToast(`پرونده واردات ${full.dossierNumber} ثبت شد.`);
     },
-    [ownerId, logActivity, showToast]
+    [ownerId, parties, products, accounts, importDossiers, logActivity, showToast]
   );
 
   const clearImportDossier = useCallback(
     async (dossierId: string) => {
       if (!activeOperator.permissions.canCreateVoucher || !activeOperator.permissions.canEditInventory) {
-        showToast('نقش فعال مجوز همزمان ترخیص انبار و صدور سند بهای تمام‌شده را ندارد.');
-        return;
+        showToast('نقش فعال مجوز همزمان ترخیص انبار و صدور سند بهای تمام‌شده را ندارد.'); return;
       }
-      const dossier = importDossiers.find((d) => d.id === dossierId);
+      const dossier = importDossiers.find((item) => item.id === dossierId);
       if (!dossier || dossier.status === 'cleared') return;
-
-      // Update yarn inventory stock & weighted-average buy price for each cleared item
+      if (vouchers.some((voucher) => voucher.referenceId === dossier.id)) throw new Error('برای این پرونده قبلاً سند ترخیص صادر شده است.');
+      if (!Number.isFinite(dossier.totalForeignAmount) || dossier.totalForeignAmount <= 0 || !Number.isFinite(dossier.exchangeRate) || dossier.exchangeRate <= 0 || !Number.isFinite(dossier.totalFobIrr) || dossier.totalFobIrr <= 0 || !dossier.currencyCode.trim()) throw new Error('مبلغ ارزی، نرخ تبدیل، ارز یا بهای پروفرما معتبر نیست.');
+      if (!dossier.items.length || dossier.items.some((item) => !Number.isFinite(item.weightKg) || item.weightKg <= 0 || !Number.isFinite(item.finalUnitCostIrr) || item.finalUnitCostIrr < 0)) {
+        throw new Error('اقلام پرونده واردات دارای وزن یا بهای تمام‌شده نامعتبر هستند.');
+      }
+      const groupedItems = new Map<string, ImportDossier['items'][number]>();
       for (const item of dossier.items) {
-        const prod = products.find((p) => p.id === item.productId);
-        if (!prod) continue;
-        const prevQty = Math.max(0, prod.stock);
-        const newQty = Number((prevQty + item.weightKg).toFixed(2));
-        const weightedBuy =
-          newQty > 0
-            ? Math.round(
-                (prevQty * prod.buyPrice + item.weightKg * item.finalUnitCostIrr) / newQty
-              )
-            : item.finalUnitCostIrr;
-        await updateProduct(prod.id, {
-          stock: newQty,
-          buyPrice: weightedBuy,
-          lotNumber: item.lotNumber || prod.lotNumber,
-        });
+        const previous = groupedItems.get(item.productId);
+        if (!previous) groupedItems.set(item.productId, { ...item });
+        else {
+          const combinedWeight = previous.weightKg + item.weightKg;
+          const combinedCost = previous.weightKg * previous.finalUnitCostIrr + item.weightKg * item.finalUnitCostIrr;
+          groupedItems.set(item.productId, {
+            ...previous,
+            weightKg: combinedWeight,
+            finalUnitCostIrr: combinedWeight > 0 ? Math.round(combinedCost / combinedWeight) : 0,
+            lotNumber: previous.lotNumber === item.lotNumber ? previous.lotNumber : '',
+          });
+        }
       }
-
-      // Build 100%-balanced double-entry Landed Cost clearance voucher
-      const lines: VoucherLine[] = [
-        {
-          accountCode: '10501',
-          accountTitle: 'موجودی انبار نخ و کالای وارداتی',
-          description: `ورود محموله ترخیص‌شده پرونده ${dossier.dossierNumber} (کوتاژ ${dossier.cotageNumber || '—'}) با سرشکن هزینه‌ها`,
-          debit: dossier.grandTotalLandedIrr,
-          credit: 0,
-        },
-        {
-          accountCode: '30101',
-          accountTitle: 'بستانکاران و تأمین‌کنندگان واردات نخ',
-          partyId: dossier.supplierId,
-          partyName: dossier.supplierName,
-          description: `بهای ارزی پروفرما ${dossier.proformaNumber} (${dossier.totalForeignAmount} ${dossier.currencyCode})`,
-          debit: 0,
-          credit: dossier.totalFobIrr,
-        },
-      ];
-
-      // Group landed costs by settlement account
-      const costByAccount = new Map<string, { title: string; total: number }>();
-      for (const c of dossier.costs) {
-        if (c.amountIrr <= 0) continue;
-        const acc = accounts.find((a) => a.code === c.accountCode);
-        const cur = costByAccount.get(c.accountCode) || {
-          title: acc?.title || 'بانک ملت — حساب جاری شرکتی',
-          total: 0,
-        };
-        cur.total += Math.round(c.amountIrr);
-        costByAccount.set(c.accountCode, cur);
-      }
-      for (const [accCode, info] of costByAccount.entries()) {
-        lines.push({
-          accountCode: accCode,
-          accountTitle: info.title,
-          ...(accCode === '30101'
-            ? { partyId: dossier.supplierId, partyName: dossier.supplierName }
-            : {}),
-          description: `هزینه‌های جانبی، حمل، بیمه و گمرک پرونده ${dossier.dossierNumber}`,
-          debit: 0,
-          credit: info.total,
-        });
-      }
-
-      const v = await createVoucher({
-        date: dossier.date || getTodayShamsi(),
-        description: `ترخیص گمرکی و ورود به انبار پرونده واردات ${dossier.dossierNumber} (${dossier.originCountry})`,
-        voucherType: 'purchase',
-        status: 'permanent',
-        lines,
-        referenceId: dossier.id,
-        currencyCode: dossier.currencyCode,
-        exchangeRate: dossier.exchangeRate,
+      const productSnapshots = [...groupedItems.values()].map((item) => {
+        const product = products.find((candidate) => candidate.id === item.productId);
+        if (!product) throw new Error(`کالای ${item.productName} در انبار یافت نشد.`);
+        if (!Number.isFinite(product.stock) || product.stock < 0 || !Number.isFinite(product.buyPrice) || product.buyPrice < 0) throw new Error(`موجودی یا بهای میانگین کالای ${item.productName} معتبر نیست.`);
+        return { item, product };
       });
-
-      setImportDossiers((prev) =>
-        prev.map((d) =>
-          d.id === dossierId ? { ...d, status: 'cleared', voucherId: v.id } : d
-        )
-      );
-      logActivity(
-        'واردات و ترخیص',
-        `ترخیص و قطعی‌سازی پرونده ${dossier.dossierNumber}`,
-        `سند #${v.voucherNumber} ثبت شد و موجودی و بهای میانگین موزون کالاها به‌روزرسانی گردید.`
-      );
-      showToast(`پرونده ${dossier.dossierNumber} ترخیص، وارد انبار و سند #${v.voucherNumber} صادر شد.`);
+      const costTotal = dossier.costs.reduce((sum, cost) => {
+        if (!Number.isFinite(cost.amountIrr) || cost.amountIrr < 0 || !cost.accountCode.trim() || !accounts.some((account) => account.code === cost.accountCode && (account.category === 'asset' || account.category === 'liability'))) throw new Error('حساب تسویه هزینه جانبی باید دارایی یا بدهی باشد و مبلغ آن معتبر باشد.');
+        return sum + Math.round(cost.amountIrr);
+      }, 0);
+      const fobTotal = Math.round(dossier.totalFobIrr);
+      const landedTotal = Math.round(dossier.grandTotalLandedIrr);
+      const expectedLanded = fobTotal + costTotal;
+      if (!Number.isFinite(dossier.totalFobIrr) || !Number.isFinite(dossier.grandTotalLandedIrr) || Math.abs(expectedLanded - landedTotal) > 0) {
+        throw new Error('جمع بهای تمام‌شده پرونده با بهای ارزی و هزینه‌های جانبی هم‌خوانی ندارد.');
+      }
+      const lines: VoucherLine[] = [
+        { accountCode: '10501', accountTitle: 'موجودی انبار نخ و کالای وارداتی', description: `ورود محموله ترخیص‌شده پرونده ${dossier.dossierNumber} با سرشکن هزینه‌ها`, debit: landedTotal, credit: 0 },
+        { accountCode: '30101', accountTitle: 'بستانکاران و تأمین‌کنندگان واردات نخ', partyId: dossier.supplierId, partyName: dossier.supplierName, description: `بهای ارزی پروفرما ${dossier.proformaNumber} (${dossier.totalForeignAmount} ${dossier.currencyCode})`, debit: 0, credit: fobTotal },
+      ];
+      const costByAccount = new Map<string, { title: string; total: number }>();
+      for (const cost of dossier.costs) {
+        if (cost.amountIrr <= 0) continue;
+        const account = accounts.find((candidate) => candidate.code === cost.accountCode);
+        const current = costByAccount.get(cost.accountCode) || { title: account?.title || 'بانک ملت — حساب جاری شرکتی', total: 0 };
+        current.total += Math.round(cost.amountIrr); costByAccount.set(cost.accountCode, current);
+      }
+      for (const [accountCode, info] of costByAccount) lines.push({
+        accountCode, accountTitle: info.title, ...(accountCode === '30101' ? { partyId: dossier.supplierId, partyName: dossier.supplierName } : {}),
+        description: `هزینه‌های جانبی، حمل، بیمه و گمرک پرونده ${dossier.dossierNumber}`, debit: 0, credit: info.total,
+      });
+      const voucher = await createVoucher({ date: dossier.date || getTodayShamsi(), description: `ترخیص گمرکی و ورود به انبار پرونده واردات ${dossier.dossierNumber} (${dossier.originCountry})`, voucherType: 'purchase', status: 'permanent', lines, referenceId: dossier.id, currencyCode: dossier.currencyCode, exchangeRate: dossier.exchangeRate });
+      const updated: typeof productSnapshots = [];
+      try {
+        for (const { item, product } of productSnapshots) {
+          const previousQuantity = product.stock;
+          const nextQuantity = Number((previousQuantity + item.weightKg).toFixed(2));
+          const weightedBuy = nextQuantity > 0 ? Math.round((previousQuantity * product.buyPrice + item.weightKg * item.finalUnitCostIrr) / nextQuantity) : item.finalUnitCostIrr;
+          // Record the snapshot before the write: a cloud write may succeed remotely
+          // and still surface a transport error locally.
+          updated.push({ item, product });
+          await updateProduct(product.id, { stock: nextQuantity, buyPrice: weightedBuy, lotNumber: item.lotNumber || product.lotNumber });
+        }
+      } catch (error) {
+        const rollbackFailures: string[] = [];
+        for (const { product } of updated.reverse()) {
+          try { await updateProduct(product.id, { stock: product.stock, buyPrice: product.buyPrice, lotNumber: product.lotNumber }); }
+          catch (rollbackError) {
+            rollbackFailures.push(`برگشت موجودی ${product.sku}: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`);
+            console.error('Import stock rollback failed', product.id, rollbackError);
+          }
+        }
+        try {
+          await createVoucher({ date: getTodayShamsi(), description: `سند معکوس خودکار ترخیص ناموفق پرونده ${dossier.dossierNumber}`, voucherType: 'general', status: 'permanent', referenceId: `import-reversal:${dossier.id}`, lines: voucher.lines.map((line) => ({ ...line, description: `برگشت سند ترخیص #${voucher.voucherNumber}: ${line.description}`, debit: line.credit, credit: line.debit, foreignDebit: line.foreignCredit, foreignCredit: line.foreignDebit })) });
+        } catch (reversalError) {
+          rollbackFailures.push(`برگشت سند ${voucher.voucherNumber}: ${reversalError instanceof Error ? reversalError.message : String(reversalError)}`);
+          console.error('Import clearance voucher compensation failed', voucher.id, reversalError);
+        }
+        const failureDetail = error instanceof Error ? error.message : String(error);
+        if (rollbackFailures.length) {
+          throw new Error(`ترخیص پرونده ناموفق بود و برگشت خودکار کامل نشد. علت اصلی: ${failureDetail}. موارد نیازمند رسیدگی دستی: ${rollbackFailures.join('؛ ')}`);
+        }
+        throw new Error(`ترخیص پرونده کامل نشد؛ سند و موجودی با موفقیت به وضعیت قبل برگردانده شدند. علت: ${failureDetail}`);
+      }
+      setImportDossiers((prev) => prev.map((item) => item.id === dossierId ? { ...item, status: 'cleared', voucherId: voucher.id } : item));
+      logActivity('واردات و ترخیص', `ترخیص و قطعی‌سازی پرونده ${dossier.dossierNumber}`, `سند #${voucher.voucherNumber} ثبت شد و موجودی و بهای میانگین موزون کالاها به‌روزرسانی گردید.`);
+      showToast(`پرونده ${dossier.dossierNumber} ترخیص، وارد انبار و سند #${voucher.voucherNumber} صادر شد.`);
     },
-    [activeOperator, importDossiers, products, accounts, updateProduct, createVoucher, logActivity, showToast]
+    [activeOperator, importDossiers, vouchers, products, accounts, updateProduct, createVoucher, logActivity, showToast]
   );
 
   // ---------------- SALES ORDERS & WEIGHBRIDGE DISPATCH ----------------
@@ -3042,41 +3339,39 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   );
 
   const dispatchSalesOrder = useCallback(
-    async (
-      orderId: string,
-      payload: {
-        dispatchDate: string;
-        driverName: string;
-        plateNumber: string;
-        items: SalesOrder['items'];
+    async (orderId: string, payload: { dispatchDate: string; driverName: string; plateNumber: string; items: SalesOrder['items'] }) => {
+      const order = salesOrders.find((item) => item.id === orderId);
+      if (!order || order.status === 'invoiced') return;
+      if (order.status === 'dispatched') throw new Error('این سفارش قبلاً حواله خروج دریافت کرده است.');
+      if (!payload.dispatchDate.trim() || !payload.driverName.trim() || !payload.plateNumber.trim()) throw new Error('تاریخ حواله، نام راننده و شماره پلاک الزامی است.');
+      if (!payload.items.length) throw new Error('برای صدور حواله، حداقل یک ردیف کالا لازم است.');
+      const requestedLines = payload.items.map((item) => {
+        const orderLine = order.items.find((candidate) => candidate.productId === item.productId);
+        if (!orderLine) throw new Error(`کالای ${item.productName} در سفارش اصلی وجود ندارد.`);
+        const quantity = item.actualWeighedKg > 0 ? item.actualWeighedKg : item.orderedWeightKg;
+        if (!Number.isFinite(quantity) || quantity <= 0) throw new Error(`وزن حواله کالای ${item.productName} معتبر نیست.`);
+        return { productId: item.productId, quantity };
+      });
+      const reservedByOtherOrders = new Map<string, number>();
+      for (const other of salesOrders) {
+        if (other.id === orderId || other.status !== 'dispatched') continue;
+        for (const item of other.items) {
+          const quantity = item.actualWeighedKg > 0 ? item.actualWeighedKg : item.orderedWeightKg;
+          reservedByOtherOrders.set(item.productId, (reservedByOtherOrders.get(item.productId) || 0) + Math.max(0, quantity));
+        }
       }
-    ) => {
-      const order = salesOrders.find((o) => o.id === orderId);
-      if (!order) return;
-      const dispatchNumber = order.dispatchNumber || `DSP-${profile.fiscalYear}-${Math.floor(100 + Math.random() * 899)}`;
-      setSalesOrders((prev) =>
-        prev.map((o) =>
-          o.id === orderId
-            ? {
-                ...o,
-                dispatchNumber,
-                dispatchDate: payload.dispatchDate,
-                driverName: payload.driverName,
-                plateNumber: payload.plateNumber,
-                items: payload.items,
-                status: 'dispatched',
-              }
-            : o
-        )
-      );
-      logActivity(
-        'انبار و باسکول',
-        `صدور حواله خروج ${dispatchNumber}`,
-        `توزین نهایی سفارش ${order.orderNumber} (${order.partyName})`
-      );
+      for (const job of subcontractJobs) {
+        if (job.status !== 'sent') continue;
+        reservedByOtherOrders.set(job.rawProductId, (reservedByOtherOrders.get(job.rawProductId) || 0) + job.sentWeightKg);
+      }
+      const available = new Map(products.map((product) => [product.id, Math.max(0, product.stock - (reservedByOtherOrders.get(product.id) || 0))]));
+      assertSufficientStock(available, requestedLines);
+      const dispatchNumber = order.dispatchNumber || `DSP-${profile.fiscalYear}-${String(salesOrders.filter((item) => item.dispatchNumber).length + 1).padStart(4, '0')}`;
+      setSalesOrders((prev) => prev.map((item) => item.id === orderId ? { ...item, dispatchNumber, dispatchDate: payload.dispatchDate, driverName: payload.driverName.trim(), plateNumber: payload.plateNumber.trim(), items: payload.items, status: 'dispatched' } : item));
+      logActivity('انبار و باسکول', `صدور حواله خروج ${dispatchNumber}`, `توزین نهایی سفارش ${order.orderNumber} (${order.partyName})`);
       showToast(`حواله خروج باسکول ${dispatchNumber} ثبت شد.`);
     },
-    [salesOrders, profile.fiscalYear, logActivity, showToast]
+    [salesOrders, products, subcontractJobs, profile.fiscalYear, logActivity, showToast]
   );
 
   const invoiceSalesOrder = useCallback(
@@ -3087,6 +3382,12 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       }
       const order = salesOrders.find((o) => o.id === orderId);
       if (!order || order.status === 'invoiced') return;
+      if (order.status !== 'dispatched' || !order.dispatchNumber) {
+        throw new Error('صدور فاکتور فقط پس از ثبت حواله خروج و توزین نهایی مجاز است.');
+      }
+      if (order.invoiceId || invoices.some((invoice) => invoice.id === order.invoiceId)) {
+        throw new Error('برای این سفارش قبلاً فاکتور صادر شده است.');
+      }
 
       const invItems = order.items.map((it) => {
         const prod = products.find((p) => p.id === it.productId);
@@ -3151,6 +3452,24 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   // ---------------- DYEING / WEAVING SUBCONTRACTING ----------------
   const addSubcontractJob = useCallback(
     async (job: Omit<SubcontractJob, 'id' | 'ownerId'>) => {
+      const rawProduct = products.find((product) => product.id === job.rawProductId);
+      if (!job.jobNumber.trim() || subcontractJobs.some((item) => item.jobNumber.trim() === job.jobNumber.trim())) {
+        throw new Error('شماره حواله پیمانکاری خالی یا تکراری است.');
+      }
+      if (!rawProduct || !parties.some((party) => party.id === job.contractorPartyId) ||
+          !Number.isFinite(job.sentWeightKg) || job.sentWeightKg <= 0 ||
+          !Number.isFinite(job.rawUnitCostIrr) || job.rawUnitCostIrr < 0 ||
+          !Number.isFinite(job.serviceFeePerKgIrr) || job.serviceFeePerKgIrr < 0 ||
+          !Number.isFinite(job.expectedLossPct) || job.expectedLossPct < 0 || job.expectedLossPct >= 100) {
+        throw new Error('کالای خام، پیمانکار، وزن، بهای مواد یا نرخ اجرت پیمانکاری معتبر نیست.');
+      }
+      const reservedByOtherJobs = subcontractJobs
+        .filter((item) => item.status === 'sent' && item.rawProductId === job.rawProductId)
+        .reduce((sum, item) => sum + item.sentWeightKg, 0);
+      const availableForSubcontract = rawProduct.stock - reservedByOtherJobs;
+      if (!Number.isFinite(rawProduct.stock) || availableForSubcontract + 1e-9 < job.sentWeightKg) {
+        throw new Error('موجودی قابل تخصیص پس از کسر حواله‌های باز پیمانکاری کافی نیست.');
+      }
       const full: SubcontractJob = {
         ...job,
         id: generateSafeId('sub'),
@@ -3164,177 +3483,112 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       );
       showToast(`حواله پیمانکاری ${full.jobNumber} ثبت شد.`);
     },
-    [ownerId, logActivity, showToast]
+    [ownerId, products, parties, subcontractJobs, logActivity, showToast]
   );
 
   const completeSubcontractJob = useCallback(
-    async (
-      jobId: string,
-      payload: { returnedWeightKg: number; completionDate: string; finishedLotNumber: string }
-    ) => {
-      const job = subcontractJobs.find((j) => j.id === jobId);
+    async (jobId: string, payload: { returnedWeightKg: number; completionDate: string; finishedLotNumber: string }) => {
+      const job = subcontractJobs.find((item) => item.id === jobId);
       if (!job || job.status === 'completed') return;
-
-      const rawProd = products.find((p) => p.id === job.rawProductId);
+      if (vouchers.some((voucher) => voucher.referenceId === job.id)) throw new Error('برای این عملیات پیمانکاری قبلاً سند ثبت شده است.');
+      const rawProduct = products.find((product) => product.id === job.rawProductId);
+      if (!rawProduct) throw new Error(`کالای خام ${job.rawProductName} در انبار یافت نشد.`);
+      const reservedByOtherJobs = subcontractJobs
+        .filter((item) => item.id !== jobId && item.status === 'sent' && item.rawProductId === job.rawProductId)
+        .reduce((sum, item) => sum + item.sentWeightKg, 0);
+      if (!Number.isFinite(job.sentWeightKg) || job.sentWeightKg <= 0 || !Number.isFinite(rawProduct.stock) ||
+          rawProduct.stock - job.sentWeightKg + 1e-9 < reservedByOtherJobs) {
+        throw new Error('موجودی نخ خام برای تکمیل این حواله، پس از حفظ موجودی رزروشده سایر پیمانکاری‌ها کافی نیست.');
+      }
+      if (!Number.isFinite(payload.returnedWeightKg) || payload.returnedWeightKg <= 0 || payload.returnedWeightKg > job.sentWeightKg + 1e-9 || !/^14\d{2}\/\d{2}\/\d{2}$/.test(payload.completionDate) || !payload.finishedLotNumber.trim()) {
+        throw new Error('وزن برگشتی باید مثبت و حداکثر برابر وزن نخ ارسالی باشد؛ تاریخ و شماره لات نیز باید معتبر باشند.');
+      }
+      if (!Number.isFinite(job.rawUnitCostIrr) || job.rawUnitCostIrr < 0 || !Number.isFinite(job.serviceFeePerKgIrr) || job.serviceFeePerKgIrr < 0) throw new Error('بهای مواد اولیه یا اجرت پیمانکاری نامعتبر است.');
       const rawTotalCost = Math.round(job.sentWeightKg * job.rawUnitCostIrr);
       const serviceFeeTotal = Math.round(payload.returnedWeightKg * job.serviceFeePerKgIrr);
       const finishedTotalCost = rawTotalCost + serviceFeeTotal;
-      const finishedUnitCost =
-        payload.returnedWeightKg > 0
-          ? Math.round(finishedTotalCost / payload.returnedWeightKg)
-          : job.rawUnitCostIrr;
-
-      // Update inventory: deduct raw yarn weight and add finished dyed/woven yarn product or stock
-      if (rawProd) {
-        const nextRawStock = Math.max(0, Number((rawProd.stock - job.sentWeightKg).toFixed(2)));
-        await updateProduct(rawProd.id, { stock: nextRawStock });
+      const finishedUnitCost = Math.round(finishedTotalCost / payload.returnedWeightKg);
+      const lines: VoucherLine[] = [
+        { accountCode: '10501', accountTitle: 'موجودی انبار نخ و کالای وارداتی', description: `ورود ${payload.returnedWeightKg} کیلوگرم محصول تکمیل‌شده ${job.jobNumber}`, debit: finishedTotalCost, credit: 0 },
+        { accountCode: '10501', accountTitle: 'موجودی انبار نخ و کالای وارداتی', description: `مصرف ${job.sentWeightKg} کیلوگرم نخ خام (${job.rawProductName})`, debit: 0, credit: rawTotalCost },
+        { accountCode: '30101', accountTitle: 'بستانکاران و تأمین‌کنندگان واردات نخ', partyId: job.contractorPartyId, partyName: job.contractorName, description: `اجرت پیمانکاری رنگرزی/تبدیل ${job.jobNumber}`, debit: 0, credit: serviceFeeTotal },
+      ];
+      const voucher = await createVoucher({ date: payload.completionDate, description: `تکمیل عملیات پیمانکاری ${job.jobNumber} (${job.finishedProductName} — لات ${payload.finishedLotNumber})`, voucherType: 'general', status: 'permanent', lines, referenceId: job.id });
+      let rawStockUpdated = false;
+      try {
+        const nextRawStock = Number((rawProduct.stock - job.sentWeightKg).toFixed(2));
+        await updateProduct(rawProduct.id, { stock: nextRawStock });
+        rawStockUpdated = true;
+        await addProduct({ sku: `FIN-${job.jobNumber}`, name: job.finishedProductName, category: job.processType === 'dyeing' ? 'نخ رنگ‌شده (پیمانکاری)' : 'محصول تبدیل‌شده پیمانکاری',
+          warehouse: rawProduct.warehouse || 'انبار مرکزی شادآباد', unit: 'کیلوگرم', secondaryUnit: rawProduct.secondaryUnit || 'کارتن',
+          kgPerCarton: rawProduct.kgPerCarton || 25, lotNumber: payload.finishedLotNumber, originCountry: 'تکمیل داخلی',
+          buyPrice: finishedUnitCost, sellPrice: Math.round(finishedUnitCost * 1.18), stock: payload.returnedWeightKg, reorderPoint: 100, vatExempt: false });
+      } catch (error) {
+        const compensationFailures: string[] = [];
+        if (rawStockUpdated) {
+          try {
+            await updateProduct(rawProduct.id, { stock: rawProduct.stock });
+          } catch (rollbackError) {
+            console.error('Subcontract raw stock rollback failed', rawProduct.id, rollbackError);
+            compensationFailures.push(`برگشت موجودی کالای خام (${rawProduct.id}) ناموفق بود: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`);
+          }
+        }
+        try {
+          await createVoucher({
+            date: getTodayShamsi(),
+            description: `سند معکوس خودکار تکمیل ناموفق پیمانکاری ${job.jobNumber}`,
+            voucherType: 'general',
+            status: 'permanent',
+            referenceId: `subcontract-reversal:${job.id}`,
+            lines: voucher.lines.map((line) => ({
+              ...line,
+              description: `برگشت سند پیمانکاری #${voucher.voucherNumber}: ${line.description}`,
+              debit: line.credit,
+              credit: line.debit,
+              foreignDebit: line.foreignCredit,
+              foreignCredit: line.foreignDebit,
+            })),
+          });
+        } catch (reversalError) {
+          console.error('Subcontract voucher compensation failed', voucher.id, reversalError);
+          compensationFailures.push(`صدور سند معکوس برای سند #${voucher.voucherNumber} ناموفق بود: ${reversalError instanceof Error ? reversalError.message : String(reversalError)}`);
+        }
+        const originalMessage = error instanceof Error ? error.message : String(error);
+        const compensationMessage = compensationFailures.length > 0
+          ? ` برگشت خودکار کامل نشد و رسیدگی دستی لازم است: ${compensationFailures.join(' | ')}`
+          : ' سند معکوس و برگشت موجودی با موفقیت ثبت شد.';
+        throw new Error(`تکمیل پیمانکاری ${job.jobNumber} انجام نشد. علت: ${originalMessage}.${compensationMessage}`);
       }
-      await addProduct({
-        sku: `FIN-${job.jobNumber}`,
-        name: job.finishedProductName,
-        category: job.processType === 'dyeing' ? 'نخ رنگ‌شده (پیمانکاری)' : 'محصول تبدیل‌شده پیمانکاری',
-        warehouse: rawProd?.warehouse || 'انبار مرکزی شادآباد',
-        unit: 'کیلوگرم',
-        secondaryUnit: rawProd?.secondaryUnit || 'کارتن',
-        kgPerCarton: rawProd?.kgPerCarton || 25,
-        lotNumber: payload.finishedLotNumber,
-        originCountry: 'تکمیل داخلی',
-        buyPrice: finishedUnitCost,
-        sellPrice: Math.round(finishedUnitCost * 1.18),
-        stock: payload.returnedWeightKg,
-        reorderPoint: 100,
-        vatExempt: false,
-      });
-
-      // Post balanced voucher for subcontracting conversion & contractor fee
-      const v = await createVoucher({
-        date: payload.completionDate,
-        description: `تکمیل عملیات پیمانکاری ${job.jobNumber} (${job.finishedProductName} — لات ${payload.finishedLotNumber})`,
-        voucherType: 'general',
-        status: 'permanent',
-        lines: [
-          {
-            accountCode: '10501',
-            accountTitle: 'موجودی انبار نخ و کالای وارداتی',
-            description: `ورود ${payload.returnedWeightKg} کیلوگرم محصول تکمیل‌شده ${job.jobNumber}`,
-            debit: finishedTotalCost,
-            credit: 0,
-          },
-          {
-            accountCode: '10501',
-            accountTitle: 'موجودی انبار نخ و کالای وارداتی',
-            description: `مصرف ${job.sentWeightKg} کیلوگرم نخ خام (${job.rawProductName})`,
-            debit: 0,
-            credit: rawTotalCost,
-          },
-          {
-            accountCode: '30101',
-            accountTitle: 'بستانکاران و تأمین‌کنندگان واردات نخ',
-            partyId: job.contractorPartyId,
-            partyName: job.contractorName,
-            description: `اجرت پیمانکاری رنگرزی/تبدیل ${job.jobNumber}`,
-            debit: 0,
-            credit: serviceFeeTotal,
-          },
-        ],
-        referenceId: job.id,
-      });
-
-      setSubcontractJobs((prev) =>
-        prev.map((j) =>
-          j.id === jobId
-            ? {
-                ...j,
-                status: 'completed',
-                completionDate: payload.completionDate,
-                returnedWeightKg: payload.returnedWeightKg,
-                finishedLotNumber: payload.finishedLotNumber,
-                totalServiceFeeIrr: serviceFeeTotal,
-                finishedUnitCostIrr: finishedUnitCost,
-                voucherId: v.id,
-              }
-            : j
-        )
-      );
-      logActivity(
-        'پیمانکاری رنگرزی/بافندگی',
-        `اتمام و ورود محصول ${job.jobNumber}`,
-        `بازگشت ${payload.returnedWeightKg} کیلوگرم با لات ${payload.finishedLotNumber} و ثبت سند #${v.voucherNumber}`
-      );
-      showToast(`عملیات پیمانکاری ${job.jobNumber} تکمیل و سند #${v.voucherNumber} ثبت شد.`);
+      setSubcontractJobs((prev) => prev.map((item) => item.id === jobId ? { ...item, status: 'completed', completionDate: payload.completionDate, returnedWeightKg: payload.returnedWeightKg, finishedLotNumber: payload.finishedLotNumber, totalServiceFeeIrr: serviceFeeTotal, finishedUnitCostIrr: finishedUnitCost, voucherId: voucher.id } : item));
+      logActivity('پیمانکاری رنگرزی/بافندگی', `اتمام و ورود محصول ${job.jobNumber}`, `بازگشت ${payload.returnedWeightKg} کیلوگرم با لات ${payload.finishedLotNumber} و ثبت سند #${voucher.voucherNumber}`);
+      showToast(`عملیات پیمانکاری ${job.jobNumber} تکمیل و سند #${voucher.voucherNumber} ثبت شد.`);
     },
-    [subcontractJobs, products, updateProduct, addProduct, createVoucher, logActivity, showToast]
+    [subcontractJobs, vouchers, products, updateProduct, addProduct, createVoucher, logActivity, showToast]
   );
 
   // ---------------- FX REVALUATION & BROKER COMMISSION VOUCHERS ----------------
   const postFxRevaluationVoucher = useCallback(
     async (rows: FxRevaluationRow[], date: string) => {
-      const nonZero = rows.filter((r) => Math.abs(r.revaluationDiffIrr) >= 1);
-      if (nonZero.length === 0) {
-        showToast('هیچ اختلاف تسعیر ارزی برای صدور سند وجود ندارد.');
-        return;
+      const referenceId = `fx-revaluation:${date}`;
+      if (vouchers.some((voucher) => voucher.referenceId === referenceId)) {
+        throw new Error(`برای تاریخ ${date} قبلاً سند تسعیر صادر شده است.`);
       }
-
-      const lines: VoucherLine[] = [];
-      let netDiff = 0;
-      for (const r of nonZero) {
-        netDiff += r.revaluationDiffIrr;
-        if (r.revaluationDiffIrr > 0) {
-          lines.push({
-            accountCode: r.accountCode,
-            accountTitle: r.accountTitle,
-            partyId: r.partyId,
-            partyName: r.partyName,
-            description: `تعدیل مثبت تسعیر ${r.currencyCode} به نرخ ${r.currentRateToIrr.toLocaleString('en-US')} ریال`,
-            debit: r.revaluationDiffIrr,
-            credit: 0,
-          });
-        } else {
-          lines.push({
-            accountCode: r.accountCode,
-            accountTitle: r.accountTitle,
-            partyId: r.partyId,
-            partyName: r.partyName,
-            description: `تعدیل منفی تسعیر ${r.currencyCode} به نرخ ${r.currentRateToIrr.toLocaleString('en-US')} ریال`,
-            debit: 0,
-            credit: Math.abs(r.revaluationDiffIrr),
-          });
-        }
-      }
-
-      if (netDiff > 0) {
-        lines.push({
-          accountCode: '60901',
-          accountTitle: 'سود ناشی از تسعیر دارایی‌ها و بدهی‌های ارزی',
-          description: `شناسایی سود خالص تسعیر ارز تا تاریخ ${date}`,
-          debit: 0,
-          credit: netDiff,
-        });
-      } else if (netDiff < 0) {
-        lines.push({
-          accountCode: '80901',
-          accountTitle: 'زیان تسعیر ارز و کارمزدهای بانکی',
-          description: `شناسایی زیان خالص تسعیر ارز تا تاریخ ${date}`,
-          debit: Math.abs(netDiff),
-          credit: 0,
-        });
-      }
-
-      const v = await createVoucher({
-        date,
-        description: `سند تسعیر ارز دارایی‌ها و بدهی‌های ارزی پایان دوره (${date})`,
-        voucherType: 'general',
-        status: 'permanent',
-        lines,
-      });
-      logActivity(
-        'ارز و تسعیر',
-        `صدور سند تسعیر ارز #${v.voucherNumber}`,
-        `${nonZero.length} ردیف ارزی تسعیر شد (خالص: ${netDiff >= 0 ? 'سود' : 'زیان'} ${Math.abs(netDiff).toLocaleString('en-US')} ریال)`
-      );
+      const nonZero = rows.filter((row) => Math.abs(row.revaluationDiffIrr) >= 1);
+      if (nonZero.length === 0) { showToast('هیچ اختلاف تسعیر ارزی برای صدور سند وجود ندارد.'); return; }
+      const totalGains = nonZero.reduce((sum, row) => sum + Math.max(0, row.revaluationDiffIrr), 0);
+      const totalLosses = nonZero.reduce((sum, row) => sum + Math.max(0, -row.revaluationDiffIrr), 0);
+      const lines: VoucherLine[] = nonZero.map((row) => ({
+        accountCode: row.accountCode, accountTitle: row.accountTitle, partyId: row.partyId, partyName: row.partyName,
+        description: `${row.revaluationDiffIrr > 0 ? 'تعدیل مثبت' : 'تعدیل منفی'} تسعیر ${row.currencyCode} به نرخ ${row.currentRateToIrr.toLocaleString('en-US')} ریال`,
+        debit: Math.max(0, row.revaluationDiffIrr), credit: Math.max(0, -row.revaluationDiffIrr),
+      }));
+      if (totalGains > 0) lines.push({ accountCode: '60901', accountTitle: 'سود ناشی از تسعیر دارایی‌ها و بدهی‌های ارزی', description: `شناسایی سود تسعیر ارز تا تاریخ ${date}`, debit: 0, credit: totalGains });
+      if (totalLosses > 0) lines.push({ accountCode: '80901', accountTitle: 'زیان تسعیر ارز و کارمزدهای بانکی', description: `شناسایی زیان تسعیر ارز تا تاریخ ${date}`, debit: totalLosses, credit: 0 });
+      const v = await createVoucher({ date, description: `سند تسعیر ارز دارایی‌ها و بدهی‌های ارزی پایان دوره (${date})`, voucherType: 'general', status: 'permanent', referenceId, lines });
+      logActivity('ارز و تسعیر', `صدور سند تسعیر ارز #${v.voucherNumber}`, `${nonZero.length} ردیف ارزی تسعیر شد (سود: ${totalGains.toLocaleString('en-US')}، زیان: ${totalLosses.toLocaleString('en-US')} ریال)`);
       showToast(`سند تسعیر ارز #${v.voucherNumber} با موفقیت صادر شد.`);
     },
-    [createVoucher, logActivity, showToast]
+    [vouchers, createVoucher, logActivity, showToast]
   );
 
   const postBrokerCommissionVoucher = useCallback(
@@ -3516,6 +3770,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         authReady,
         isCloudMode,
         isSyncing,
+        deviceIdentity,
         profile,
         accounts,
         parties,
@@ -3542,7 +3797,9 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         auditReport,
         toast,
         showToast,
-        loginWithGoogle,
+        bootstrapCloud,
+        joinCloud,
+        createDeviceInvite,
         logout,
         updateCompanyProfile,
         setCurrencyUnit,
