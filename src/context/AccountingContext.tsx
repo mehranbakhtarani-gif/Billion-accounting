@@ -2252,11 +2252,20 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     async (invoiceId: string) => {
       const inv = invoices.find((i) => i.id === invoiceId);
       if (!inv || inv.invoiceType !== 'proforma' || inv.status === 'cancelled') return;
+      if (invoices.some((item) => item.id !== invoiceId && item.invoiceNumber === inv.invoiceNumber.replace(/^PF-/, 'F-') && item.status !== 'cancelled')) {
+        throw new Error(`شماره فاکتور فروش ${inv.invoiceNumber.replace(/^PF-/, 'F-')} قبلاً استفاده شده است.`);
+      }
 
+      const subcontractReservations = new Map<string, number>();
+      for (const job of subcontractJobs) {
+        if (job.status !== 'sent') continue;
+        subcontractReservations.set(job.rawProductId, (subcontractReservations.get(job.rawProductId) ?? 0) + job.sentWeightKg);
+      }
       assertSufficientStock(
-        new Map(products.map((product) => [product.id, product.stock])),
+        new Map(products.map((product) => [product.id, Math.max(0, product.stock - (subcontractReservations.get(product.id) ?? 0))])),
         inv.items.map((item) => ({ productId: item.productId, quantity: item.quantity })),
       );
+
       let cogsTotal = 0;
       const stockDeltas = new Map<string, number>();
       for (const item of inv.items) {
@@ -2265,15 +2274,8 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         if (!Number.isFinite(item.quantity) || item.quantity <= 0) {
           throw new Error(`مقدار کالای پیش‌فاکتور معتبر نیست: ${item.productName || item.productId}`);
         }
-        cogsTotal += prod.buyPrice * item.quantity;
+        cogsTotal += Math.round(prod.buyPrice * item.quantity);
         stockDeltas.set(prod.id, (stockDeltas.get(prod.id) ?? 0) - item.quantity);
-      }
-      for (const [productId, delta] of stockDeltas) {
-        const prod = products.find((p) => p.id === productId);
-        if (!prod) throw new Error(`کالای پیش‌فاکتور یافت نشد: ${productId}`);
-        const nextStock = Number((prod.stock + delta).toFixed(2));
-        if (nextStock < -1e-9) throw new Error(`موجودی کالا برای تبدیل پیش‌فاکتور کافی نیست: ${prod.name}`);
-        await adjustProductStock(productId, Math.max(0, nextStock));
       }
 
       const saleNumber = inv.invoiceNumber.replace(/^PF-/, 'F-');
@@ -2283,27 +2285,39 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         invoiceType: 'sale',
         status: inv.creditAmount === 0 ? 'settled' : 'issued',
       };
-
       const rawLines = buildInvoiceVoucherLines(salePayload, cogsTotal);
       const isFx = isForeignCurrency(inv.currencyCode) && Number(inv.exchangeRate) > 0;
-      const lines =
-        isFx && inv.exchangeRate
-          ? annotateVoucherLinesWithCurrency(rawLines, inv.exchangeRate, 2)
-          : rawLines;
-      const createdVoucher = await createVoucher({
-        date: getTodayShamsi(),
-        description: `سند اتوماتیک تبدیل پیش‌فاکتور به فروش رسمی ${saleNumber} — ${inv.partyName}`,
-        voucherType: 'sales',
-        status: 'permanent',
-        lines,
-        referenceId: inv.id,
-        ...(isFx && inv.currencyCode && inv.exchangeRate
-          ? { currencyCode: inv.currencyCode, exchangeRate: inv.exchangeRate }
-          : {}),
-      });
+      const lines = isFx && inv.exchangeRate
+        ? annotateVoucherLinesWithCurrency(rawLines, inv.exchangeRate, 2)
+        : rawLines;
 
-      if (user) {
-        try {
+      const appliedStock: Array<{ productId: string; previousStock: number }> = [];
+      let createdVoucher: Voucher | undefined;
+      try {
+        for (const [productId, delta] of stockDeltas) {
+          const prod = products.find((p) => p.id === productId);
+          if (!prod) throw new Error(`کالای پیش‌فاکتور یافت نشد: ${productId}`);
+          const nextStock = Number((prod.stock + delta).toFixed(2));
+          if (!Number.isFinite(nextStock) || nextStock < -1e-9) {
+            throw new Error(`موجودی کالا برای تبدیل پیش‌فاکتور کافی نیست: ${prod.name}`);
+          }
+          await adjustProductStock(productId, Math.max(0, nextStock));
+          appliedStock.push({ productId, previousStock: prod.stock });
+        }
+
+        createdVoucher = await createVoucher({
+          date: getTodayShamsi(),
+          description: `سند اتوماتیک تبدیل پیش‌فاکتور به فروش رسمی ${saleNumber} — ${inv.partyName}`,
+          voucherType: 'sales',
+          status: 'permanent',
+          lines,
+          referenceId: inv.id,
+          ...(isFx && inv.currencyCode && inv.exchangeRate
+            ? { currencyCode: inv.currencyCode, exchangeRate: inv.exchangeRate }
+            : {}),
+        });
+
+        if (user) {
           await updateDoc(doc(db, 'invoices', invoiceId), {
             invoiceNumber: saleNumber,
             invoiceType: 'sale',
@@ -2311,27 +2325,53 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             voucherId: createdVoucher.id,
             updatedAt: serverTimestamp(),
           });
-        } catch (err) {
-          handleSupabaseError(err, OperationType.UPDATE, `invoices/${invoiceId}`);
+        } else {
+          setInvoices((prev) =>
+            prev.map((i) => i.id === invoiceId
+              ? { ...i, invoiceNumber: saleNumber, invoiceType: 'sale', status: salePayload.status, voucherId: createdVoucher!.id }
+              : i)
+          );
         }
-      } else {
-        setInvoices((prev) =>
-          prev.map((i) =>
-            i.id === invoiceId
-              ? {
-                  ...i,
-                  invoiceNumber: saleNumber,
-                  invoiceType: 'sale',
-                  status: salePayload.status,
-                  voucherId: createdVoucher.id,
-                }
-              : i
-          )
-        );
+      } catch (error) {
+        const compensationFailures: string[] = [];
+        for (const snapshot of appliedStock.reverse()) {
+          try {
+            await adjustProductStock(snapshot.productId, snapshot.previousStock);
+          } catch (rollbackError) {
+            compensationFailures.push(`برگشت موجودی کالای ${snapshot.productId} ناموفق بود: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`);
+          }
+        }
+        if (createdVoucher) {
+          try {
+            await createVoucher({
+              date: getTodayShamsi(),
+              description: `سند معکوس خودکار بابت شکست تبدیل پیش‌فاکتور ${inv.invoiceNumber}`,
+              voucherType: 'general',
+              status: 'permanent',
+              referenceId: `proforma-conversion-compensation:${inv.id}`,
+              lines: createdVoucher.lines.map((line) => ({
+                ...line,
+                description: `برگشت سند تبدیل پیش‌فاکتور #${createdVoucher!.voucherNumber}: ${line.description}`,
+                debit: line.credit,
+                credit: line.debit,
+                foreignDebit: line.foreignCredit,
+                foreignCredit: line.foreignDebit,
+              })),
+            });
+          } catch (reversalError) {
+            compensationFailures.push(`صدور سند معکوس #${createdVoucher.voucherNumber} ناموفق بود: ${reversalError instanceof Error ? reversalError.message : String(reversalError)}`);
+          }
+        }
+        const originalMessage = error instanceof Error ? error.message : String(error);
+        const compensationMessage = compensationFailures.length
+          ? ` جبران کامل نشد و رسیدگی دستی لازم است: ${compensationFailures.join(' | ')}`
+          : ' برگشت موجودی و سند با موفقیت انجام شد.';
+        throw new Error(`تبدیل پیش‌فاکتور ${inv.invoiceNumber} کامل نشد. علت: ${originalMessage}.${compensationMessage}`);
       }
+
       showToast(`پیش‌فاکتور به فاکتور فروش رسمی ${saleNumber} تبدیل و سند حسابداری آن صادر شد.`);
     },
-    [invoices, products, adjustProductStock, createVoucher, user, showToast]
+    [invoices, products, subcontractJobs, adjustProductStock, createVoucher, user, showToast]
   );
 
   // ---------------- CORPORATE MODULES CRUD ----------------
