@@ -5,6 +5,8 @@ import {
   BookOpen,
   Briefcase,
   Calculator,
+  Cloud,
+  CloudOff,
   ChevronDown,
   ChevronLeft,
   FileText,
@@ -12,6 +14,7 @@ import {
   Keyboard,
   Landmark,
   LayoutDashboard,
+  LoaderCircle,
   Menu,
   Moon,
   Package,
@@ -47,6 +50,7 @@ import {
 import { formatCompactMoney, toPersianDigits } from './lib/format';
 import { computeChequeAlerts, useChequeAlertPreferences } from './lib/chequeAlerts';
 import { RBAC_ROLE_LABELS } from './lib/enterpriseAccounting';
+import { testSupabaseConnection } from './lib/supabaseStore';
 
 interface SubMenuItem {
   key: string;
@@ -317,6 +321,38 @@ export default function App() {
   const [showCalculator, setShowCalculator] = useState(false);
   const [showChequePopover, setShowChequePopover] = useState(false);
   const [avatarError, setAvatarError] = useState(false);
+  const [cloudHealth, setCloudHealth] = useState<'checking' | 'online' | 'offline'>('checking');
+
+  useEffect(() => {
+    if (!isCloudMode) {
+      setCloudHealth('offline');
+      return;
+    }
+    let active = true;
+    const checkCloud = async () => {
+      if (!navigator.onLine) {
+        if (active) setCloudHealth('offline');
+        return;
+      }
+      if (active) setCloudHealth('checking');
+      try {
+        const connected = await testSupabaseConnection();
+        if (active) setCloudHealth(connected ? 'online' : 'offline');
+      } catch {
+        if (active) setCloudHealth('offline');
+      }
+    };
+    void checkCloud();
+    const interval = window.setInterval(checkCloud, 30000);
+    window.addEventListener('online', checkCloud);
+    window.addEventListener('offline', checkCloud);
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+      window.removeEventListener('online', checkCloud);
+      window.removeEventListener('offline', checkCloud);
+    };
+  }, [isCloudMode]);
 
   // Sync Tailwind v4 dark class on <html>
   useEffect(() => {
@@ -626,13 +662,22 @@ export default function App() {
                 </div>
               </div>
             </button>
-            {!isCloudMode && (
+            {isCloudMode ? (
+              <button
+                onClick={inviteAnotherDevice}
+                title="دعوت دستگاه دیگر به شرکت"
+                aria-label="دعوت دستگاه دیگر"
+                className="p-2 rounded-lg text-teal-700 dark:text-teal-400 hover:bg-teal-50 dark:hover:bg-teal-950/40 shrink-0"
+              >
+                <Cloud className="w-4 h-4" />
+              </button>
+            ) : (
               <button
                 onClick={connectToCloud}
                 title="اتصال امن به شرکت در Supabase"
                 className="p-1.5 rounded-lg text-teal-700 dark:text-teal-400 hover:bg-teal-50 dark:hover:bg-teal-950/40 shrink-0"
               >
-                <span className="text-xs font-bold">ابر</span>
+                <Cloud className="w-4 h-4" />
               </button>
             )}
           </div>
@@ -885,30 +930,31 @@ export default function App() {
               <PWAInstallButton compact />
             </div>
 
-            {!isCloudMode ? (
+            {isCloudMode ? (
+              <div
+                role="status"
+                aria-live="polite"
+                title={cloudHealth === 'online' ? 'اتصال Supabase برقرار است؛ وضعیت هر ۳۰ ثانیه بررسی می‌شود' : cloudHealth === 'checking' ? 'در حال بررسی اتصال Supabase' : 'اتصال زنده به Supabase در دسترس نیست'}
+                className={`inline-flex items-center gap-2 px-3 py-2 rounded-xl border text-xs font-semibold whitespace-nowrap ${
+                  cloudHealth === 'online'
+                    ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-300'
+                    : cloudHealth === 'checking'
+                      ? 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300'
+                      : 'border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-300'
+                }`}
+              >
+                {isSyncing ? <LoaderCircle className="w-4 h-4 animate-spin" /> : cloudHealth === 'online' ? <Cloud className="w-4 h-4" /> : cloudHealth === 'checking' ? <LoaderCircle className="w-4 h-4 animate-spin" /> : <CloudOff className="w-4 h-4" />}
+                <span>{isSyncing ? 'در حال ذخیره' : cloudHealth === 'online' ? 'Supabase زنده' : cloudHealth === 'checking' ? 'بررسی اتصال' : 'قطع ارتباط'}</span>
+                <span className={`w-2 h-2 rounded-full ${cloudHealth === 'online' ? 'bg-emerald-500' : cloudHealth === 'checking' ? 'bg-amber-500 animate-pulse' : 'bg-rose-500'}`} />
+              </div>
+            ) : (
               <button
                 onClick={connectToCloud}
-                className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold text-white bg-teal-700 hover:bg-teal-800 rounded-lg transition-colors whitespace-nowrap shrink-0"
+                className="inline-flex items-center gap-2 px-3 py-2 text-xs font-semibold text-white bg-teal-700 hover:bg-teal-800 rounded-xl transition-colors whitespace-nowrap shrink-0"
               >
-                <span className="text-sm">☁</span>
-                <span>اتصال به شرکت</span>
+                <Cloud className="w-4 h-4" />
+                <span>اتصال به ابر</span>
               </button>
-            ) : (
-              <>
-              <button
-                onClick={inviteAnotherDevice}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-teal-700 border border-teal-700 rounded-lg hover:bg-teal-50 whitespace-nowrap shrink-0"
-              >
-                دعوت دستگاه
-              </button>
-              <button
-                onClick={() => navigate('invoices', 'new-sale', 'inv-sale')}
-                className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold text-white bg-teal-700 hover:bg-teal-800 rounded-lg transition-colors whitespace-nowrap shrink-0"
-              >
-                <FileText className="w-3.5 h-3.5" />
-                <span>فاکتور فروش</span>
-              </button>
-              </>
             )}
           </div>
         </header>

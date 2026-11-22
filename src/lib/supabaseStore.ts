@@ -241,5 +241,5 @@ export function handleSupabaseError(error: unknown, operationType: OperationType
 export async function testSupabaseConnection(): Promise<boolean> {
   if (typeof navigator !== 'undefined' && !navigator.onLine) return false;
   const { error } = await supabase.from('billion_companies').select('id').limit(1);
-  return !error || !isSupabaseOfflineError(error);
+  return !error;
 }
