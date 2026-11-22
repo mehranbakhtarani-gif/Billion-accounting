@@ -290,6 +290,7 @@ export function reconcileInventoryLotLedger(
   const movementIds = new Set<string>();
   const signedTotals = new Map<string, number>();
   const receiptLotIds = new Set<string>();
+  const sourceReceiptTotals = new Map<string, number>();
   for (const movement of movements) {
     if (!movement.id.trim() || movementIds.has(movement.id)) throw new Error('شناسه گردش بچ تکراری یا خالی است.');
     movementIds.add(movement.id);
@@ -303,12 +304,16 @@ export function reconcileInventoryLotLedger(
     }
     if (['receipt', 'return', 'adjustment'].includes(movement.movementType) && movement.quantity > 0) {
       receiptLotIds.add(movement.lotId);
+      sourceReceiptTotals.set(movement.lotId, (sourceReceiptTotals.get(movement.lotId) ?? 0) + movement.quantity);
     }
     signedTotals.set(movement.lotId, (signedTotals.get(movement.lotId) ?? 0) + movement.quantity);
   }
   return lots.map((lot) => {
     if (lot.quantityReceived > 0 && !receiptLotIds.has(lot.id)) {
       throw new Error(`بچ ${lot.id} فاقد گردش ورود اولیه قابل حسابرسی است.`);
+    }
+    if (Math.abs((sourceReceiptTotals.get(lot.id) ?? 0) - lot.quantityReceived) > 0.0001) {
+      throw new Error(`مقدار دریافتی بچ ${lot.id} با گردش ورود اولیه آن سازگار نیست.`);
     }
     const expectedRemaining = Number((signedTotals.get(lot.id) ?? 0).toFixed(6));
     const actualRemaining = Number(lot.quantityRemaining.toFixed(6));
