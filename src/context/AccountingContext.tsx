@@ -1615,9 +1615,9 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     }
     const existingLotQty = inventoryLots.filter((lot) => lot.productId === product.id && lot.warehouse === product.warehouse)
       .reduce((sum, lot) => sum + lot.quantityRemaining, 0);
-    if (Math.abs(existingLotQty) > 0.01) throw new Error('برای این کالا قبلاً بچ ثبت شده است؛ بچ افتتاحیه تکراری مجاز نیست.');
-    if (Math.abs(product.stock - payload.quantity) > 0.01) {
-      throw new Error('مقدار بچ افتتاحیه باید دقیقاً با موجودی فعلی کالا برابر باشد تا موجودی دوباره‌شماری نشود.');
+    if (existingLotQty + payload.quantity > product.stock + 0.01 ||
+        Math.abs(existingLotQty + payload.quantity - product.stock) > 0.01) {
+      throw new Error(`مقدار بچ افتتاحیه باید دقیقاً برابر کسری موجودیِ بدون بچ باشد: ${Math.max(0, product.stock - existingLotQty)}`);
     }
     const lotId = generateSafeId('lot');
     const movementId = generateSafeId('lotmove');
