@@ -366,6 +366,7 @@ export function allocateStockFIFO(
     .filter((lot) =>
       lot.productId === options.productId &&
       lot.warehouse === options.warehouse &&
+      lot.receivedDate <= options.asOfDate &&
       lot.quantityRemaining > 0 &&
       (!lot.expiryDate || lot.expiryDate >= options.asOfDate)
     )
