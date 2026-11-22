@@ -454,6 +454,8 @@ test('bank reconciliation validates input and prevents duplicate line identities
 test('treasury operation validation rejects invalid date, amount and description', () => {
   const valid = { date: '1405/08/22', amount: 250, description: 'دریافت بابت فروش' };
   assert.doesNotThrow(() => validateTreasuryOperationPayload(valid));
+  assert.doesNotThrow(() => validateTreasuryOperationPayload({ ...valid, date: '1403/12/30' }));
+  assert.throws(() => validateTreasuryOperationPayload({ ...valid, date: '1405/12/30' }), /تاریخ/);
   assert.throws(() => validateTreasuryOperationPayload({ ...valid, date: '1405/12/31' }), /تاریخ/);
   assert.throws(() => validateTreasuryOperationPayload({ ...valid, amount: 0 }), /مبلغ/);
   assert.throws(() => validateTreasuryOperationPayload({ ...valid, amount: Number.NaN }), /مبلغ/);
