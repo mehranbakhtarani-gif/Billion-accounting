@@ -1,4 +1,4 @@
-import { getJalaliMonthLength } from './chequeAlerts';
+import { getJalaliMonthLength, shamsiToExactDayNumber } from './chequeAlerts';
 
 /**
  * Enterprise controls foundation.
@@ -513,6 +513,22 @@ export function validateTreasuryOperationPayload(payload: { date: string; amount
   }
   if (typeof payload.description !== 'string' || !payload.description.trim()) {
     throw new Error('شرح عملیات خزانه الزامی است.');
+  }
+}
+
+export function validateChequeDateRange(issueDate: string, dueDate: string): void {
+  const isValidDate = (date: string) => {
+    if (typeof date !== 'string' || !/^14\\d{2}\\/\\d{2}\\/\\d{2}$/.test(date)) return false;
+    const [year, month, day] = date.split('/').map(Number);
+    return month >= 1 && month <= 12 && day >= 1 && day <= getJalaliMonthLength(year, month);
+  };
+  if (!isValidDate(issueDate) || !isValidDate(dueDate)) {
+    throw new Error('تاریخ صدور یا سررسید چک معتبر نیست.');
+  }
+  const issueDay = shamsiToExactDayNumber(issueDate);
+  const dueDay = shamsiToExactDayNumber(dueDate);
+  if (issueDay === null || dueDay === null || dueDay < issueDay) {
+    throw new Error('تاریخ سررسید چک نمی‌تواند قبل از تاریخ صدور باشد.');
   }
 }
 
