@@ -2429,7 +2429,6 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       const lotUpdates = new Map<string, InventoryLot>();
       const lotReceipts: InventoryLot[] = [];
       const lotMovementsToSave: InventoryLotMovement[] = [];
-      const returnQtyInCurrentInvoice = new Map<string, number>();
       const invoiceItems = payload.items.map((item) => ({ ...item }));
       validateJalaliDate(payload.date, 'تاریخ فاکتور');
       const asOfDate = shamsiToGregorianIso(payload.date);
@@ -2500,16 +2499,13 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
               const sourceLotCurrent = lotUpdates.get(returnedSourceLot.id) ?? returnedSourceLot;
               const returnedSoFar = Math.max(sourceLotCurrent.returnedQuantity ?? 0, movementReturned);
               const netSoldFromSource = calculateLotReturnableQuantity(returnedSourceLot.id, inventoryLotMovements) + movementReturned;
-              const returnable = Math.max(0, netSoldFromSource - returnedSoFar -
-                (returnQtyInCurrentInvoice.get(returnedSourceLot.id) || 0));
+              const returnable = Math.max(0, netSoldFromSource - returnedSoFar);
               if (item.quantity > returnable + 0.0001) {
                 throw new Error(`مقدار برگشت از بچ ${returnedSourceLot.lotNumber} بیش از مقدار فروش خالص همان بچ است. حداکثر قابل برگشت: ${returnable}`);
               }
               lotUpdates.set(returnedSourceLot.id, {
                 ...sourceLotCurrent, returnedQuantity: returnedSoFar + item.quantity,
               });
-              returnQtyInCurrentInvoice.set(returnedSourceLot.id,
-                (returnQtyInCurrentInvoice.get(returnedSourceLot.id) || 0) + item.quantity);
             }
             if (item.receivedDate && !/^\d{4}-\d{2}-\d{2}$/.test(item.receivedDate)) throw new Error('تاریخ ورود بچ در ردیف فاکتور معتبر نیست.');
             if (item.expiryDate && (!/^\d{4}-\d{2}-\d{2}$/.test(item.expiryDate) || item.expiryDate < (item.receivedDate || asOfDate))) throw new Error('تاریخ انقضای بچ باید معتبر و بعد از تاریخ ورود باشد.');
