@@ -409,7 +409,7 @@ test('bank reconciliation resolves forced matches independent of statement order
     { id: 's-forced', accountId: 'bank', date: '2026-11-20', amount: 500, reference: 'unique-ref' },
   ];
   const ledger = [
-    { id: 'l-shared', accountId: 'bank', date: '2026-11-20', amount: 500 },
+    { id: 'l-shared', accountId: 'bank', date: '2026-11-20', amount: 500, reference: 'other-ref' },
     { id: 'l-forced', accountId: 'bank', date: '2026-11-20', amount: 500, reference: 'unique-ref' },
   ];
   const result = reconcileBankLines(statement, ledger, 0, days);
