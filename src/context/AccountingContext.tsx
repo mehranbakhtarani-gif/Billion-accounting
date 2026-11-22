@@ -2154,6 +2154,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           });
         } catch (err) {
           handleSupabaseError(err, OperationType.CREATE, `invoices/${id}`);
+          throw new Error(`ذخیره فاکتور در فضای ابری ناموفق بود؛ فاکتور صادرشده تلقی نمی‌شود. علت: ${err instanceof Error ? err.message : String(err)}`);
         }
       } else {
         setInvoices((prev) => [full, ...prev]);
