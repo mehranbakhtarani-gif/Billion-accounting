@@ -2377,23 +2377,34 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       const activeEmps = employees.filter((e) => e.active);
       if (activeEmps.length === 0) throw new Error('برای صدور لیست حقوق، کارمند فعال ثبت نشده است.');
       const calcs = activeEmps.map(calculateEmployeePayroll);
-      const totalExpense = calcs.reduce((s, c) => s + c.totalEmployerCost, 0);
       const totalNet = calcs.reduce((s, c) => s + c.netPay, 0);
       const totalInsurance = calcs.reduce(
         (s, c) => s + c.employeeInsurance + c.employerInsurance,
         0
       );
       const totalTax = calcs.reduce((s, c) => s + c.incomeTax, 0);
+      const validCostCenterIds = new Set(costCenters.map((center) => center.id));
+      const payrollExpenseByCostCenter = new Map<string, number>();
+      for (const calc of calcs) {
+        const requestedCenter = calc.employee.costCenterId;
+        const costCenterId = requestedCenter && validCostCenterIds.has(requestedCenter)
+          ? requestedCenter
+          : 'cc_hq';
+        payrollExpenseByCostCenter.set(
+          costCenterId,
+          (payrollExpenseByCostCenter.get(costCenterId) || 0) + calc.totalEmployerCost
+        );
+      }
 
       const lines: VoucherLine[] = [
-        {
+        ...[...payrollExpenseByCostCenter.entries()].map(([costCenterId, debit]) => ({
           accountCode: '80101',
           accountTitle: 'هزینه حقوق، مزایا و بیمه سهم کارفرما',
-          costCenterId: 'cc_hq',
+          costCenterId,
           description: `هزینه حقوق و دستمزد ${normalizedMonth}`,
-          debit: totalExpense,
+          debit,
           credit: 0,
-        },
+        })),
         {
           accountCode: '30401',
           accountTitle: 'حقوق پرداختنی کارکنان',
@@ -2428,7 +2439,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         lines,
       });
     },
-    [employees, vouchers, createVoucher]
+    [employees, costCenters, vouchers, createVoucher]
   );
 
   const paySalariesVoucher = useCallback(
