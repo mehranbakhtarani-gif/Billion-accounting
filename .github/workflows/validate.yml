@@ -26,3 +26,7 @@ jobs:
         run: npm run test:controls
       - name: Production web build
         run: npm run build
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+      - name: UI smoke tests
+        run: npm run test:ui
