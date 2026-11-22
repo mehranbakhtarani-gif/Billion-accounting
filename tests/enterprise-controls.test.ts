@@ -191,9 +191,10 @@ test('bank reconciliation never reuses a ledger line and prefers an exact refere
     [{ id: 'l1', accountId: 'bank', date: '2026-11-20', amount: 500 }],
     0, daysBetween,
   );
-  assert.equal(duplicateStatement.matches.length, 1);
-  assert.equal(duplicateStatement.unmatchedStatementIds.length, 1);
-  assert.deepEqual(duplicateStatement.unmatchedLedgerIds, []);
+  assert.deepEqual(duplicateStatement.matches, []);
+  assert.deepEqual(duplicateStatement.unmatchedStatementIds, []);
+  assert.deepEqual(duplicateStatement.ambiguousStatementIds, ['s1', 's2']);
+  assert.deepEqual(duplicateStatement.unmatchedLedgerIds, ['l1']);
 });
 test('treasury audit detects missing, duplicate and mismatched vouchers', () => {
   const issues = auditTreasuryVoucherLinks(
