@@ -4477,6 +4477,8 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     accounts,
     parties,
     products,
+    inventoryLots,
+    inventoryLotMovements,
     vouchers,
     invoices,
     cheques,
@@ -4504,6 +4506,8 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         setAccounts(parsed.accounts);
         setParties(parsed.parties || []);
         setProducts(parsed.products || []);
+        setInventoryLots(Array.isArray(parsed.inventoryLots) ? parsed.inventoryLots : []);
+        setInventoryLotMovements(Array.isArray(parsed.inventoryLotMovements) ? parsed.inventoryLotMovements : []);
         setVouchers(parsed.vouchers);
         setInvoices(parsed.invoices || []);
         setCheques(parsed.cheques || []);
