@@ -189,6 +189,14 @@ test('bank reconciliation never reuses a ledger line and prefers an exact refere
     1, daysBetween,
   );
   assert.deepEqual(referenced.matches, [{ statementLineId: 's-ref', ledgerLineId: 'l-ref', matchType: 'reference' }]);
+  const bankReferenceWithoutLedgerReference = reconcileBankLines(
+    [{ id: 's-bank-ref', accountId: 'bank', date: '2026-11-20', amount: 500, reference: 'bank-trace-1' }],
+    [{ id: 'l-no-ref', accountId: 'bank', date: '2026-11-20', amount: 500 }],
+    0, daysBetween,
+  );
+  assert.deepEqual(bankReferenceWithoutLedgerReference.matches, [
+    { statementLineId: 's-bank-ref', ledgerLineId: 'l-no-ref', matchType: 'exact-amount-date' },
+  ]);
   const duplicateStatement = reconcileBankLines(
     [{ id: 's1', accountId: 'bank', date: '2026-11-20', amount: 500 }, { id: 's2', accountId: 'bank', date: '2026-11-20', amount: 500 }],
     [{ id: 'l1', accountId: 'bank', date: '2026-11-20', amount: 500 }],
