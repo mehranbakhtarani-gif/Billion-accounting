@@ -2439,12 +2439,18 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       const bankAcc = accounts.find((a) => a.code === bankAccountCode && a.level === 'moein' && a.code.startsWith('102'));
       if (!bankAcc) throw new Error('حساب بانکی انتخاب‌شده معتبر نیست.');
       const payrollVoucher = vouchers.find((voucher) => voucher.referenceId === `payroll:${normalizedMonth}`);
-      if (!payrollVoucher) throw new Error(`ابتدا سند حقوق ماه «${normalizedMonth}» را صادر کنید.`);
+      if (!payrollVoucher || payrollVoucher.status !== 'permanent') {
+        throw new Error(`ابتدا سند قطعی حقوق ماه «${normalizedMonth}» را صادر کنید.`);
+      }
       const payableCredit = payrollVoucher.lines
         .filter((line) => line.accountCode === '30401')
         .reduce((sum, line) => sum + (Number(line.credit) || 0) - (Number(line.debit) || 0), 0);
       const priorPayments = vouchers
-        .filter((voucher) => voucher.voucherType === 'payroll' && voucher.description.startsWith(`پرداخت خالص حقوق کارکنان ${normalizedMonth} از `))
+        .filter((voucher) =>
+          voucher.status === 'permanent' &&
+          voucher.voucherType === 'payroll' &&
+          voucher.description.startsWith(`پرداخت خالص حقوق کارکنان ${normalizedMonth} از `)
+        )
         .reduce((sum, voucher) => sum + voucher.lines
           .filter((line) => line.accountCode === '30401')
           .reduce((lineSum, line) => lineSum + (Number(line.debit) || 0) - (Number(line.credit) || 0), 0), 0);
