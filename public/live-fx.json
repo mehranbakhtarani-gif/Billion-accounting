@@ -1,5 +1,5 @@
 {
-  "fetchedAt": 1795326159000,
+  "fetchedAt": 1795329759000,
   "source": "بازار آزاد تهران (نرخ‌آرا)",
   "sourceUrl": "https://nerkhara.com/",
   "items": [
@@ -13,7 +13,7 @@
       "changeIrr": 0,
       "changePercent": -0.78,
       "direction": "down",
-      "updatedTime": "05:41"
+      "updatedTime": "06:41"
     },
     {
       "code": "CNY",
@@ -23,7 +23,7 @@
       "changeIrr": 0,
       "changePercent": -1.41,
       "direction": "down",
-      "updatedTime": "05:41"
+      "updatedTime": "06:41"
     },
     {
       "code": "AED",
@@ -33,7 +33,7 @@
       "changeIrr": 0,
       "changePercent": -1.31,
       "direction": "down",
-      "updatedTime": "05:41"
+      "updatedTime": "06:41"
     },
     {
       "code": "EUR",
@@ -43,7 +43,7 @@
       "changeIrr": 0,
       "changePercent": -1.33,
       "direction": "down",
-      "updatedTime": "05:41"
+      "updatedTime": "06:41"
     }
   ]
 }
