@@ -2469,6 +2469,20 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
               ? inventoryLots.find((candidate) => candidate.productId === product.id &&
                   candidate.warehouse === payload.warehouse && candidate.lotNumber === item.lotNumber)
               : undefined;
+            if (returnedSourceLot) {
+              const previouslyReturned = inventoryLotMovements
+                .filter((movement) => movement.sourceLotId === returnedSourceLot.id)
+                .reduce((sum, movement) => sum +
+                  (movement.movementType === 'return' ? movement.quantity :
+                    movement.movementType === 'reversal' ? movement.quantity : 0), 0);
+              const soldFromSource = inventoryLotMovements
+                .filter((movement) => movement.lotId === returnedSourceLot.id && movement.movementType === 'issue')
+                .reduce((sum, movement) => sum + Math.abs(Math.min(0, movement.quantity)), 0);
+              const returnable = Math.max(0, soldFromSource - previouslyReturned);
+              if (item.quantity > returnable + 0.0001) {
+                throw new Error(`مقدار برگشت از بچ ${returnedSourceLot.lotNumber} بیش از مقدار فروش خالص همان بچ است. حداکثر قابل برگشت: ${returnable}`);
+              }
+            }
             if (item.receivedDate && !/^\d{4}-\d{2}-\d{2}$/.test(item.receivedDate)) throw new Error('تاریخ ورود بچ در ردیف فاکتور معتبر نیست.');
             if (item.expiryDate && !/^\d{4}-\d{2}-\d{2}$/.test(item.expiryDate)) throw new Error('تاریخ انقضای بچ در ردیف فاکتور معتبر نیست.');
             const lot: InventoryLot = {
@@ -2478,7 +2492,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
               quantityReceived: item.quantity, quantityRemaining: item.quantity,
               unitCost: returnedSourceLot?.unitCost ?? (payload.invoiceType === 'sale_return' ? product.buyPrice : item.unitPrice),
               costBasis: returnedSourceLot?.costBasis ?? (payload.invoiceType === 'sale_return' ? 'estimated-return' : 'documented'),
-              sourceInvoiceId: id, createdAt: serverTimestamp(),
+              sourceInvoiceId: id, ...(returnedSourceLot ? { sourceLotId: returnedSourceLot.id } : {}), createdAt: serverTimestamp(),
             };
             item.receivedLotId = lotId;
             if (payload.invoiceType === 'sale_return') {
@@ -2491,6 +2505,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
               warehouse: lot.warehouse, movementType: payload.invoiceType === 'sale_return' ? 'return' : 'receipt',
               quantity: item.quantity, unitCost: lot.unitCost, referenceId: id,
               referenceNumber: payload.invoiceNumber, date: asOfDate,
+              ...(returnedSourceLot ? { sourceLotId: returnedSourceLot.id } : {}),
               ...(payload.invoiceType === 'sale_return' && !returnedSourceLot ? { notes: 'بهای برگشت فروش بر مبنای قیمت خرید فعلی برآورد شده است؛ شماره بچ اصلی تطبیق داده نشد.' } : {}),
             });
           }
