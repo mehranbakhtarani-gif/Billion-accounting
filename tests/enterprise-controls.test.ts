@@ -354,6 +354,18 @@ test('aging fails closed for invalid open-item balances and invalid due dates', 
   );
 });
 
+test('receivables aging assigns an invoice due today to the 0–30 day bucket', () => {
+  const customer = { id: 'c-due-today', ownerId: 'o1', code: 'C-TODAY', name: 'مشتری سررسید امروز', partyType: 'customer' };
+  const invoice = {
+    id: 'due-today', ownerId: 'o1', invoiceNumber: 'DUE-TODAY', invoiceType: 'sale', date: '1405/09/01',
+    dueDate: '1405/09/01', partyId: 'c-due-today', partyName: 'مشتری سررسید امروز', grandTotal: 80,
+    paidCash: 0, paidBank: 0, paidCheque: 0, creditAmount: 80, status: 'issued', items: [],
+  };
+  const rows = computeReceivablesAging([customer] as any, [invoice] as any, new Map([['c-due-today', 80]]), '1405/09/01');
+  assert.equal(rows[0].bucket0to30, 80);
+  assert.equal(rows[0].bucket31to60, 0);
+});
+
 test('aging ignores due dates on fully settled invoices', () => {
   const customer = { id: 'c-paid', ownerId: 'o1', code: 'C-PAID', name: 'مشتری تسویه‌شده', partyType: 'customer' };
   const settled = {
