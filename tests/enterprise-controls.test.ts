@@ -5,6 +5,7 @@ import {
   allocateStockFIFO,
   reconcileInventoryLotLedger,
   calculateLotReturnableQuantity,
+  calculateLotReturnedQuantity,
   assertSufficientStock,
   assertFiscalPeriodOpen,
   auditTreasuryVoucherLinks,
@@ -194,10 +195,12 @@ test('sales returns cannot exceed net sold quantity of the source lot', () => {
     { id: 'return-in', lotId: 'return-lot-1', movementType: 'return', quantity: 2, sourceLotId: 'lot-a' },
   ];
   assert.equal(calculateLotReturnableQuantity('lot-a', movements), 3);
+  assert.equal(calculateLotReturnedQuantity('lot-a', movements), 2);
   assert.equal(calculateLotReturnableQuantity('lot-a', [
     ...movements,
     { id: 'return-reversal', lotId: 'return-lot-1', movementType: 'reversal', quantity: -2, sourceLotId: 'lot-a' },
   ]), 5);
+  assert.equal(calculateLotReturnedQuantity('lot-a', [...movements, { id: 'return-reversal', lotId: 'return-lot-1', movementType: 'reversal', quantity: -2, sourceLotId: 'lot-a' }]), 0);
   assert.equal(calculateLotReturnableQuantity('lot-a', [
     ...movements,
     { id: 'sale-reversal', lotId: 'lot-a', movementType: 'reversal', quantity: 5, reversalOfMovementId: 'sale-issue' },
