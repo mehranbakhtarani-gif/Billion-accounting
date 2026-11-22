@@ -2497,12 +2497,14 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             }
             if (item.receivedDate && !/^\d{4}-\d{2}-\d{2}$/.test(item.receivedDate)) throw new Error('تاریخ ورود بچ در ردیف فاکتور معتبر نیست.');
             if (item.expiryDate && (!/^\d{4}-\d{2}-\d{2}$/.test(item.expiryDate) || item.expiryDate < (item.receivedDate || asOfDate))) throw new Error('تاریخ انقضای بچ باید معتبر و بعد از تاریخ ورود باشد.');
+            const grossLineCost = Math.max(0, item.quantity * item.unitPrice);
+            const documentedUnitCost = Math.max(0, grossLineCost - Math.min(grossLineCost, item.discount || 0)) / item.quantity;
             const lot: InventoryLot = {
               id: lotId, ownerId, productId: product.id, warehouse: payload.warehouse,
               lotNumber: lotNumber.slice(0, 80), receivedDate: item.receivedDate || asOfDate,
               ...(item.expiryDate ? { expiryDate: item.expiryDate } : returnedSourceLot?.expiryDate ? { expiryDate: returnedSourceLot.expiryDate } : {}),
               quantityReceived: item.quantity, quantityRemaining: item.quantity,
-              unitCost: returnedSourceLot?.unitCost ?? (payload.invoiceType === 'sale_return' ? product.buyPrice : item.unitPrice),
+              unitCost: returnedSourceLot?.unitCost ?? (payload.invoiceType === 'sale_return' ? product.buyPrice : documentedUnitCost),
               costBasis: returnedSourceLot?.costBasis ?? (payload.invoiceType === 'sale_return' ? 'estimated-return' : 'documented'),
               sourceInvoiceId: id, ...(returnedSourceLot ? { sourceLotId: returnedSourceLot.id } : {}), createdAt: serverTimestamp(),
             };
