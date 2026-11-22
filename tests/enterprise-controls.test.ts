@@ -13,7 +13,7 @@ import {
   validateSyncOperation,
 } from '../src/lib/enterpriseControls.ts';
 import { calculateLandedCostAllocation, computeReceivablesAging, computePayablesAging, computeFxRevaluationReport } from '../src/lib/enterpriseAccounting.ts';
-import { calculateEmployeePayroll, calculateMonthlyDepreciation, computeAccountLedger, computePartyBalances, computePartyLedger, computeTrialBalance } from '../src/lib/accountingEngine.ts';
+import { calculateEmployeePayroll, calculateMonthlyDepreciation, computeAccountLedger, computeAuditReport, computePartyBalances, computePartyLedger, computeTrialBalance } from '../src/lib/accountingEngine.ts';
 
 test('CSV parser preserves quoted commas and escaped quotes', () => {
   assert.deepEqual(parseCsvRow('1405/09/01,"کارمزد، انتقال, فوری","شناسه ""ABC""",1250,0'), ['1405/09/01', 'کارمزد، انتقال, فوری', 'شناسه "ABC"', '1250', '0']);
@@ -342,4 +342,30 @@ test('draft vouchers never affect posted trial balance, general ledger or party 
   assert.equal(computeAccountLedger('10201', vouchers).length, 1);
   assert.equal(computePartyLedger('p1', vouchers).length, 1);
   assert.equal(computePartyBalances([{ id: 'p1' }] as any, vouchers).get('p1'), -100);
+});
+
+
+test('audit ignores draft party postings in GL reconciliation and flags duplicate cheque IDs', () => {
+  const draft = {
+    id: 'draft', ownerId: 'o1', voucherNumber: 1, date: '1405/08/01', description: 'پیش‌نویس',
+    voucherType: 'general', status: 'draft', totalDebit: 100, totalCredit: 100,
+    lines: [{ accountCode: '10401', accountTitle: 'مشتریان', partyId: 'p1', partyName: 'مشتری', description: 'پیش‌نویس', debit: 100, credit: 0 },
+      { accountCode: '30101', accountTitle: 'تأمین‌کنندگان', partyId: 'p1', partyName: 'مشتری', description: 'پیش‌نویس', debit: 0, credit: 100 }],
+  };
+  const report = computeAuditReport({
+    accounts: [], vouchers: [draft] as any, invoices: [], parties: [], products: [],
+    cheques: [
+      { id: 'c1', sayadiId: 'SAY-1', serial: '1', amount: 0, partyId: 'p1', partyName: 'مشتری', status: 'in_box' },
+      { id: 'c2', sayadiId: 'SAY-1', serial: '2', amount: 100, partyId: 'p1', partyName: 'مشتری', status: 'in_box' },
+    ] as any,
+    trialBalance: [], balanceSheet: {
+      isBalanced: true, difference: 0, totalAssets: 0, totalLiabilities: 0, totalEquity: 0,
+      assets: [], liabilities: [], equity: [], currentPeriodProfit: 0,
+    } as any,
+    partyBalances: new Map(),
+  });
+  assert.equal(report.checks.find((check) => check.id === 'sub-gl-reconcile')?.status, 'pass');
+  const operational = report.checks.find((check) => check.id === 'operational-controls');
+  assert.ok(operational?.details.some((detail) => detail.includes('SAY-1')));
+  assert.ok(operational?.details.some((detail) => detail.includes('مبلغ معتبر')));
 });
