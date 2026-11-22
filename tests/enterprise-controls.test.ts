@@ -354,6 +354,16 @@ test('aging fails closed for invalid open-item balances and invalid due dates', 
   );
 });
 
+test('aging ignores due dates on fully settled invoices', () => {
+  const customer = { id: 'c-paid', ownerId: 'o1', code: 'C-PAID', name: 'مشتری تسویه‌شده', partyType: 'customer' };
+  const settled = {
+    id: 'settled', ownerId: 'o1', invoiceNumber: 'SETTLED-1', invoiceType: 'sale', date: '1405/08/01',
+    dueDate: '1405/13/40', partyId: 'c-paid', partyName: 'مشتری تسویه‌شده', grandTotal: 100,
+    paidCash: 100, paidBank: 0, paidCheque: 0, creditAmount: 0, status: 'settled', items: [],
+  };
+  assert.deepEqual(computeReceivablesAging([customer] as any, [settled] as any, new Map(), '1405/09/01'), []);
+});
+
 test('aging classifies future due dates as current and reports control-account differences', () => {
   const supplier = { id: 's-future', ownerId: 'o1', code: 'S-F', name: 'تأمین‌کننده آینده', partyType: 'supplier' };
   const purchase = {
