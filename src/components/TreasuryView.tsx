@@ -248,14 +248,15 @@ export const TreasuryView: React.FC<TreasuryViewProps> = ({ initialIntent, clear
   // CSV: date,description,deposit,withdrawal,reference (reference is optional).
   const reconResult = useMemo(() => {
     const ledgerTx: { id: string; voucherNumber: number; date: string; desc: string; debit: number; credit: number; amount: number; reference?: string }[] = [];
-    vouchers.forEach((v) => v.lines.forEach((l, index) => {
+    vouchers.filter((voucher) => voucher.status === 'permanent').forEach((v) => v.lines.forEach((l, index) => {
       if (l.accountCode === reconBankCode) ledgerTx.push({
         id: `${v.id}:${index}`, voucherNumber: v.voucherNumber, date: v.date,
         desc: l.description || v.description, debit: l.debit || 0, credit: l.credit || 0,
         amount: (l.debit || 0) - (l.credit || 0), reference: v.referenceId || v.id,
       });
     }));
-    const parsedBankRows = bankCsvText.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).map((line, idx) => {
+    const rowOccurrences = new Map<string, number>();
+    const parsedBankRows = bankCsvText.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).map((line) => {
       const parts = parseCsvRow(line);
       const date = (parts[0] || '').trim();
       const desc = (parts[1] || '').trim() || ('تراکنش بانکی ' + (idx + 1));
@@ -266,11 +267,17 @@ export const TreasuryView: React.FC<TreasuryViewProps> = ({ initialIntent, clear
       };
       const deposit = parseAmount(parts[2]);
       const withdrawal = parseAmount(parts[3]);
+      const stableKey = [date, desc, String(deposit), String(withdrawal), parts[4]?.trim() || ''].join('|');
+      const occurrence = rowOccurrences.get(stableKey) ?? 0;
+      rowOccurrences.set(stableKey, occurrence + 1);
       let validationError: string | undefined;
       if (!/^14\d{2}\/\d{2}\/\d{2}$/.test(date) || diffShamsiDays(date, date) !== 0) validationError = 'تاریخ شمسی معتبر نیست.';
       else if (!Number.isFinite(deposit) || !Number.isFinite(withdrawal) || deposit < 0 || withdrawal < 0) validationError = 'مبلغ واریز یا برداشت معتبر نیست.';
       else if ((deposit > 0 && withdrawal > 0) || (deposit === 0 && withdrawal === 0)) validationError = 'هر ردیف باید فقط یک مبلغ مثبت در ستون واریز یا برداشت داشته باشد.';
-      return { id: 'bk_' + idx, date, desc, deposit, withdrawal, reference: parts[4]?.trim() || undefined, amount: deposit - withdrawal, validationError };
+      let hash = 2166136261;
+      for (let index = 0; index < stableKey.length; index++) hash = Math.imul(hash ^ stableKey.charCodeAt(index), 16777619);
+      const stableId = 'bk_' + (hash >>> 0).toString(36) + '_' + occurrence;
+      return { id: stableId, date, desc, deposit, withdrawal, reference: parts[4]?.trim() || undefined, amount: deposit - withdrawal, validationError };
     });
     const validBankRows = parsedBankRows.filter((row) => !row.validationError);
     const matching = reconcileBankLines(
