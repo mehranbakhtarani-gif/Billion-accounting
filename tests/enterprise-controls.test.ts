@@ -12,7 +12,7 @@ import {
   validateAtomicFinancialPlan,
   validateSyncOperation,
 } from '../src/lib/enterpriseControls.ts';
-import { computeReceivablesAging, computePayablesAging, computeFxRevaluationReport } from '../src/lib/enterpriseAccounting.ts';
+import { calculateLandedCostAllocation, computeReceivablesAging, computePayablesAging, computeFxRevaluationReport } from '../src/lib/enterpriseAccounting.ts';
 import { calculateEmployeePayroll, calculateMonthlyDepreciation } from '../src/lib/accountingEngine.ts';
 
 test('CSV parser preserves quoted commas and escaped quotes', () => {
@@ -308,4 +308,20 @@ test('payroll calculation rejects invalid negative, non-finite and fractional em
   assert.throws(() => calculateEmployeePayroll({ ...employee, overtimeHours: Number.NaN }), /اضافه‌کاری/);
   assert.throws(() => calculateEmployeePayroll({ ...employee, housingAllowance: Number.POSITIVE_INFINITY }), /مسکن/);
   assert.throws(() => calculateEmployeePayroll({ ...employee, childrenCount: 1.5 }), /عدد صحیح/);
+});
+
+
+test('import landed-cost allocation reconciles exact overhead and rejects malformed inputs', () => {
+  const items = [
+    { productId: 'p1', sku: 'Y-1', productName: 'نخ یک', lotNumber: 'L1', weightKg: 60, cartonCount: 3, foreignUnitPrice: 2 },
+    { productId: 'p2', sku: 'Y-2', productName: 'نخ دو', lotNumber: 'L2', weightKg: 40, cartonCount: 2, foreignUnitPrice: 3 },
+  ];
+  const costs = [{ id: 'c1', title: 'حمل', amountIrr: 1000, accountCode: '10201' }];
+  const result = calculateLandedCostAllocation(items as any, costs as any, 500_000, 'weight');
+  assert.equal(result.totalLandedCostsIrr, 1000);
+  assert.equal(result.computedItems.reduce((sum, item) => sum + item.allocatedLandedCostIrr, 0), 1000);
+  assert.equal(result.grandTotalLandedIrr, result.totalFobIrr + 1000);
+  assert.throws(() => calculateLandedCostAllocation(items as any, costs as any, 0, 'weight'), /نرخ تبدیل/);
+  assert.throws(() => calculateLandedCostAllocation([{ ...items[0], weightKg: -1 }] as any, costs as any, 500_000, 'weight'), /وزن/);
+  assert.throws(() => calculateLandedCostAllocation(items as any, [{ ...costs[0], amountIrr: -1 }] as any, 500_000, 'weight'), /هزینه‌های جانبی/);
 });
