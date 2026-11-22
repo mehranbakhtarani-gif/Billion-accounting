@@ -264,6 +264,9 @@ export function reconcileInventoryLotLedger(
   return lots.map((lot) => {
     const expectedRemaining = Number((signedTotals.get(lot.id) ?? 0).toFixed(6));
     const actualRemaining = Number(lot.quantityRemaining.toFixed(6));
+    if (expectedRemaining < -0.0001 || expectedRemaining - lot.quantityReceived > 0.0001) {
+      throw new Error(`گردش‌های بچ ${lot.id} مانده‌ای خارج از محدوده مقدار دریافتی ایجاد کرده‌اند.`);
+    }
     return {
       lotId: lot.id,
       expectedRemaining,
