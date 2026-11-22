@@ -553,66 +553,64 @@ export function computeAuditReport(input: {
   trialBalance: TrialBalanceRow[];
   balanceSheet: BalanceSheetSummary;
   partyBalances: Map<string, number>;
+  inventoryLotReconciliationIssues?: string[];
 }): AuditReport {
-  const { vouchers, invoices, parties, products, cheques, trialBalance, balanceSheet, partyBalances } =
-    input;
+  const { accounts, vouchers, invoices, parties, products, cheques, trialBalance, balanceSheet, partyBalances } = input;
   const checks: AuditCheckItem[] = [];
+  const postedVouchers = vouchers.filter((voucher) => voucher.status === 'permanent');
 
-  // 1. Voucher double-entry mathematical integrity
+  // Drafts are not posted to the statutory ledger. Audit their status separately below.
   const unbalancedVouchers: string[] = [];
-  for (const v of vouchers) {
-    const sumD = v.lines.reduce((s, l) => s + (Number(l.debit) || 0), 0);
-    const sumC = v.lines.reduce((s, l) => s + (Number(l.credit) || 0), 0);
-    if (Math.abs(sumD - sumC) > 0 || v.lines.length < 2 || Math.abs(sumD - v.totalDebit) > 0) {
-      unbalancedVouchers.push(`سند #${v.voucherNumber} (بدهکار: ${sumD} / بستانکار: ${sumC})`);
+  for (const voucher of postedVouchers) {
+    const sumD = voucher.lines.reduce((sum, line) => sum + (Number(line.debit) || 0), 0);
+    const sumC = voucher.lines.reduce((sum, line) => sum + (Number(line.credit) || 0), 0);
+    if (Math.abs(sumD - sumC) > 0.0001 || voucher.lines.length < 2 || Math.abs(sumD - voucher.totalDebit) > 0.0001) {
+      unbalancedVouchers.push(\`سند #\${voucher.voucherNumber} (بدهکار: \${sumD} / بستانکار: \${sumC})\`);
     }
   }
   checks.push({
     id: 'voucher-balance',
-    title: 'کنترل تراز دوبل تمامی اسناد حسابداری',
+    title: 'کنترل تراز دوبل اسناد قطعی حسابداری',
     category: 'هسته حسابداری',
     status: unbalancedVouchers.length === 0 ? 'pass' : 'error',
-    summary:
-      unbalancedVouchers.length === 0
-        ? `تمامی ${vouchers.length} سند ثبت‌شده دارای تراز دقیق (بدهکار = بستانکار) و حداقل ۲ آرتیکل هستند.`
-        : `${unbalancedVouchers.length} سند دارای عدم توازن یا خطای آرتیکل شناسایی شد.`,
+    summary: unbalancedVouchers.length === 0
+      ? \`تمامی \${postedVouchers.length} سند قطعی دارای تراز بدهکار/بستانکار و حداقل ۲ آرتیکل معتبر هستند؛ اسناد موقت جداگانه هشدار می‌گیرند.\`
+      : \`\${unbalancedVouchers.length} سند قطعی دارای عدم توازن یا خطای آرتیکل شناسایی شد.\`,
     details: unbalancedVouchers,
     targetModule: 'vouchers',
   });
 
-  // 2. Voucher numbering continuity & chronological date check
-  const sortedByNum = [...vouchers].sort((a, b) => a.voucherNumber - b.voucherNumber);
+  // Only permanent vouchers participate in statutory numbering continuity.
+  const sortedByNum = [...postedVouchers].sort((a, b) => a.voucherNumber - b.voucherNumber);
   const seqIssues: string[] = [];
   for (let i = 0; i < sortedByNum.length; i++) {
     const expected = i + 1;
     if (sortedByNum[i].voucherNumber !== expected) {
-      seqIssues.push(`گسست در شماره سند: انتظار #${expected} اما سند #${sortedByNum[i].voucherNumber} ثبت شده است.`);
+      seqIssues.push(\`گسست در شماره اسناد قطعی: انتظار #\${expected} اما سند #\${sortedByNum[i].voucherNumber} ثبت شده است.\`);
       break;
     }
     if (i > 0 && sortedByNum[i].date < sortedByNum[i - 1].date) {
       seqIssues.push(
-        `عدم ترتیب تاریخی بین سند #${sortedByNum[i - 1].voucherNumber} (${sortedByNum[i - 1].date}) و سند #${sortedByNum[i].voucherNumber} (${sortedByNum[i].date}).`
+        \`عدم ترتیب تاریخی بین سند #\${sortedByNum[i - 1].voucherNumber} (\${sortedByNum[i - 1].date}) و سند #\${sortedByNum[i].voucherNumber} (\${sortedByNum[i].date}).\`
       );
     }
   }
   checks.push({
     id: 'voucher-sequence',
-    title: 'کنترل توالی شماره‌گذاری و ترتیب تاریخی اسناد',
+    title: 'کنترل توالی شماره‌گذاری و ترتیب تاریخی اسناد قطعی',
     category: 'دفاتر قانونی',
     status: seqIssues.length === 0 ? 'pass' : 'warning',
-    summary:
-      seqIssues.length === 0
-        ? 'شماره اسناد از ۱ تا آخرین سند بدون گسست و کاملاً منطبق بر ترتیب تاریخ شمسی است.'
-        : 'گسست شماره یا ناهماهنگی تاریخ در اسناد وجود دارد (قابل اصلاح با دکمه مرتب‌سازی).',
+    summary: seqIssues.length === 0
+      ? 'شماره اسناد قطعی از ۱ تا آخرین سند بدون گسست و مطابق ترتیب تاریخ شمسی است.'
+      : 'در شماره‌گذاری یا ترتیب تاریخ اسناد قطعی مغایرت وجود دارد.',
     details: seqIssues,
     targetModule: 'vouchers',
   });
 
-  // 3. Trial Balance equality
-  const totD = trialBalance.reduce((s, r) => s + r.totalDebit, 0);
-  const totC = trialBalance.reduce((s, r) => s + r.totalCredit, 0);
-  const balD = trialBalance.reduce((s, r) => s + r.balanceDebit, 0);
-  const balC = trialBalance.reduce((s, r) => s + r.balanceCredit, 0);
+  const totD = trialBalance.reduce((sum, row) => sum + row.totalDebit, 0);
+  const totC = trialBalance.reduce((sum, row) => sum + row.totalCredit, 0);
+  const balD = trialBalance.reduce((sum, row) => sum + row.balanceDebit, 0);
+  const balC = trialBalance.reduce((sum, row) => sum + row.balanceCredit, 0);
   const tbBalanced = Math.abs(totD - totC) < 1 && Math.abs(balD - balC) < 1;
   checks.push({
     id: 'trial-balance',
@@ -620,65 +618,115 @@ export function computeAuditReport(input: {
     category: 'تراز و صورت‌های مالی',
     status: tbBalanced ? 'pass' : 'error',
     summary: tbBalanced
-      ? 'جمع ستون‌های گردش بدهکار/بستانکار و مانده بدهکار/بستانکار تراز آزمایشی کاملاً برابر است.'
-      : `اختلاف در تراز آزمایشی: گردش (${totD - totC}) / مانده (${balD - balC}).`,
-    details: tbBalanced ? [] : [`اختلاف گردش: ${totD - totC}`, `اختلاف مانده: ${balD - balC}`],
+      ? 'جمع گردش و مانده بدهکار/بستانکار تراز آزمایشی برابر است.'
+      : \`اختلاف در تراز آزمایشی: گردش (\${totD - totC}) / مانده (\${balD - balC}).\`,
+    details: tbBalanced ? [] : [\`اختلاف گردش: \${totD - totC}\`, \`اختلاف مانده: \${balD - balC}\`],
     targetModule: 'reports',
   });
 
-  // 4. Balance Sheet equation integrity
   checks.push({
     id: 'balance-sheet',
     title: 'صحت معادله اساسی ترازنامه (دارایی = بدهی + سرمایه)',
     category: 'تراز و صورت‌های مالی',
     status: balanceSheet.isBalanced ? 'pass' : 'error',
     summary: balanceSheet.isBalanced
-      ? 'معادله ترازنامه با احتساب سود/زیان دوره جاری دقیقاً متوازن است.'
-      : `ترازنامه دارای اختلاف ${Math.abs(balanceSheet.difference)} ریال است.`,
-    details: balanceSheet.isBalanced
-      ? []
-      : [
-          `جمع دارایی‌ها: ${balanceSheet.totalAssets}`,
-          `جمع بدهی و حقوق صاحبان سهام: ${balanceSheet.totalLiabilities + balanceSheet.totalEquity}`,
-        ],
+      ? 'معادله ترازنامه با احتساب سود/زیان دوره جاری متوازن است.'
+      : \`ترازنامه دارای اختلاف \${Math.abs(balanceSheet.difference)} ریال است.\`,
+    details: balanceSheet.isBalanced ? [] : [
+      \`جمع دارایی‌ها: \${balanceSheet.totalAssets}\`,
+      \`جمع بدهی و حقوق صاحبان سهام: \${balanceSheet.totalLiabilities + balanceSheet.totalEquity}\`,
+    ],
     targetModule: 'reports',
   });
 
-  // 5. Subsidiary Ledger (Party Balances) vs General Ledger (10401 & 30101)
-  const gl10401Row = trialBalance.find((r) => r.accountCode === '10401');
-  const gl30101Row = trialBalance.find((r) => r.accountCode === '30101');
-  const glReceivables = gl10401Row ? gl10401Row.balanceDebit - gl10401Row.balanceCredit : 0;
-  const glPayables = gl30101Row ? gl30101Row.balanceCredit - gl30101Row.balanceDebit : 0;
-
-  let subReceivables = 0;
-  let subPayables = 0;
-  for (const v of vouchers) {
-    if (v.status !== 'permanent') continue;
-    for (const l of v.lines) {
-      if (l.accountCode === '10401' && l.partyId) {
-        subReceivables += (Number(l.debit) || 0) - (Number(l.credit) || 0);
-      } else if (l.accountCode === '30101' && l.partyId) {
-        subPayables += (Number(l.credit) || 0) - (Number(l.debit) || 0);
+  // Reconcile each party against its configured control-account subtree rather than fixed account codes.
+  const accountByCode = new Map(accounts.map((account) => [account.code, account]));
+  const controlAccounts = new Map<string, 'receivable' | 'payable'>();
+  const controlConfigIssues: string[] = [];
+  for (const party of parties) {
+    const directions: Array<'receivable' | 'payable'> = party.partyType === 'both'
+      ? ['receivable', 'payable']
+      : party.partyType === 'customer' ? ['receivable'] : party.partyType === 'vendor' ? ['payable'] : [];
+    for (const direction of directions) {
+      let control = accountByCode.get(party.accountCode);
+      if (!control) {
+        controlConfigIssues.push(\`حساب تفصیلی طرف‌حساب «\${party.name}» در سرفصل‌ها یافت نشد.\`);
+        break;
       }
+      const visited = new Set<string>();
+      while (control.level !== 'kol') {
+        if (!control.parentCode || visited.has(control.code)) {
+          controlConfigIssues.push(\`حساب کنترل کل طرف‌حساب «\${party.name}» قابل تشخیص نیست.\`);
+          control = undefined;
+          break;
+        }
+        visited.add(control.code);
+        control = accountByCode.get(control.parentCode);
+        if (!control) {
+          controlConfigIssues.push(\`سرفصل بالادستی حساب طرف‌حساب «\${party.name}» ناقص است.\`);
+          break;
+        }
+      }
+      if (!control) break;
+      const expectedCategory = direction === 'receivable' ? 'asset' : 'liability';
+      if (control.category !== expectedCategory) {
+        if (party.partyType === 'both') continue;
+        controlConfigIssues.push(\`ماهیت حساب کنترل طرف‌حساب «\${party.name}» با گزارش \${direction === 'receivable' ? 'دریافتنی' : 'پرداختنی'} سازگار نیست.\`);
+        continue;
+      }
+      const previousDirection = controlAccounts.get(control.code);
+      if (previousDirection && previousDirection !== direction) {
+        controlConfigIssues.push(\`حساب کنترل \${control.code} هم‌زمان برای دریافتنی و پرداختنی تعریف شده است.\`);
+        continue;
+      }
+      controlAccounts.set(control.code, direction);
+    }
+  }
+
+  let glReceivables = 0;
+  let subReceivables = 0;
+  let glPayables = 0;
+  let subPayables = 0;
+  for (const [controlCode, direction] of controlAccounts) {
+    let generalLedgerBalance = 0;
+    let subsidiaryBalance = 0;
+    for (const voucher of postedVouchers) {
+      for (const line of voucher.lines) {
+        if (!line.accountCode.startsWith(controlCode)) continue;
+        const debit = Number(line.debit) || 0;
+        const credit = Number(line.credit) || 0;
+        const signed = direction === 'receivable' ? debit - credit : credit - debit;
+        generalLedgerBalance += signed;
+        if (line.partyId) subsidiaryBalance += signed;
+      }
+    }
+    if (direction === 'receivable') {
+      glReceivables += generalLedgerBalance;
+      subReceivables += subsidiaryBalance;
+    } else {
+      glPayables += generalLedgerBalance;
+      subPayables += subsidiaryBalance;
     }
   }
   const subDiffAr = Math.abs(glReceivables - subReceivables);
   const subDiffAp = Math.abs(glPayables - subPayables);
+  const hasSubLedgerDifference = subDiffAr >= 1 || subDiffAp >= 1;
   checks.push({
     id: 'sub-gl-reconcile',
-    title: 'تطبیق دفتر معین بدهکاران/بستانکاران با تفصیلی اشخاص',
+    title: 'تطبیق حساب‌های کنترل دریافتنی/پرداختنی با تفصیلی اشخاص',
     category: 'حسابرسی تطبیقی',
-    status: subDiffAr < 1 && subDiffAp < 1 ? 'pass' : 'warning',
-    summary:
-      subDiffAr < 1 && subDiffAp < 1
-        ? 'مانده کل معین ۱۰۴۰۱ و ۳۰۱۰۱ به ریال دقیق با جمع گردش تفصیلی طرف‌حساب‌ها منطبق است.'
-        : 'برخی آرتیکل‌های ۱۰۴۰۱ یا ۳۰۱۰۱ فاقد انتخاب طرف‌حساب (تفصیلی) هستند.',
+    status: controlConfigIssues.length || hasSubLedgerDifference ? 'warning' : 'pass',
+    summary: controlConfigIssues.length || hasSubLedgerDifference
+      ? 'در ساختار حساب کنترل یا تطبیق گردش تفصیلی اشخاص نیاز به بررسی وجود دارد.'
+      : 'مانده حساب‌های کنترل دریافتنی و پرداختنی با جمع تفصیلی اشخاص منطبق است.',
     details: [
-      ...(subDiffAr >= 1 ? [`اختلاف معین و تفصیلی بدهکاران (۱۰۴۰۱): ${subDiffAr} ریال`] : []),
-      ...(subDiffAp >= 1 ? [`اختلاف معین و تفصیلی بستانکاران (۳۰۱۰۱): ${subDiffAp} ریال`] : []),
+      ...controlConfigIssues,
+      ...(subDiffAr >= 1 ? [\`اختلاف حساب کنترل دریافتنی و تفصیلی مشتریان: \${subDiffAr} ریال\`] : []),
+      ...(subDiffAp >= 1 ? [\`اختلاف حساب کنترل پرداختنی و تفصیلی تأمین‌کنندگان: \${subDiffAp} ریال\`] : []),
     ],
     targetModule: 'parties',
   });
+
 
   // 6. Cash & Bank negative balance check
   const negativeCash = trialBalance
@@ -718,6 +766,21 @@ export function computeAuditReport(input: {
     targetModule: 'inventory',
   });
 
+  const lotIssues = input.inventoryLotReconciliationIssues;
+  checks.push({
+    id: 'inventory-lot-ledger',
+    title: 'تطبیق دفتر بچ و گردش‌های انبار',
+    category: 'انبارداری و حسابرسی موجودی',
+    status: lotIssues === undefined ? 'warning' : lotIssues.length ? 'error' : 'pass',
+    summary: lotIssues === undefined
+      ? 'اطلاعات دفتر بچ برای این اجرای گزارش ارائه نشده است.'
+      : lotIssues.length
+        ? \`\${lotIssues.length} مغایرت یا نقص در دفتر بچ شناسایی شد.\`
+        : 'مانده بچ‌ها با گردش‌های ثبت‌شده ورود، خروج، برگشت و اصلاح تطبیق دارد.',
+    details: lotIssues ?? [],
+    targetModule: 'inventory',
+  });
+
   // 8. VAT Reconciliation (Invoices vs GL 30301 & 30302)
   const glSalesVatRow = trialBalance.find((r) => r.accountCode === '30301');
   const glPurchaseVatRow = trialBalance.find((r) => r.accountCode === '30302');
@@ -732,7 +795,7 @@ export function computeAuditReport(input: {
     activeInvoices.filter((i) => i.invoiceType === 'purchase').reduce((s, i) => s + i.vatAmount, 0) -
     activeInvoices.filter((i) => i.invoiceType === 'purchase_return').reduce((s, i) => s + i.vatAmount, 0);
 
-  const vatMatch = Math.abs(glSalesVat - invSalesVat) < 10 && Math.abs(glPurchaseVat - invPurchaseVat) < 10;
+  const vatMatch = Math.abs(glSalesVat - invSalesVat) < 1 && Math.abs(glPurchaseVat - invPurchaseVat) < 1;
   checks.push({
     id: 'vat-reconcile',
     title: 'تطبیق مالیات ارزش افزوده فاکتورهای مودیان با دفاتر معین (۳۰۳۰۱ / ۳۰۳۰۲)',
