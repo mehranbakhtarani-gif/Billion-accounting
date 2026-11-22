@@ -75,6 +75,10 @@ export const CorporateView: React.FC<CorporateViewProps> = ({ initialIntent, cle
   const [empName, setEmpName] = useState('');
   const [empDept, setEmpDept] = useState('واحد مالی');
   const [empBase, setEmpBase] = useState(280_000_000);
+  const [empHousing, setEmpHousing] = useState(45_000_000);
+  const [empFood, setEmpFood] = useState(35_000_000);
+  const [empChildren, setEmpChildren] = useState(0);
+  const [empOvertime, setEmpOvertime] = useState(0);
   const [empCostCenter, setEmpCostCenter] = useState(costCenters[0]?.id ?? '');
 
   // Edit employee modal
@@ -336,20 +340,27 @@ export const CorporateView: React.FC<CorporateViewProps> = ({ initialIntent, cle
           <form
             onSubmit={async (e) => {
               e.preventDefault();
-              if (!empName.trim()) return;
-              await addEmployee({
-                personnelCode: `P-${101 + employees.length}`,
-                fullName: empName.trim(),
-                department: empDept,
-                baseSalary: empBase,
-                housingAllowance: 45_000_000,
-                foodAllowance: 35_000_000,
-                childrenCount: 0,
-                overtimeHours: 0,
-                costCenterId: empCostCenter || costCenters[0]?.id,
-                active: true,
-              });
-              setEmpName('');
+              try {
+                const nextPersonnelNumber = employees.reduce((max, employee) => {
+                  const match = /^P-(\\d+)$/i.exec(employee.personnelCode.trim());
+                  return match ? Math.max(max, Number(match[1])) : max;
+                }, 100) + 1;
+                await addEmployee({
+                  personnelCode: `P-${nextPersonnelNumber}`,
+                  fullName: empName.trim(),
+                  department: empDept.trim(),
+                  baseSalary: empBase,
+                  housingAllowance: empHousing,
+                  foodAllowance: empFood,
+                  childrenCount: empChildren,
+                  overtimeHours: empOvertime,
+                  costCenterId: empCostCenter || costCenters[0]?.id,
+                  active: true,
+                });
+                setEmpName('');
+              } catch (error) {
+                showToast(error instanceof Error ? error.message : 'ثبت پرسنل ناموفق بود.');
+              }
             }}
             className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4 flex flex-wrap items-end gap-3 text-xs no-print"
           >
@@ -378,6 +389,26 @@ export const CorporateView: React.FC<CorporateViewProps> = ({ initialIntent, cle
                 onChange={(e) => setEmpBase(Number(e.target.value))}
                 className="w-full px-3 py-2 font-code rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950"
               />
+            </div>
+            <div className="w-40">
+              <label className="block text-slate-500 mb-1">حق مسکن (ریال)</label>
+              <input type="number" min={0} value={empHousing} onChange={(e) => setEmpHousing(Number(e.target.value))}
+                className="w-full px-3 py-2 font-code rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950" />
+            </div>
+            <div className="w-40">
+              <label className="block text-slate-500 mb-1">بن خواربار (ریال)</label>
+              <input type="number" min={0} value={empFood} onChange={(e) => setEmpFood(Number(e.target.value))}
+                className="w-full px-3 py-2 font-code rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950" />
+            </div>
+            <div className="w-28">
+              <label className="block text-slate-500 mb-1">تعداد فرزند</label>
+              <input type="number" min={0} max={20} step={1} value={empChildren} onChange={(e) => setEmpChildren(Number(e.target.value))}
+                className="w-full px-3 py-2 font-code rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950" />
+            </div>
+            <div className="w-32">
+              <label className="block text-slate-500 mb-1">ساعات اضافه‌کار</label>
+              <input type="number" min={0} step="0.5" value={empOvertime} onChange={(e) => setEmpOvertime(Number(e.target.value))}
+                className="w-full px-3 py-2 font-code rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950" />
             </div>
             <div className="w-44">
               <label className="block text-slate-500 mb-1">مرکز هزینه</label>
