@@ -22,6 +22,7 @@ export function computeTrialBalance(accounts: Account[], vouchers: Voucher[]): T
   >();
 
   for (const v of vouchers) {
+    if (v.status !== 'permanent') continue;
     const isOpening = v.voucherType === 'opening';
     for (const line of v.lines) {
       const prev = totals.get(line.accountCode) ?? {
@@ -195,6 +196,7 @@ export function computePartyBalances(parties: Party[], vouchers: Voucher[]): Map
     balances.set(p.id, 0);
   }
   for (const v of vouchers) {
+    if (v.status !== 'permanent') continue;
     for (const line of v.lines) {
       if (!line.partyId || !balances.has(line.partyId)) continue;
       // Exclude cheque tracking accounts (اسناد دریافتنی/پرداختنی) from open party AR/AP balance
@@ -227,7 +229,7 @@ export function computeAccountLedger(
 ): LedgerEntry[] {
   const entries: LedgerEntry[] = [];
   let running = 0;
-  const sorted = [...vouchers].sort((a, b) => a.voucherNumber - b.voucherNumber);
+  const sorted = vouchers.filter((voucher) => voucher.status === 'permanent').sort((a, b) => a.voucherNumber - b.voucherNumber);
   for (const v of sorted) {
     if (toDate && v.date > toDate) continue;
     for (const line of v.lines) {
@@ -375,6 +377,7 @@ export function computeCostCenterPnL(
   costCenters.forEach((cc) => stats.set(cc.id, { revenue: 0, cogs: 0, expenses: 0 }));
 
   for (const v of vouchers) {
+    if (v.status !== 'permanent') continue;
     for (const l of v.lines) {
       if (!l.costCenterId || !stats.has(l.costCenterId)) continue;
       const s = stats.get(l.costCenterId)!;
@@ -1094,7 +1097,7 @@ export function computeAccountReview(
   }
 
   for (const v of vouchers) {
-    if (toDate && v.date > toDate) continue;
+    if (v.status !== 'permanent' || (toDate && v.date > toDate)) continue;
     const isOpening = v.voucherType === 'opening' || (!!fromDate && v.date < fromDate);
     for (const l of v.lines) {
       if (parentPrefix && !l.accountCode.startsWith(parentPrefix)) continue;
