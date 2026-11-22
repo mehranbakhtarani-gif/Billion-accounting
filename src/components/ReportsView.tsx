@@ -394,7 +394,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ initialIntent, clearIn
       );
     } else if (tab === 'inventory-lots') {
       exportToCsv(
-        \`billion-inventory-lot-valuation-\${profile.fiscalYear}.csv\`,
+        `billion-inventory-lot-valuation-${profile.fiscalYear}.csv`,
         ['کد کالا', 'نام کالا', 'شماره بچ', 'انبار', 'تاریخ ورود', 'تاریخ انقضا', 'مقدار اولیه', 'مانده', 'رزرو', 'قابل استفاده', 'بهای واحد', 'ارزش موجودی', 'مبنای بها'],
         inventoryLotValuationRows.map((row) => [
           row.sku, row.productName, row.lotNumber, row.warehouse, row.receivedDate, row.expiryDate ?? '',
