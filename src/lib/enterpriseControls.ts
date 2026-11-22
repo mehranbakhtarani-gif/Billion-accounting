@@ -516,15 +516,20 @@ export function validateTreasuryOperationPayload(payload: { date: string; amount
   }
 }
 
-export function validateChequeDateRange(issueDate: string, dueDate: string): void {
-  const isValidDate = (date: string) => {
-    if (typeof date !== 'string' || !/^14\d{2}\/\d{2}\/\d{2}$/.test(date)) return false;
-    const [year, month, day] = date.split('/').map(Number);
-    return month >= 1 && month <= 12 && day >= 1 && day <= getJalaliMonthLength(year, month);
-  };
-  if (!isValidDate(issueDate) || !isValidDate(dueDate)) {
-    throw new Error('تاریخ صدور یا سررسید چک معتبر نیست.');
+export function validateJalaliDate(date: string, label = 'تاریخ'): void {
+  if (typeof date !== 'string' || !/^14\\d{2}\\/\\d{2}\\/\\d{2}$/.test(date)) {
+    throw new Error(`${label} شمسی معتبر نیست.`);
   }
+  const [year, month, day] = date.split('/').map(Number);
+  if (month < 1 || month > 12 || day < 1 || day > getJalaliMonthLength(year, month) ||
+      shamsiToExactDayNumber(date) === null) {
+    throw new Error(`${label} شمسی معتبر نیست.`);
+  }
+}
+
+export function validateChequeDateRange(issueDate: string, dueDate: string): void {
+  validateJalaliDate(issueDate, 'تاریخ صدور چک');
+  validateJalaliDate(dueDate, 'تاریخ سررسید چک');
   const issueDay = shamsiToExactDayNumber(issueDate);
   const dueDay = shamsiToExactDayNumber(dueDate);
   if (issueDay === null || dueDay === null || dueDay < issueDay) {
