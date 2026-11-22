@@ -23,6 +23,8 @@ import {
   Invoice,
   Party,
   Product,
+  InventoryLot,
+  InventoryLotMovement,
   RbacOperator,
   SalesOrder,
   SubcontractJob,
@@ -34,7 +36,7 @@ import {
 import { createHolooSeedData } from '../data/holooSeed';
 import { getOrCreateLocalDeviceIdentity, loadLocalAccountingSnapshot, LocalDeviceIdentity, saveLocalAccountingSnapshot } from '../lib/localAccountingStore';
 import { FxRevaluationRow } from '../lib/enterpriseAccounting';
-import { assertSufficientStock, getChequeStatusTransitionError, validateJournalEntryPayload, validateTreasuryOperationPayload, validateTreasuryAccountSelection, validateTreasuryTransferAccounts, validateChequeDateRange, validatePartyTreasuryAccount, validateJalaliDate, validateImportLandedCostPayload, aggregateStockReservations, collectActiveStockReservations, validateSalesOrderDispatchQuantities, validateInvoicePaymentAllocations, buildInvoiceAllocationReversal, getInvoiceStockDirection, getInvoiceCancellationBlockReason } from '../lib/enterpriseControls';
+import { assertSufficientStock, getChequeStatusTransitionError, validateJournalEntryPayload, validateTreasuryOperationPayload, validateTreasuryAccountSelection, validateTreasuryTransferAccounts, validateChequeDateRange, validatePartyTreasuryAccount, validateJalaliDate, validateImportLandedCostPayload, aggregateStockReservations, collectActiveStockReservations, validateSalesOrderDispatchQuantities, validateInvoicePaymentAllocations, buildInvoiceAllocationReversal, getInvoiceStockDirection, getInvoiceCancellationBlockReason, allocateStockFIFO } from '../lib/enterpriseControls';
 import {
   AuditReport,
   buildInvoiceVoucherLines,
@@ -65,6 +67,9 @@ interface AccountingContextValue {
   accounts: Account[];
   parties: Party[];
   products: Product[];
+  inventoryLots: InventoryLot[];
+  inventoryLotMovements: InventoryLotMovement[];
+  createOpeningInventoryLot: (payload: { productId: string; lotNumber: string; quantity: number; unitCost: number; receivedDate: string; expiryDate?: string }) => Promise<void>;
   vouchers: Voucher[];
   invoices: Invoice[];
   cheques: Cheque[];
@@ -293,6 +298,8 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const [accounts, setAccounts] = useState<Account[]>(initialSeed.accounts);
   const [parties, setParties] = useState<Party[]>(initialSeed.parties);
   const [products, setProducts] = useState<Product[]>(initialSeed.products);
+  const [inventoryLots, setInventoryLots] = useState<InventoryLot[]>([]);
+  const [inventoryLotMovements, setInventoryLotMovements] = useState<InventoryLotMovement[]>([]);
   const [vouchers, setVouchers] = useState<Voucher[]>(initialSeed.vouchers);
   const [invoices, setInvoices] = useState<Invoice[]>(initialSeed.invoices);
   const [cheques, setCheques] = useState<Cheque[]>(initialSeed.cheques);
@@ -337,6 +344,8 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           if (Array.isArray(saved.accounts)) setAccounts(saved.accounts as Account[]);
           if (Array.isArray(saved.parties)) setParties(saved.parties as Party[]);
           if (Array.isArray(saved.products)) setProducts(saved.products as Product[]);
+          if (Array.isArray(saved.inventoryLots)) setInventoryLots(saved.inventoryLots as InventoryLot[]);
+          if (Array.isArray(saved.inventoryLotMovements)) setInventoryLotMovements(saved.inventoryLotMovements as InventoryLotMovement[]);
           if (Array.isArray(saved.vouchers)) setVouchers(saved.vouchers as Voucher[]);
           if (Array.isArray(saved.invoices)) setInvoices(saved.invoices as Invoice[]);
           if (Array.isArray(saved.cheques)) setCheques(saved.cheques as Cheque[]);
@@ -394,14 +403,14 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   useEffect(() => {
     if (!localDataReady) return;
     void saveLocalAccountingSnapshot({
-      profile, accounts, parties, products, vouchers, invoices, cheques, employees,
+      profile, accounts, parties, products, inventoryLots, inventoryLotMovements, vouchers, invoices, cheques, employees,
       assets, costCenters, currencies, exchangeRates, importDossiers, salesOrders,
       subcontractJobs, rbacOperators, activeOperatorId, auditLogs,
     }).catch((error) => {
       console.error('Local accounting database save failed:', error);
     });
   }, [
-    localDataReady, profile, accounts, parties, products, vouchers, invoices, cheques,
+    localDataReady, profile, accounts, parties, products, inventoryLots, inventoryLotMovements, vouchers, invoices, cheques,
     employees, assets, costCenters, currencies, exchangeRates, importDossiers,
     salesOrders, subcontractJobs, rbacOperators, activeOperatorId, auditLogs,
   ]);
@@ -574,6 +583,8 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         subscribeCol<Account>('accounts', setAccounts);
         subscribeCol<Party>('parties', setParties);
         subscribeCol<Product>('products', setProducts);
+        subscribeCol<InventoryLot>('inventoryLots', setInventoryLots);
+        subscribeCol<InventoryLotMovement>('inventoryLotMovements', setInventoryLotMovements);
         subscribeCol<Voucher>('vouchers', setVouchers);
         subscribeCol<Invoice>('invoices', setInvoices);
         subscribeCol<Cheque>('cheques', setCheques);
@@ -1586,6 +1597,52 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     return finalized;
   }, [vouchers, finalizeVoucher, showToast]);
 
+  const createOpeningInventoryLot = useCallback(async (payload: {
+    productId: string; lotNumber: string; quantity: number; unitCost: number; receivedDate: string; expiryDate?: string;
+  }) => {
+    const product = products.find((item) => item.id === payload.productId);
+    if (!product) throw new Error('کالای موردنظر برای ایجاد بچ افتتاحیه یافت نشد.');
+    if (!payload.lotNumber.trim() || !/^\\d{4}-\\d{2}-\\d{2}$/.test(payload.receivedDate) ||
+        (payload.expiryDate && !/^\\d{4}-\\d{2}-\\d{2}$/.test(payload.expiryDate)) ||
+        !Number.isFinite(payload.quantity) || payload.quantity <= 0 ||
+        !Number.isFinite(payload.unitCost) || payload.unitCost < 0) {
+      throw new Error('شماره بچ، تاریخ، مقدار یا بهای واحد معتبر نیست.');
+    }
+    if (inventoryLots.some((lot) => lot.productId === product.id && lot.warehouse === product.warehouse && lot.lotNumber === payload.lotNumber.trim())) {
+      throw new Error('این شماره بچ برای همین کالا و انبار قبلاً ثبت شده است.');
+    }
+    const existingLotQty = inventoryLots.filter((lot) => lot.productId === product.id && lot.warehouse === product.warehouse)
+      .reduce((sum, lot) => sum + lot.quantityRemaining, 0);
+    if (Math.abs(existingLotQty) > 0.01) throw new Error('برای این کالا قبلاً بچ ثبت شده است؛ بچ افتتاحیه تکراری مجاز نیست.');
+    if (Math.abs(product.stock - payload.quantity) > 0.01) {
+      throw new Error('مقدار بچ افتتاحیه باید دقیقاً با موجودی فعلی کالا برابر باشد تا موجودی دوباره‌شماری نشود.');
+    }
+    const lotId = generateSafeId('lot');
+    const movementId = generateSafeId('lotmove');
+    const lot: InventoryLot = {
+      id: lotId, ownerId, productId: product.id, warehouse: product.warehouse,
+      lotNumber: payload.lotNumber.trim().slice(0, 80), receivedDate: payload.receivedDate,
+      ...(payload.expiryDate ? { expiryDate: payload.expiryDate } : {}),
+      quantityReceived: payload.quantity, quantityRemaining: payload.quantity,
+      unitCost: payload.unitCost, costBasis: 'estimated-opening', createdAt: serverTimestamp(),
+    };
+    const movement: InventoryLotMovement = {
+      id: movementId, ownerId, lotId, productId: product.id, warehouse: product.warehouse,
+      movementType: 'receipt', quantity: payload.quantity, unitCost: payload.unitCost,
+      referenceId: 'opening-balance:' + lotId, referenceNumber: 'افتتاحیه',
+      date: payload.receivedDate, notes: 'موجودی افتتاحیه با بهای برآوردی؛ سند تاریخی خرید محسوب نمی‌شود.',
+    };
+    if (user) {
+      const batch = writeBatch(db);
+      batch.set(doc(db, 'inventoryLots', lotId), lot);
+      batch.set(doc(db, 'inventoryLotMovements', movementId), movement);
+      await batch.commit();
+    }
+    setInventoryLots((prev) => [...prev, lot]);
+    setInventoryLotMovements((prev) => [...prev, movement]);
+    showToast('بچ افتتاحیه ثبت شد؛ بهای آن برآوردی است و به‌عنوان خرید تاریخی ثبت نشده است.');
+  }, [products, inventoryLots, ownerId, user, showToast]);
+
   const transferProductWarehouse = useCallback(
     async (productId: string, targetWarehouse: string) => {
       const prod = products.find((p) => p.id === productId);
@@ -2259,6 +2316,12 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
       let cogsTotal = 0;
       const stockDeltas = new Map<string, number>();
+      let workingLots = inventoryLots.map((lot) => ({ ...lot }));
+      const lotUpdates = new Map<string, InventoryLot>();
+      const lotReceipts: InventoryLot[] = [];
+      const lotMovementsToSave: InventoryLotMovement[] = [];
+      const invoiceItems = payload.items.map((item) => ({ ...item }));
+      const asOfDate = new Date().toISOString().slice(0, 10);
       if (payload.invoiceType !== 'proforma') {
         for (const item of payload.items) {
           const product = products.find((candidate) => candidate.id === item.productId);
@@ -2266,14 +2329,55 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           if (!Number.isFinite(item.quantity) || item.quantity <= 0) {
             throw new Error(`مقدار کالا در فاکتور معتبر نیست: ${item.productName || item.productId}`);
           }
-          cogsTotal += Math.round(product.buyPrice * item.quantity);
           const outgoing = stockDirection === -1;
+          if (outgoing) {
+            const fifo = allocateStockFIFO(workingLots as any, item.quantity, {
+              productId: product.id, warehouse: payload.warehouse, asOfDate,
+            });
+            item.lotAllocations = fifo.allocations;
+            workingLots = fifo.remainingLots as InventoryLot[];
+            fifo.allocations.forEach((allocation) => {
+              const lot = workingLots.find((candidate) => candidate.id === allocation.lotId);
+              if (!lot) throw new Error('بچ تخصیص‌یافته برای ثبت خروج یافت نشد.');
+              lotUpdates.set(lot.id, lot);
+              lotMovementsToSave.push({
+                id: generateSafeId('lotmove'), ownerId, lotId: lot.id, productId: product.id,
+                warehouse: lot.warehouse, movementType: payload.invoiceType === 'waste' ? 'waste' : 'issue',
+                quantity: -allocation.quantity, unitCost: allocation.unitCost,
+                referenceId: id, referenceNumber: payload.invoiceNumber, date: asOfDate,
+              });
+            });
+            cogsTotal += Math.round(fifo.totalCost);
+          } else {
+            const lotId = generateSafeId('lot');
+            const lotNumber = (item.lotNumber || product.lotNumber || `${payload.invoiceNumber}-${lotId.slice(-6)}`).trim();
+            const lot: InventoryLot = {
+              id: lotId, ownerId, productId: product.id, warehouse: payload.warehouse,
+              lotNumber: lotNumber.slice(0, 80), receivedDate: asOfDate,
+              quantityReceived: item.quantity, quantityRemaining: item.quantity,
+              unitCost: payload.invoiceType === 'sale_return' ? product.buyPrice : item.unitPrice,
+              costBasis: payload.invoiceType === 'sale_return' ? 'estimated-return' : 'documented',
+              sourceInvoiceId: id, createdAt: serverTimestamp(),
+            };
+            item.receivedLotId = lotId;
+            if (payload.invoiceType === 'sale_return') {
+              item.lotAllocations = [{ lotId, lotNumber: lot.lotNumber, quantity: item.quantity, unitCost: lot.unitCost, totalCost: item.quantity * lot.unitCost }];
+            }
+            lotReceipts.push(lot);
+            lotMovementsToSave.push({
+              id: generateSafeId('lotmove'), ownerId, lotId, productId: product.id,
+              warehouse: lot.warehouse, movementType: payload.invoiceType === 'sale_return' ? 'return' : 'receipt',
+              quantity: item.quantity, unitCost: lot.unitCost, referenceId: id,
+              referenceNumber: payload.invoiceNumber, date: asOfDate,
+              ...(payload.invoiceType === 'sale_return' ? { notes: 'بهای برگشت فروش بر مبنای قیمت خرید فعلی برآورد شده است.' } : {}),
+            });
+          }
           stockDeltas.set(product.id, (stockDeltas.get(product.id) ?? 0) + (outgoing ? -item.quantity : item.quantity));
         }
       }
 
       const isFxInv = isForeignCurrency(payload.currencyCode) && Number(payload.exchangeRate) > 0;
-      const full: Invoice = { ...payload, id, ownerId, voucherId };
+      const full: Invoice = { ...payload, items: invoiceItems, id, ownerId, voucherId };
       try {
         if (payload.invoiceType !== 'proforma') {
           for (const [productId, delta] of stockDeltas) {
@@ -2335,7 +2439,11 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           }
         }
 
-        const persistedInvoice: Invoice = { ...full, ...(voucherId ? { voucherId } : {}) };
+        const persistedInvoice: Invoice = {
+          ...full, items: invoiceItems,
+          lotMovements: lotMovementsToSave.map((movement) => movement.id),
+          ...(voucherId ? { voucherId } : {}),
+        };
         if (user) {
           invoicePersistenceAttempted = true;
           await setDoc(doc(db, 'invoices', id), {
@@ -2379,6 +2487,22 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           setInvoices((prev) => [persistedInvoice, ...prev]);
         }
 
+        if (lotReceipts.length || lotUpdates.size || lotMovementsToSave.length) {
+          if (user) {
+            const lotBatch = writeBatch(db);
+            lotReceipts.forEach((lot) => lotBatch.set(doc(db, 'inventoryLots', lot.id), lot));
+            lotUpdates.forEach((lot) => lotBatch.update(doc(db, 'inventoryLots', lot.id), {
+              quantityRemaining: lot.quantityRemaining, updatedAt: serverTimestamp(),
+            }));
+            lotMovementsToSave.forEach((movement) => lotBatch.set(doc(db, 'inventoryLotMovements', movement.id), movement));
+            await lotBatch.commit();
+          }
+          setInventoryLots((prev) => [
+            ...prev.filter((lot) => !lotUpdates.has(lot.id) && !lotReceipts.some((added) => added.id === lot.id)),
+            ...[...lotUpdates.values(), ...lotReceipts],
+          ]);
+          setInventoryLotMovements((prev) => [...prev, ...lotMovementsToSave]);
+        }
         showToast(
           payload.invoiceType === 'proforma'
             ? `پیش‌فاکتور ${persistedInvoice.invoiceNumber} صادر شد (بدون تأثیر بر انبار و سند تا زمان تبدیل به فاکتور فروش).`
@@ -2440,7 +2564,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         throw new Error(`ثبت فاکتور ${payload.invoiceNumber} کامل نشد. علت: ${reason}.${compensation}`);
       }
     },
-    [products, subcontractJobs, salesOrders, currencies, adjustProductStock, createVoucher, addCheque, ownerId, user, showToast]
+    [products, inventoryLots, subcontractJobs, salesOrders, currencies, adjustProductStock, createVoucher, addCheque, ownerId, user, showToast]
   );
 
   const cancelInvoice = useCallback(
@@ -4267,6 +4391,8 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         accounts,
         parties,
         products,
+        inventoryLots,
+        inventoryLotMovements,
         vouchers,
         invoices,
         cheques,
@@ -4393,6 +4519,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         deleteParty,
         addProduct,
         updateProduct,
+        createOpeningInventoryLot,
         deleteProduct,
         adjustProductStock,
         adjustProductStockWithVoucher,
