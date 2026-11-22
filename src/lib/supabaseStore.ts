@@ -143,7 +143,8 @@ async function readLocalCollection(collectionName: string) {
 
 async function fetchOne(ref: RecordRef) {
   const companyId = requireCompany();
-  let row: { legacy_record_id: string; payload: Record<string, any>; revision?: number } | null = null;
+  type StoredRecord = { legacy_record_id: string; payload: Record<string, any>; revision?: number };
+  let row: StoredRecord | null = null;
   try {
     const { data, error } = await supabase
       .from('billion_records')
@@ -153,13 +154,14 @@ async function fetchOne(ref: RecordRef) {
       .eq('legacy_record_id', ref.id)
       .maybeSingle();
     if (error) throw error;
-    row = data as typeof row;
-    if (row?.revision !== undefined) {
+    const fetchedRow = data as StoredRecord | null;
+    row = fetchedRow;
+    if (fetchedRow?.revision !== undefined) {
       await cacheLocalRecordRevisions([{
         key: revisionKey(ref.collection, ref.id),
         recordType: ref.collection,
         recordId: ref.id,
-        revision: Number(row.revision),
+        revision: Number(fetchedRow.revision),
       }]);
     }
   } catch (error) {
