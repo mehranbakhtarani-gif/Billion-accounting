@@ -2474,7 +2474,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             const lot: InventoryLot = {
               id: lotId, ownerId, productId: product.id, warehouse: payload.warehouse,
               lotNumber: lotNumber.slice(0, 80), receivedDate: item.receivedDate || asOfDate,
-              ...(item.expiryDate ? { expiryDate: item.expiryDate } : {}),
+              ...(item.expiryDate ? { expiryDate: item.expiryDate } : returnedSourceLot?.expiryDate ? { expiryDate: returnedSourceLot.expiryDate } : {}),
               quantityReceived: item.quantity, quantityRemaining: item.quantity,
               unitCost: returnedSourceLot?.unitCost ?? (payload.invoiceType === 'sale_return' ? product.buyPrice : item.unitPrice),
               costBasis: returnedSourceLot?.costBasis ?? (payload.invoiceType === 'sale_return' ? 'estimated-return' : 'documented'),
@@ -2490,7 +2490,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
               warehouse: lot.warehouse, movementType: payload.invoiceType === 'sale_return' ? 'return' : 'receipt',
               quantity: item.quantity, unitCost: lot.unitCost, referenceId: id,
               referenceNumber: payload.invoiceNumber, date: asOfDate,
-              ...(payload.invoiceType === 'sale_return' ? { notes: 'بهای برگشت فروش بر مبنای قیمت خرید فعلی برآورد شده است.' } : {}),
+              ...(payload.invoiceType === 'sale_return' && !returnedSourceLot ? { notes: 'بهای برگشت فروش بر مبنای قیمت خرید فعلی برآورد شده است؛ شماره بچ اصلی تطبیق داده نشد.' } : {}),
             });
           }
           stockDeltas.set(product.id, (stockDeltas.get(product.id) ?? 0) + (outgoing ? -item.quantity : item.quantity));
