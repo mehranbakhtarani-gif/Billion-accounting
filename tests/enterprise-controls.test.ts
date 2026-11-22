@@ -382,6 +382,7 @@ test('journal payload validation rejects invalid dates, lines and one-sided entr
     ],
   };
   assert.doesNotThrow(() => validateJournalEntryPayload(valid));
+  assert.throws(() => validateJournalEntryPayload({ ...valid, lines: [{ accountCode: '10201', debit: 100, credit: 0 }, { accountCode: '40101', debit: 0, credit: 90 }] }), /تراز نیست/);
   assert.throws(() => validateJournalEntryPayload({ ...valid, date: '1405/13/01' }), /تاریخ/);
   assert.throws(() => validateJournalEntryPayload({ ...valid, description: ' ' }), /شرح/);
   assert.throws(() => validateJournalEntryPayload({ ...valid, lines: [{ accountCode: '10201', debit: 0, credit: 0 }, valid.lines[1]] }), /معتبر نیست/);
