@@ -21,6 +21,7 @@ import {
   FixedAsset,
   ImportDossier,
   Invoice,
+  InvoiceLotAllocation,
   Party,
   Product,
   InventoryLot,
