@@ -2309,8 +2309,14 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
   const postMonthlyPayrollVoucher = useCallback(
     async (monthName: string) => {
+      const normalizedMonth = monthName.trim();
+      if (!normalizedMonth) throw new Error('ماه حقوق و دستمزد را مشخص کنید.');
+      const payrollReference = `payroll:${normalizedMonth}`;
+      if (vouchers.some((voucher) => voucher.referenceId === payrollReference)) {
+        throw new Error(`سند حقوق ماه «${normalizedMonth}» قبلاً صادر شده است.`);
+      }
       const activeEmps = employees.filter((e) => e.active);
-      if (activeEmps.length === 0) return;
+      if (activeEmps.length === 0) throw new Error('برای صدور لیست حقوق، کارمند فعال ثبت نشده است.');
       const calcs = activeEmps.map(calculateEmployeePayroll);
       const totalExpense = calcs.reduce((s, c) => s + c.totalEmployerCost, 0);
       const totalNet = calcs.reduce((s, c) => s + c.netPay, 0);
@@ -2325,21 +2331,21 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           accountCode: '80101',
           accountTitle: 'هزینه حقوق، مزایا و بیمه سهم کارفرما',
           costCenterId: 'cc_hq',
-          description: `هزینه حقوق و دستمزد ${monthName}`,
+          description: `هزینه حقوق و دستمزد ${normalizedMonth}`,
           debit: totalExpense,
           credit: 0,
         },
         {
           accountCode: '30401',
           accountTitle: 'حقوق پرداختنی کارکنان',
-          description: `خالص پرداختنی حقوق ${monthName}`,
+          description: `خالص پرداختنی حقوق ${normalizedMonth}`,
           debit: 0,
           credit: totalNet,
         },
         {
           accountCode: '30402',
           accountTitle: 'سازمان تأمین اجتماعی (بیمه ۳۰٪)',
-          description: `بیمه سهم کارمند و کارفرما ${monthName}`,
+          description: `بیمه سهم کارمند و کارفرما ${normalizedMonth}`,
           debit: 0,
           credit: totalInsurance,
         },
@@ -2348,7 +2354,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         lines.push({
           accountCode: '30403',
           accountTitle: 'مالیات حقوق پرداختنی',
-          description: `مالیات حقوق ${monthName}`,
+          description: `مالیات حقوق ${normalizedMonth}`,
           debit: 0,
           credit: totalTax,
         });
@@ -2356,44 +2362,62 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
       await createVoucher({
         date: getTodayShamsi(),
-        description: `سند اتوماتیک حقوق و دستمزد ${monthName} (${activeEmps.length} نفر)`,
+        description: `سند اتوماتیک حقوق و دستمزد ${normalizedMonth} (${activeEmps.length} نفر)`,
         voucherType: 'payroll',
         status: 'permanent',
+        referenceId: payrollReference,
         lines,
       });
     },
-    [employees, createVoucher]
+    [employees, vouchers, createVoucher]
   );
 
   const paySalariesVoucher = useCallback(
     async (monthName: string, bankAccountCode: string, amount: number) => {
-      if (amount <= 0) return;
-      const bankAcc = accounts.find((a) => a.code === bankAccountCode);
+      const normalizedMonth = monthName.trim();
+      if (!normalizedMonth) throw new Error('ماه حقوق را مشخص کنید.');
+      if (!Number.isFinite(amount) || amount <= 0) throw new Error('مبلغ پرداخت حقوق باید عددی مثبت و معتبر باشد.');
+      const bankAcc = accounts.find((a) => a.code === bankAccountCode && a.level === 'moein' && a.code.startsWith('102'));
+      if (!bankAcc) throw new Error('حساب بانکی انتخاب‌شده معتبر نیست.');
+      const payrollVoucher = vouchers.find((voucher) => voucher.referenceId === `payroll:${normalizedMonth}`);
+      if (!payrollVoucher) throw new Error(`ابتدا سند حقوق ماه «${normalizedMonth}» را صادر کنید.`);
+      const payableCredit = payrollVoucher.lines
+        .filter((line) => line.accountCode === '30401')
+        .reduce((sum, line) => sum + (Number(line.credit) || 0) - (Number(line.debit) || 0), 0);
+      const priorPayments = vouchers
+        .filter((voucher) => voucher.voucherType === 'payroll' && voucher.description.startsWith(`پرداخت خالص حقوق کارکنان ${normalizedMonth} از `))
+        .reduce((sum, voucher) => sum + voucher.lines
+          .filter((line) => line.accountCode === '30401')
+          .reduce((lineSum, line) => lineSum + (Number(line.debit) || 0) - (Number(line.credit) || 0), 0), 0);
+      const outstanding = Math.max(0, payableCredit - priorPayments);
+      if (amount > outstanding + 0.000001) {
+        throw new Error(`مبلغ پرداخت از حقوق پرداختنی باقیمانده بیشتر است. مانده قابل پرداخت: ${outstanding.toLocaleString('en-US')}`);
+      }
       const bankTitle = bankAcc?.title || 'بانک ملت — حساب جاری شرکتی';
       await createVoucher({
         date: getTodayShamsi(),
-        description: `پرداخت خالص حقوق کارکنان ${monthName} از ${bankTitle}`,
+        description: `پرداخت خالص حقوق کارکنان ${normalizedMonth} از ${bankTitle}`,
         voucherType: 'payroll',
         status: 'permanent',
         lines: [
           {
             accountCode: '30401',
             accountTitle: 'حقوق پرداختنی کارکنان',
-            description: `تسویه حقوق پرداختنی ${monthName}`,
+            description: `تسویه حقوق پرداختنی ${normalizedMonth}`,
             debit: amount,
             credit: 0,
           },
           {
             accountCode: bankAccountCode,
             accountTitle: bankTitle,
-            description: `واریز حقوق پرسنل ${monthName}`,
+            description: `واریز حقوق پرسنل ${normalizedMonth}`,
             debit: 0,
             credit: amount,
           },
         ],
       });
     },
-    [accounts, createVoucher]
+    [accounts, vouchers, createVoucher]
   );
 
   const addFixedAsset = useCallback(
