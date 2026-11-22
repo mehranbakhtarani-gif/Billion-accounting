@@ -9,6 +9,7 @@ import {
   validateTreasuryAccountSelection,
   validateTreasuryTransferAccounts,
   validateChequeDateRange,
+  validatePartyTreasuryAccount,
   getChequeStatusTransitionError,
   classifySyncOperation,
   computeOpenItemAging,
@@ -475,6 +476,14 @@ test('cheque dates validate Jalali leap days and issue-before-due ordering', () 
   assert.doesNotThrow(() => validateChequeDateRange('1403/12/30', '1404/01/02'));
   assert.throws(() => validateChequeDateRange('1405/12/30', '1406/01/02'), /تاریخ صدور یا سررسید/);
   assert.throws(() => validateChequeDateRange('1405/08/10', '1405/08/09'), /قبل از تاریخ صدور/);
+});
+
+test('party treasury postings require a valid debtor or creditor moein account', () => {
+  assert.doesNotThrow(() => validatePartyTreasuryAccount({ code: '10401', level: 'moein' }));
+  assert.doesNotThrow(() => validatePartyTreasuryAccount({ code: '30101', level: 'moein' }));
+  assert.throws(() => validatePartyTreasuryAccount(undefined), /حساب معین تفصیلی/);
+  assert.throws(() => validatePartyTreasuryAccount({ code: '10201', level: 'moein' }), /حساب معین تفصیلی/);
+  assert.throws(() => validatePartyTreasuryAccount({ code: '10401', level: 'kol' }), /حساب معین تفصیلی/);
 });
 
 test('treasury account validation requires an existing cash or bank moein account', () => {
