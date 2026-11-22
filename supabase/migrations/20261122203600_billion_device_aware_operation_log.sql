@@ -93,7 +93,7 @@ begin
     raise exception 'Invalid device-aware batch request';
   end if;
 
-  if jsonb_typeof(p_changes) <> 'array' then
+  if p_changes is null or jsonb_typeof(p_changes) <> 'array' then
     raise exception 'Invalid batch request';
   end if;
 
@@ -177,7 +177,7 @@ begin
       raise exception 'Invalid record identity';
     end if;
 
-    if v_action not in ('set', 'patch', 'delete') then
+    if v_action is null or v_action not in ('set', 'patch', 'delete') then
       raise exception 'Unsupported batch action';
     end if;
 
