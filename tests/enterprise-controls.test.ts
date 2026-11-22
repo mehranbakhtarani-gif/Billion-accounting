@@ -322,7 +322,7 @@ test('aging uses the authoritative post-allocation invoice balance exactly once 
   const customer = { id: 'c-aging', ownerId: 'o1', code: 'C-AGE', name: 'مشتری سنی', partyType: 'customer' };
   const partiallySettled = {
     id: 'sale-aging', ownerId: 'o1', invoiceNumber: 'S-AGE-1', invoiceType: 'sale', date: '1405/08/01',
-    dueDate: '1405/08/01', partyId: 'c-aging', partyName: 'مشتری سنی', grandTotal: 500,
+    dueDate: '1405/07/30', partyId: 'c-aging', partyName: 'مشتری سنی', grandTotal: 500,
     paidCash: 100, paidBank: 150, paidCheque: 0, creditAmount: 250, status: 'issued',
     paymentAllocations: [{ id: 'alloc-1', voucherId: 'v-1', date: '1405/08/10', direction: 'receipt', amount: 150 }],
     items: [],
