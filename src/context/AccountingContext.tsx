@@ -1874,7 +1874,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
       if (lines.length < 2) showToast('وضعیت چک صیادی به‌روزرسانی شد.');
     },
-    [cheques, accounts, parties, user, createVoucher, showToast]
+    [cheques, accounts, parties, vouchers, user, createVoucher, showToast]
   );
 
   const recordQuickTreasury = useCallback(
