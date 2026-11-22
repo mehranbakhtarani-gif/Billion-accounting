@@ -82,7 +82,7 @@ test('sale and purchase returns create balanced reversal-side accounting entries
 
   const purchaseReturn = buildInvoiceVoucherLines({ ...base, invoiceType: 'purchase_return' } as any, 0);
   assert.deepEqual(purchaseReturn.map((line) => [line.accountCode, line.debit, line.credit]), [
-    ['10101', 110, 0], ['10501', 0, 100], ['30302', 0, 10],
+    ['10101', 110, 0], ['60301', 0, 100], ['30302', 0, 10],
   ]);
   assert.equal(purchaseReturn.reduce((sum, line) => sum + line.debit, 0), purchaseReturn.reduce((sum, line) => sum + line.credit, 0));
 
