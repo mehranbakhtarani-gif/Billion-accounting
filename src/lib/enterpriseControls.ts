@@ -443,39 +443,55 @@ export function reconcileBankLines(
   };
   validateLines(statement, 'صورت‌حساب');
   validateLines(ledger, 'دفتر');
-  const usedLedger = new Set<string>();
+  const remainingStatement = new Map(statement.map((line) => [line.id, line]));
+  const remainingLedger = new Map(ledger.map((line) => [line.id, line]));
   const matches: ReconciliationMatch[] = [];
-  const unmatchedStatementIds: string[] = [];
   const ambiguousStatementIds: string[] = [];
+  const candidatesFor = (line: BankStatementLine) => [...remainingLedger.values()].filter((entry) =>
+    entry.accountId === line.accountId &&
+    entry.amount === line.amount &&
+    (line.reference && entry.reference
+      ? line.reference === entry.reference
+      : Math.abs(daysBetween(line.date, entry.date)) <= dateToleranceDays)
+  );
 
-  for (const line of statement) {
-    const candidates = ledger.filter((entry) =>
-      !usedLedger.has(entry.id) &&
-      entry.accountId === line.accountId &&
-      entry.amount === line.amount &&
-      (line.reference && entry.reference
-        ? line.reference === entry.reference
-        : Math.abs(daysBetween(line.date, entry.date)) <= dateToleranceDays)
-    );
-    if (candidates.length === 1) {
-      const match = candidates[0];
-      usedLedger.add(match.id);
-      matches.push({
-        statementLineId: line.id,
-        ledgerLineId: match.id,
-        matchType: line.reference && match.reference ? 'reference' : 'exact-amount-date',
-      });
-    } else if (candidates.length > 1) {
-      ambiguousStatementIds.push(line.id);
-    } else {
-      unmatchedStatementIds.push(line.id);
+  // Resolve forced one-candidate statement rows iteratively. This avoids input-order
+  // dependence when an earlier row is ambiguous but a later row has only one option.
+  while (remainingStatement.size > 0 && remainingLedger.size > 0) {
+    const candidateMap = new Map([...remainingStatement.values()].map((line) => [line.id, candidatesFor(line)]));
+    const singletonByLedger = new Map<string, string[]>();
+    for (const [statementId, candidates] of candidateMap) {
+      if (candidates.length !== 1) continue;
+      const ledgerId = candidates[0].id;
+      const owners = singletonByLedger.get(ledgerId) ?? [];
+      owners.push(statementId);
+      singletonByLedger.set(ledgerId, owners);
     }
+    const forced = [...candidateMap.entries()].find(([statementId, candidates]) =>
+      candidates.length === 1 && singletonByLedger.get(candidates[0].id)?.length === 1
+    );
+    if (!forced) break;
+    const [statementId, candidates] = forced;
+    const line = remainingStatement.get(statementId)!;
+    const match = candidates[0];
+    matches.push({
+      statementLineId: line.id,
+      ledgerLineId: match.id,
+      matchType: line.reference && match.reference ? 'reference' : 'exact-amount-date',
+    });
+    remainingStatement.delete(statementId);
+    remainingLedger.delete(match.id);
   }
+
+  for (const line of remainingStatement.values()) {
+    if (candidatesFor(line).length > 0) ambiguousStatementIds.push(line.id);
+  }
+  const unmatchedStatementIds = [...remainingStatement.keys()].filter((id) => !ambiguousStatementIds.includes(id));
 
   return {
     matches,
     unmatchedStatementIds,
-    unmatchedLedgerIds: ledger.filter((line) => !usedLedger.has(line.id)).map((line) => line.id),
+    unmatchedLedgerIds: [...remainingLedger.keys()],
     ambiguousStatementIds,
   };
 }
