@@ -2531,20 +2531,34 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   // ---------------- CORPORATE MODULES CRUD ----------------
   const addEmployee = useCallback(
     async (emp: Omit<Employee, 'id' | 'ownerId'>) => {
+      const personnelCode = emp.personnelCode.trim();
+      const fullName = emp.fullName.trim();
+      const department = emp.department.trim();
+      if (!personnelCode || !fullName || !department) {
+        throw new Error('کد پرسنلی، نام و واحد سازمانی الزامی هستند.');
+      }
+      if (employees.some((employee) => employee.personnelCode.trim().toLowerCase() === personnelCode.toLowerCase())) {
+        throw new Error('کد پرسنلی واردشده قبلاً ثبت شده است.');
+      }
+      if (!Number.isInteger(emp.childrenCount) || emp.childrenCount > 20) {
+        throw new Error('تعداد فرزند باید عدد صحیح بین صفر تا ۲۰ باشد.');
+      }
+      calculateEmployeePayroll({ ...emp, personnelCode, fullName, department, id: 'validation', ownerId } as Employee);
+      const normalizedEmployee = { ...emp, personnelCode, fullName, department };
       const id = generateSafeId('emp');
-      const full: Employee = { ...emp, id, ownerId };
+      const full: Employee = { ...normalizedEmployee, id, ownerId };
       if (user) {
         try {
           await setDoc(doc(db, 'employees', id), {
             ownerId,
-            personnelCode: emp.personnelCode.slice(0, 32),
-            fullName: emp.fullName.trim().slice(0, 140),
-            department: emp.department.slice(0, 80),
-            baseSalary: Math.max(0, Number(emp.baseSalary) || 0),
-            housingAllowance: Math.max(0, Number(emp.housingAllowance) || 0),
-            foodAllowance: Math.max(0, Number(emp.foodAllowance) || 0),
-            childrenCount: Math.min(20, Math.max(0, Number(emp.childrenCount) || 0)),
-            overtimeHours: Math.max(0, Number(emp.overtimeHours) || 0),
+            personnelCode,
+            fullName,
+            department,
+            baseSalary: emp.baseSalary,
+            housingAllowance: emp.housingAllowance,
+            foodAllowance: emp.foodAllowance,
+            childrenCount: emp.childrenCount,
+            overtimeHours: emp.overtimeHours,
             ...(emp.costCenterId ? { costCenterId: emp.costCenterId.slice(0, 128) } : {}),
             active: emp.active,
             createdAt: serverTimestamp(),
@@ -2552,39 +2566,51 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           });
         } catch (err) {
           handleSupabaseError(err, OperationType.CREATE, `employees/${id}`);
+          throw err;
         }
       } else {
         setEmployees((prev) => [...prev, full]);
       }
-      showToast(`پرسنل «${emp.fullName}» به لیست حقوق و دستمزد افزوده شد.`);
+      showToast(`پرسنل «${fullName}» به لیست حقوق و دستمزد افزوده شد.`);
     },
-    [ownerId, user, showToast]
+    [ownerId, user, employees, showToast]
   );
 
   const updateEmployee = useCallback(
     async (empId: string, patch: Partial<Omit<Employee, 'id' | 'ownerId' | 'personnelCode'>>) => {
+      const existing = employees.find((employee) => employee.id === empId);
+      if (!existing) throw new Error('پرسنل موردنظر برای ویرایش یافت نشد.');
+      const merged = { ...existing, ...patch };
+      if (!merged.fullName.trim() || !merged.department.trim()) {
+        throw new Error('نام و واحد سازمانی پرسنل الزامی هستند.');
+      }
+      if (!Number.isInteger(merged.childrenCount) || merged.childrenCount > 20) {
+        throw new Error('تعداد فرزند باید عدد صحیح بین صفر تا ۲۰ باشد.');
+      }
+      calculateEmployeePayroll(merged);
       if (user) {
         try {
           const payload: Record<string, unknown> = { updatedAt: serverTimestamp() };
           if (patch.fullName !== undefined) payload.fullName = patch.fullName.trim().slice(0, 140);
-          if (patch.department !== undefined) payload.department = patch.department.slice(0, 80);
-          if (patch.baseSalary !== undefined) payload.baseSalary = Math.max(0, Number(patch.baseSalary) || 0);
-          if (patch.housingAllowance !== undefined) payload.housingAllowance = Math.max(0, Number(patch.housingAllowance) || 0);
-          if (patch.foodAllowance !== undefined) payload.foodAllowance = Math.max(0, Number(patch.foodAllowance) || 0);
-          if (patch.childrenCount !== undefined) payload.childrenCount = Math.min(20, Math.max(0, Number(patch.childrenCount) || 0));
-          if (patch.overtimeHours !== undefined) payload.overtimeHours = Math.max(0, Number(patch.overtimeHours) || 0);
+          if (patch.department !== undefined) payload.department = patch.department.trim().slice(0, 80);
+          if (patch.baseSalary !== undefined) payload.baseSalary = patch.baseSalary;
+          if (patch.housingAllowance !== undefined) payload.housingAllowance = patch.housingAllowance;
+          if (patch.foodAllowance !== undefined) payload.foodAllowance = patch.foodAllowance;
+          if (patch.childrenCount !== undefined) payload.childrenCount = patch.childrenCount;
+          if (patch.overtimeHours !== undefined) payload.overtimeHours = patch.overtimeHours;
           if (patch.costCenterId !== undefined) payload.costCenterId = patch.costCenterId.slice(0, 128);
           if (patch.active !== undefined) payload.active = Boolean(patch.active);
           await updateDoc(doc(db, 'employees', empId), payload);
         } catch (err) {
           handleSupabaseError(err, OperationType.UPDATE, `employees/${empId}`);
+          throw err;
         }
       } else {
-        setEmployees((prev) => prev.map((e) => (e.id === empId ? { ...e, ...patch } : e)));
+        setEmployees((prev) => prev.map((employee) => (employee.id === empId ? merged : employee)));
       }
       showToast('مشخصات و حکم کارگزینی پرسنل ویرایش شد.');
     },
-    [user, showToast]
+    [employees, user, showToast]
   );
 
   const deleteEmployee = useCallback(
@@ -2693,11 +2719,13 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       const payableCredit = payrollVoucher.lines
         .filter((line) => line.accountCode === '30401')
         .reduce((sum, line) => sum + (Number(line.credit) || 0) - (Number(line.debit) || 0), 0);
+      const paymentPrefix = `payroll-payment:${normalizedMonth}:`;
       const priorPayments = vouchers
         .filter((voucher) =>
           voucher.status === 'permanent' &&
           voucher.voucherType === 'payroll' &&
-          voucher.description.startsWith(`پرداخت خالص حقوق کارکنان ${normalizedMonth} از `)
+          (voucher.referenceId?.startsWith(paymentPrefix) ||
+            voucher.description.startsWith(`پرداخت خالص حقوق کارکنان ${normalizedMonth} از `))
         )
         .reduce((sum, voucher) => sum + voucher.lines
           .filter((line) => line.accountCode === '30401')
@@ -2712,6 +2740,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         description: `پرداخت خالص حقوق کارکنان ${normalizedMonth} از ${bankTitle}`,
         voucherType: 'payroll',
         status: 'permanent',
+        referenceId: paymentPrefix + generateSafeId('pay'),
         lines: [
           {
             accountCode: '30401',
