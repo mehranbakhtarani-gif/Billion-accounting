@@ -245,7 +245,7 @@ export async function rebaseQueuedLocalSyncOperations(
           const expectedRevisions = { ...(record.payload.expectedRevisions ?? {}) };
           for (const key of keys) {
             const belongsToOperation = (record.payload.changes ?? []).some((change: any) =>
-              String(change.record_type) + '\\u0000' + String(change.legacy_record_id) === key);
+              String(change.record_type) + '\u0000' + String(change.legacy_record_id) === key);
             if (belongsToOperation) {
               expectedRevisions[key] = revisionUpdates[key];
               changed = true;
