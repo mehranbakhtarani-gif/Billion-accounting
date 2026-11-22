@@ -2447,9 +2447,11 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       const invoiceItems = payload.items.map((item) => ({ ...item }));
       validateJalaliDate(payload.date, 'تاریخ فاکتور');
       const asOfDate = shamsiToGregorianIso(payload.date);
-      if (stockDirection === -1) {
+      if (payload.invoiceType !== 'proforma') {
         const ledgerIssues = reconcileInventoryLotLedger(workingLots as any, inventoryLotMovements);
-        if (ledgerIssues.length) throw new Error('دفتر بچ با گردش‌های ثبت‌شده مغایرت دارد؛ تا رفع مغایرت، خروج کالا مجاز نیست.');
+        if (ledgerIssues.length) throw new Error('دفتر بچ با گردش‌های ثبت‌شده مغایرت دارد؛ تا رفع مغایرت، ثبت فاکتور متوقف شد.');
+      }
+      if (stockDirection === -1) {
         for (const productId of new Set(invoiceItems.map((item) => item.productId))) {
           const product = products.find((candidate) => candidate.id === productId);
           if (!product) continue;
