@@ -2433,11 +2433,12 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           reservedLotQuantities.set(allocation.lotId, (reservedLotQuantities.get(allocation.lotId) || 0) + allocation.quantity);
         });
       }
-      for (const [lotId, reservedQty] of reservedLotQuantities) {
-        const lot = workingLots.find((candidate) => candidate.id === lotId);
-        if (!lot || lot.quantityRemaining + 0.0001 < reservedQty) {
+      for (const lot of workingLots) {
+        const reservedQty = Math.max(lot.reservedQuantity || 0, reservedLotQuantities.get(lot.id) || 0);
+        if (reservedQty > lot.quantityRemaining + 0.0001) {
           throw new Error('رزرو بچ‌های پیمانکاری با مانده واقعی دفتر بچ سازگار نیست؛ فروش متوقف شد.');
         }
+        if (reservedQty > 0) reservedLotQuantities.set(lot.id, reservedQty);
       }
       const lotUpdates = new Map<string, InventoryLot>();
       const lotReceipts: InventoryLot[] = [];
@@ -2475,7 +2476,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           if (outgoing) {
             const fifoAvailableLots = workingLots.map((lot) => ({
               ...lot,
-              quantityRemaining: Math.max(0, lot.quantityRemaining - (reservedLotQuantities.get(lot.id) || 0)),
+              quantityRemaining: Math.max(0, lot.quantityRemaining - Math.max(lot.reservedQuantity || 0, reservedLotQuantities.get(lot.id) || 0)),
             }));
             const fifo = allocateStockFIFO(fifoAvailableLots as any, item.quantity, {
               productId: product.id, warehouse: payload.warehouse, asOfDate,
