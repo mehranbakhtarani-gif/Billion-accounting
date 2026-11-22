@@ -463,7 +463,13 @@ export const CorporateView: React.FC<CorporateViewProps> = ({ initialIntent, cle
               />
             </div>
             <button
-              onClick={() => postDepreciationVoucher(depPeriod)}
+              onClick={async () => {
+                try {
+                  await postDepreciationVoucher(depPeriod);
+                } catch (error) {
+                  showToast(error instanceof Error ? error.message : 'صدور سند استهلاک ناموفق بود.');
+                }
+              }}
               className="px-4 py-2 text-xs font-semibold text-white bg-teal-700 hover:bg-teal-800 rounded-lg"
             >
               صدور سند استهلاک ماهانه
@@ -525,7 +531,13 @@ export const CorporateView: React.FC<CorporateViewProps> = ({ initialIntent, cle
                               <Edit3 className="w-3.5 h-3.5" />
                             </button>
                             <button
-                              onClick={() => deleteFixedAsset(a.id)}
+                              onClick={async () => {
+                                try {
+                                  await deleteFixedAsset(a.id);
+                                } catch (error) {
+                                  showToast(error instanceof Error ? error.message : 'حذف دارایی ثابت ناموفق بود.');
+                                }
+                              }}
                               title="حذف دارایی"
                               className="p-1.5 rounded-lg text-slate-500 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40"
                             >
@@ -544,19 +556,29 @@ export const CorporateView: React.FC<CorporateViewProps> = ({ initialIntent, cle
           <form
             onSubmit={async (e) => {
               e.preventDefault();
-              if (!assetTitle.trim()) { showToast('شرح دارایی ثابت را وارد کنید.'); return; }
-              if (!Number.isFinite(assetCost) || assetCost <= 0 || !Number.isFinite(assetSalvage) || assetSalvage < 0 || assetSalvage > assetCost || !Number.isInteger(assetLife) || assetLife < 1) { showToast('بهای خرید، ارزش اسقاط و عمر مفید دارایی را بررسی کنید.'); return; }
-              await addFixedAsset({
-                assetCode: `FA-${profile.fiscalYear}-0${assets.length + 1}`,
-                title: assetTitle.trim(),
-                purchaseDate: assetPurchaseDate,
-                purchaseCost: assetCost,
-                salvageValue: assetSalvage,
-                usefulLifeYears: assetLife,
-                accumulatedDepreciation: 0,
-                costCenterId: assetCostCenterId || undefined,
-              });
-              setAssetTitle('');
+              try {
+                if (!assetTitle.trim()) throw new Error('شرح دارایی ثابت را وارد کنید.');
+                if (!Number.isFinite(assetCost) || assetCost <= 0 || !Number.isFinite(assetSalvage) || assetSalvage < 0 || assetSalvage > assetCost || !Number.isInteger(assetLife) || assetLife < 1 || assetLife > 100) {
+                  throw new Error('بهای خرید، ارزش اسقاط و عمر مفید دارایی را بررسی کنید.');
+                }
+                const prefix = `FA-${profile.fiscalYear}-`;
+                const nextAssetNumber = assets
+                  .filter((asset) => asset.assetCode.startsWith(prefix))
+                  .reduce((max, asset) => Math.max(max, Number(asset.assetCode.slice(prefix.length)) || 0), 0) + 1;
+                await addFixedAsset({
+                  assetCode: `${prefix}${String(nextAssetNumber).padStart(2, '0')}`,
+                  title: assetTitle.trim(),
+                  purchaseDate: assetPurchaseDate,
+                  purchaseCost: assetCost,
+                  salvageValue: assetSalvage,
+                  usefulLifeYears: assetLife,
+                  accumulatedDepreciation: 0,
+                  costCenterId: assetCostCenterId || undefined,
+                });
+                setAssetTitle('');
+              } catch (error) {
+                showToast(error instanceof Error ? error.message : 'ثبت دارایی ثابت ناموفق بود.');
+              }
             }}
             className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4 flex flex-wrap items-end gap-3 text-xs"
           >
@@ -1143,16 +1165,20 @@ export const CorporateView: React.FC<CorporateViewProps> = ({ initialIntent, cle
           <form
             onSubmit={async (e) => {
               e.preventDefault();
-              await updateFixedAsset(editingAsset.id, {
-                title: editingAsset.title,
-                purchaseDate: editingAsset.purchaseDate,
-                purchaseCost: editingAsset.purchaseCost,
-                salvageValue: editingAsset.salvageValue,
-                usefulLifeYears: editingAsset.usefulLifeYears,
-                accumulatedDepreciation: editingAsset.accumulatedDepreciation,
-                costCenterId: editingAsset.costCenterId,
-              });
-              setEditingAsset(null);
+              try {
+                await updateFixedAsset(editingAsset.id, {
+                  title: editingAsset.title,
+                  purchaseDate: editingAsset.purchaseDate,
+                  purchaseCost: editingAsset.purchaseCost,
+                  salvageValue: editingAsset.salvageValue,
+                  usefulLifeYears: editingAsset.usefulLifeYears,
+                  accumulatedDepreciation: editingAsset.accumulatedDepreciation,
+                  costCenterId: editingAsset.costCenterId,
+                });
+                setEditingAsset(null);
+              } catch (error) {
+                showToast(error instanceof Error ? error.message : 'ویرایش دارایی ثابت ناموفق بود.');
+              }
             }}
             className="w-full max-w-lg rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-5 space-y-4 text-xs"
           >
