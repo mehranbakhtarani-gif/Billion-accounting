@@ -192,7 +192,7 @@ export const InvoicesView: React.FC<{ initialIntent?: string; clearIntent?: () =
       bobbinCount: Math.round(defaultCartons * bobbinsPerCtn),
       unitPrice: price,
       discount: 0,
-      lotNumber: prod?.lotNumber || '',
+      lotNumber: invoiceType === 'purchase' ? '' : (prod?.lotNumber || ''),
       receivedDate: getLocalIsoDate(),
       expiryDate: '',
     };
@@ -520,7 +520,7 @@ export const InvoicesView: React.FC<{ initialIntent?: string; clearIntent?: () =
         return {
           ...row,
           productId: newProdId,
-          lotNumber: prod?.lotNumber || '',
+          lotNumber: invoiceType === 'purchase' ? '' : (prod?.lotNumber || ''),
           receivedDate: getLocalIsoDate(),
           expiryDate: '',
           cartonCount: cartons,
