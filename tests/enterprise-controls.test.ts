@@ -481,7 +481,7 @@ test('Jalali date validation accepts leap Esfand and rejects invalid month days'
 
 test('cheque dates validate Jalali leap days and issue-before-due ordering', () => {
   assert.doesNotThrow(() => validateChequeDateRange('1403/12/30', '1404/01/02'));
-  assert.throws(() => validateChequeDateRange('1405/12/30', '1406/01/02'), /تاریخ صدور یا سررسید/);
+  assert.throws(() => validateChequeDateRange('1405/12/30', '1406/01/02'), /شمسی معتبر نیست/);
   assert.throws(() => validateChequeDateRange('1405/08/10', '1405/08/09'), /قبل از تاریخ صدور/);
 });
 
