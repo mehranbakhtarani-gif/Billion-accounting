@@ -2430,6 +2430,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       const lotReceipts: InventoryLot[] = [];
       const lotMovementsToSave: InventoryLotMovement[] = [];
       const invoiceItems = payload.items.map((item) => ({ ...item }));
+      validateJalaliDate(payload.date, 'تاریخ فاکتور');
       const asOfDate = shamsiToGregorianIso(payload.date);
       if (stockDirection === -1) {
         const ledgerIssues = reconcileInventoryLotLedger(workingLots as any, inventoryLotMovements);
