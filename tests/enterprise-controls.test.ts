@@ -12,6 +12,7 @@ import {
   validateJalaliDate,
   validatePartyTreasuryAccount,
   validateImportLandedCostPayload,
+  aggregateStockReservations,
   getChequeStatusTransitionError,
   classifySyncOperation,
   computeOpenItemAging,
@@ -484,6 +485,18 @@ test('cheque dates validate Jalali leap days and issue-before-due ordering', () 
   assert.doesNotThrow(() => validateChequeDateRange('1403/12/30', '1404/01/02'));
   assert.throws(() => validateChequeDateRange('1405/12/30', '1406/01/02'), /شمسی معتبر نیست/);
   assert.throws(() => validateChequeDateRange('1405/08/10', '1405/08/09'), /قبل از تاریخ صدور/);
+});
+
+test('stock reservations aggregate across sales orders and subcontract jobs', () => {
+  const reserved = aggregateStockReservations([
+    { productId: 'raw-1', quantity: 30 },
+    { productId: 'raw-1', quantity: 20 },
+    { productId: 'raw-2', quantity: 7.5 },
+  ]);
+  assert.equal(reserved.get('raw-1'), 50);
+  assert.equal(reserved.get('raw-2'), 7.5);
+  assert.throws(() => aggregateStockReservations([{ productId: 'raw-1', quantity: -1 }]), /رزرو موجودی/);
+  assert.throws(() => aggregateStockReservations([{ productId: '', quantity: 1 }]), /رزرو موجودی/);
 });
 
 test('import landed cost ties foreign value, settlement costs and inventory item values', () => {

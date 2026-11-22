@@ -537,6 +537,22 @@ export function validateChequeDateRange(issueDate: string, dueDate: string): voi
   }
 }
 
+export interface StockReservation {
+  productId: string;
+  quantity: number;
+}
+
+export function aggregateStockReservations(reservations: readonly StockReservation[]): Map<string, number> {
+  const totals = new Map<string, number>();
+  for (const reservation of reservations) {
+    if (!reservation.productId.trim() || !Number.isFinite(reservation.quantity) || reservation.quantity < 0) {
+      throw new Error('رزرو موجودی کالا دارای شناسه یا مقدار نامعتبر است.');
+    }
+    totals.set(reservation.productId, (totals.get(reservation.productId) ?? 0) + reservation.quantity);
+  }
+  return totals;
+}
+
 export interface ImportLandedCostPayload {
   totalForeignAmount: number;
   exchangeRate: number;

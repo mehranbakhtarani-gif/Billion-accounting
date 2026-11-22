@@ -34,7 +34,7 @@ import {
 import { createHolooSeedData } from '../data/holooSeed';
 import { getOrCreateLocalDeviceIdentity, loadLocalAccountingSnapshot, LocalDeviceIdentity, saveLocalAccountingSnapshot } from '../lib/localAccountingStore';
 import { FxRevaluationRow } from '../lib/enterpriseAccounting';
-import { assertSufficientStock, getChequeStatusTransitionError, validateJournalEntryPayload, validateTreasuryOperationPayload, validateTreasuryAccountSelection, validateTreasuryTransferAccounts, validateChequeDateRange, validatePartyTreasuryAccount, validateJalaliDate, validateImportLandedCostPayload } from '../lib/enterpriseControls';
+import { assertSufficientStock, getChequeStatusTransitionError, validateJournalEntryPayload, validateTreasuryOperationPayload, validateTreasuryAccountSelection, validateTreasuryTransferAccounts, validateChequeDateRange, validatePartyTreasuryAccount, validateJalaliDate, validateImportLandedCostPayload, aggregateStockReservations } from '../lib/enterpriseControls';
 import {
   AuditReport,
   buildInvoiceVoucherLines,
@@ -2147,13 +2147,18 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
       const isStockOut = ['sale', 'purchase_return', 'waste'].includes(payload.invoiceType);
       if (isStockOut) {
-        const subcontractReservations = new Map<string, number>();
-        for (const job of subcontractJobs) {
-          if (job.status !== 'sent') continue;
-          subcontractReservations.set(job.rawProductId, (subcontractReservations.get(job.rawProductId) ?? 0) + job.sentWeightKg);
-        }
+        const stockReservations = [
+          ...subcontractJobs.filter((job) => job.status === 'sent')
+            .map((job) => ({ productId: job.rawProductId, quantity: job.sentWeightKg })),
+          ...salesOrders.filter((order) => order.status === 'dispatched' && order.id !== payload.salesOrderId)
+            .flatMap((order) => order.items.map((item) => ({
+              productId: item.productId,
+              quantity: item.actualWeighedKg > 0 ? item.actualWeighedKg : item.orderedWeightKg,
+            }))),
+        ];
+        const reserved = aggregateStockReservations(stockReservations);
         assertSufficientStock(
-          new Map(products.map((product) => [product.id, Math.max(0, product.stock - (subcontractReservations.get(product.id) ?? 0))])),
+          new Map(products.map((product) => [product.id, Math.max(0, product.stock - (reserved.get(product.id) ?? 0))])),
           payload.items.map((item) => ({ productId: item.productId, quantity: item.quantity })),
         );
       }
@@ -2341,7 +2346,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         throw new Error(`ثبت فاکتور ${payload.invoiceNumber} کامل نشد. علت: ${reason}.${compensation}`);
       }
     },
-    [products, subcontractJobs, currencies, adjustProductStock, createVoucher, addCheque, ownerId, user, showToast]
+    [products, subcontractJobs, salesOrders, currencies, adjustProductStock, createVoucher, addCheque, ownerId, user, showToast]
   );
 
   const cancelInvoice = useCallback(
@@ -3786,10 +3791,17 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           !Number.isFinite(job.expectedLossPct) || job.expectedLossPct < 0 || job.expectedLossPct >= 100) {
         throw new Error('کالای خام، پیمانکار، وزن، بهای مواد یا نرخ اجرت پیمانکاری معتبر نیست.');
       }
-      const reservedByOtherJobs = subcontractJobs
-        .filter((item) => item.status === 'sent' && item.rawProductId === job.rawProductId)
-        .reduce((sum, item) => sum + item.sentWeightKg, 0);
-      const availableForSubcontract = rawProduct.stock - reservedByOtherJobs;
+      const reservations = [
+        ...subcontractJobs.filter((item) => item.status === 'sent' && item.rawProductId === job.rawProductId)
+          .map((item) => ({ productId: item.rawProductId, quantity: item.sentWeightKg })),
+        ...salesOrders.filter((order) => order.status === 'dispatched')
+          .flatMap((order) => order.items.filter((item) => item.productId === job.rawProductId).map((item) => ({
+            productId: item.productId,
+            quantity: item.actualWeighedKg > 0 ? item.actualWeighedKg : item.orderedWeightKg,
+          }))),
+      ];
+      const reserved = aggregateStockReservations(reservations).get(job.rawProductId) ?? 0;
+      const availableForSubcontract = rawProduct.stock - reserved;
       if (!Number.isFinite(rawProduct.stock) || availableForSubcontract + 1e-9 < job.sentWeightKg) {
         throw new Error('موجودی قابل تخصیص پس از کسر حواله‌های باز پیمانکاری کافی نیست.');
       }
@@ -3810,7 +3822,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       );
       showToast(`حواله پیمانکاری ${full.jobNumber} ثبت شد.`);
     },
-    [ownerId, products, parties, subcontractJobs, logActivity, showToast, user]
+    [ownerId, products, parties, subcontractJobs, salesOrders, logActivity, showToast, user]
   );
 
   const completeSubcontractJob = useCallback(
@@ -3820,12 +3832,19 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       if (vouchers.some((voucher) => voucher.referenceId === job.id)) throw new Error('برای این عملیات پیمانکاری قبلاً سند ثبت شده است.');
       const rawProduct = products.find((product) => product.id === job.rawProductId);
       if (!rawProduct) throw new Error(`کالای خام ${job.rawProductName} در انبار یافت نشد.`);
-      const reservedByOtherJobs = subcontractJobs
-        .filter((item) => item.id !== jobId && item.status === 'sent' && item.rawProductId === job.rawProductId)
-        .reduce((sum, item) => sum + item.sentWeightKg, 0);
+      const reservations = [
+        ...subcontractJobs.filter((item) => item.id !== jobId && item.status === 'sent' && item.rawProductId === job.rawProductId)
+          .map((item) => ({ productId: item.rawProductId, quantity: item.sentWeightKg })),
+        ...salesOrders.filter((order) => order.status === 'dispatched')
+          .flatMap((order) => order.items.filter((item) => item.productId === job.rawProductId).map((item) => ({
+            productId: item.productId,
+            quantity: item.actualWeighedKg > 0 ? item.actualWeighedKg : item.orderedWeightKg,
+          }))),
+      ];
+      const reservedByOtherOperations = aggregateStockReservations(reservations).get(job.rawProductId) ?? 0;
       if (!Number.isFinite(job.sentWeightKg) || job.sentWeightKg <= 0 || !Number.isFinite(rawProduct.stock) ||
-          rawProduct.stock - job.sentWeightKg + 1e-9 < reservedByOtherJobs) {
-        throw new Error('موجودی نخ خام برای تکمیل این حواله، پس از حفظ موجودی رزروشده سایر پیمانکاری‌ها کافی نیست.');
+          rawProduct.stock - job.sentWeightKg + 1e-9 < reservedByOtherOperations) {
+        throw new Error('موجودی نخ خام برای تکمیل این حواله، پس از حفظ رزرو سایر پیمانکاری‌ها و سفارش‌های فروش کافی نیست.');
       }
       if (!Number.isFinite(payload.returnedWeightKg) || payload.returnedWeightKg <= 0 || payload.returnedWeightKg > job.sentWeightKg + 1e-9 || !payload.finishedLotNumber.trim()) {
         throw new Error('وزن برگشتی باید مثبت و حداکثر برابر وزن نخ ارسالی باشد؛ تاریخ و شماره لات نیز باید معتبر باشند.');
@@ -3898,7 +3917,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       logActivity('پیمانکاری رنگرزی/بافندگی', `اتمام و ورود محصول ${job.jobNumber}`, `بازگشت ${payload.returnedWeightKg} کیلوگرم با لات ${payload.finishedLotNumber} و ثبت سند #${voucher.voucherNumber}`);
       showToast(`عملیات پیمانکاری ${job.jobNumber} تکمیل و سند #${voucher.voucherNumber} ثبت شد.`);
     },
-    [subcontractJobs, vouchers, products, updateProduct, addProduct, createVoucher, logActivity, showToast, user]
+    [subcontractJobs, salesOrders, vouchers, products, updateProduct, addProduct, createVoucher, logActivity, showToast, user]
   );
 
   // ---------------- FX REVALUATION & BROKER COMMISSION VOUCHERS ----------------
