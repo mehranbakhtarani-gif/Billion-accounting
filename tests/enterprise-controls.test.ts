@@ -37,8 +37,6 @@ import {
 import { calculateLandedCostAllocation, computeReceivablesAging, computePayablesAging, computeFxRevaluationReport } from '../src/lib/enterpriseAccounting.ts';
 import { buildInvoiceVoucherLines, calculateEmployeePayroll, calculateMonthlyDepreciation, computeAccountLedger, computeAuditReport, computePartyBalances, computePartyLedger, computeTrialBalance, computeInventoryValuation } from '../src/lib/accountingEngine.ts';
 
-test('CSV parser preserves quoted commas and escaped quotes', () => {
-
 test('online writes use the device cached revision and never silently adopt a newer server revision', () => {
   assert.equal(resolveExpectedRecordRevision('patch', 4), 4);
   assert.equal(resolveExpectedRecordRevision('delete', 7), 7);
@@ -49,6 +47,7 @@ test('online writes use the device cached revision and never silently adopt a ne
   assert.throws(() => resolveExpectedRecordRevision('patch', 1.5), /معتبر نیست/);
 });
 
+test('CSV parser preserves quoted commas and escaped quotes', () => {
   assert.deepEqual(parseCsvRow('1405/09/01,"کارمزد، انتقال, فوری","شناسه ""ABC""",1250,0'), ['1405/09/01', 'کارمزد، انتقال, فوری', 'شناسه "ABC"', '1250', '0']);
 });
 
