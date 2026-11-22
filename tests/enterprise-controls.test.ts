@@ -215,6 +215,7 @@ test('inventory lot balances reconcile to append-only receipts, issues and rever
   assert.throws(() => reconcileInventoryLotLedger(lots, [...movements, { id: 'm1', lotId: 'lot-a', movementType: 'issue', quantity: -1 }]), /تکراری/);
   assert.throws(() => reconcileInventoryLotLedger(lots, [{ id: 'bad', lotId: 'lot-a', movementType: 'issue', quantity: 1 }]), /منفی/);
   assert.throws(() => reconcileInventoryLotLedger(lots, [{ id: 'orphan', lotId: 'missing', movementType: 'receipt', quantity: 1 }]), /ناشناخته/);
+  assert.throws(() => reconcileInventoryLotLedger([lots[0]], []), /گردش ورود اولیه/);
 });
 
 test('stock issue preflight aggregates repeated product lines and rejects overselling', () => {
