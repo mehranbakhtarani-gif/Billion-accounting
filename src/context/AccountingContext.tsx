@@ -1647,6 +1647,10 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const reconcileProductLotsToStock = useCallback(async (productId: string) => {
     const product = products.find((item) => item.id === productId);
     if (!product) throw new Error('کالا برای تطبیق مانده بچ یافت نشد.');
+    if (subcontractJobs.some((job) => job.status === 'sent' && job.rawProductId === productId && !job.rawLotAllocations?.length) ||
+        salesOrders.some((order) => order.status === 'dispatched' && order.items.some((item) => item.productId === productId && !item.lotAllocations?.length))) {
+      throw new Error('برای حواله‌های قدیمیِ بدون تخصیص بچ، ابتدا عملیات را تکمیل کنید؛ تطبیق موجودی در زمان رزرو قدیمی مجاز نیست.');
+    }
     const ledgerIssues = reconcileInventoryLotLedger(inventoryLots as any, inventoryLotMovements);
     if (ledgerIssues.length) throw new Error('ابتدا مغایرت دفتر گردش بچ را رفع کنید؛ تطبیق خودکار مجاز نیست.');
     const currentLots = inventoryLots.filter((lot) => lot.productId === productId && lot.warehouse === product.warehouse);
