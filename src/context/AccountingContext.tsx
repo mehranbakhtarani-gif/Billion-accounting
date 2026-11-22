@@ -34,7 +34,7 @@ import {
 import { createHolooSeedData } from '../data/holooSeed';
 import { getOrCreateLocalDeviceIdentity, loadLocalAccountingSnapshot, LocalDeviceIdentity, saveLocalAccountingSnapshot } from '../lib/localAccountingStore';
 import { FxRevaluationRow } from '../lib/enterpriseAccounting';
-import { assertSufficientStock, getChequeStatusTransitionError, validateJournalEntryPayload, validateTreasuryOperationPayload, validateTreasuryAccountSelection, validateTreasuryTransferAccounts, validateChequeDateRange, validatePartyTreasuryAccount, validateJalaliDate, validateImportLandedCostPayload, aggregateStockReservations, collectActiveStockReservations, validateSalesOrderDispatchQuantities } from '../lib/enterpriseControls';
+import { assertSufficientStock, getChequeStatusTransitionError, validateJournalEntryPayload, validateTreasuryOperationPayload, validateTreasuryAccountSelection, validateTreasuryTransferAccounts, validateChequeDateRange, validatePartyTreasuryAccount, validateJalaliDate, validateImportLandedCostPayload, aggregateStockReservations, collectActiveStockReservations, validateSalesOrderDispatchQuantities, validateInvoicePaymentAllocations } from '../lib/enterpriseControls';
 import {
   AuditReport,
   buildInvoiceVoucherLines,
@@ -176,6 +176,7 @@ interface AccountingContextValue {
     amount: number;
     date: string;
     description: string;
+    allocations?: { invoiceId: string; amount: number }[];
   }) => Promise<void>;
   recordBankTransfer: (payload: {
     fromAccountCode: string;
@@ -2027,6 +2028,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       amount: number;
       date: string;
       description: string;
+      allocations?: { invoiceId: string; amount: number }[];
     }) => {
       validateTreasuryOperationPayload(payload);
       const party = parties.find((p) => p.id === payload.partyId);
@@ -2036,60 +2038,98 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       const cashCode = cashAcc!.code;
       const cashTitle = cashAcc!.title;
       const partyAcc = accounts.find((account) => account.code === party.accountCode);
-      validatePartyTreasuryAccount(
-        partyAcc ? { code: partyAcc.code, level: partyAcc.level } : undefined,
-      );
+      validatePartyTreasuryAccount(partyAcc ? { code: partyAcc.code, level: partyAcc.level } : undefined);
       const partyCode = partyAcc!.code;
       const partyTitle = partyAcc!.title;
 
-      const lines: VoucherLine[] =
-        payload.direction === 'receipt'
-          ? [
-              {
-                accountCode: cashCode,
-                accountTitle: cashTitle,
-                description: payload.description,
-                debit: payload.amount,
-                credit: 0,
-              },
-              {
-                accountCode: partyCode,
-                accountTitle: partyTitle,
-                partyId: party.id,
-                partyName: party.name,
-                description: payload.description,
-                debit: 0,
-                credit: payload.amount,
-              },
-            ]
-          : [
-              {
-                accountCode: partyCode,
-                accountTitle: partyTitle,
-                partyId: party.id,
-                partyName: party.name,
-                description: payload.description,
-                debit: payload.amount,
-                credit: 0,
-              },
-              {
-                accountCode: cashCode,
-                accountTitle: cashTitle,
-                description: payload.description,
-                debit: 0,
-                credit: payload.amount,
-              },
-            ];
-
-      await createVoucher({
-        date: payload.date,
+      const allocations = payload.allocations?.length
+        ? validateInvoicePaymentAllocations({
+            direction: payload.direction,
+            partyId: party.id,
+            amount: payload.amount,
+            allocations: payload.allocations,
+            invoices,
+          })
+        : [];
+      const allocationId = generateSafeId('pay');
+      const voucherId = generateSafeId('vch');
+      const voucherNumber = vouchers.reduce((max, voucher) => Math.max(max, voucher.voucherNumber || 0), 0) + 1;
+      const description = payload.description.trim();
+      const lines: VoucherLine[] = payload.direction === 'receipt'
+        ? [
+            { accountCode: cashCode, accountTitle: cashTitle, description, debit: payload.amount, credit: 0 },
+            { accountCode: partyCode, accountTitle: partyTitle, partyId: party.id, partyName: party.name, description, debit: 0, credit: payload.amount },
+          ]
+        : [
+            { accountCode: partyCode, accountTitle: partyTitle, partyId: party.id, partyName: party.name, description, debit: payload.amount, credit: 0 },
+            { accountCode: cashCode, accountTitle: cashTitle, description, debit: 0, credit: payload.amount },
+          ];
+      const voucher: Voucher = {
+        id: voucherId, ownerId, voucherNumber, date: payload.date,
         description: `${payload.direction === 'receipt' ? 'دریافت' : 'پرداخت'} خزانه — ${party.name}`,
-        voucherType: 'treasury',
-        status: 'permanent',
+        voucherType: 'treasury', status: 'permanent',
+        totalDebit: payload.amount, totalCredit: payload.amount,
+        referenceId: allocations.length ? `treasury-allocation:${allocationId}` : undefined,
         lines,
+      };
+
+      const invoiceUpdates = allocations.map((allocation) => {
+        const invoice = invoices.find((candidate) => candidate.id === allocation.invoiceId)!;
+        const nextOutstanding = Math.max(0, Number((invoice.creditAmount - allocation.amount).toFixed(2)));
+        const paymentAllocation = {
+          id: allocationId,
+          voucherId,
+          date: payload.date,
+          direction: payload.direction,
+          amount: allocation.amount,
+        };
+        return {
+          invoiceId: invoice.id,
+          next: {
+            ...invoice,
+            paidCash: Number((invoice.paidCash + (cashCode.startsWith('102') ? 0 : allocation.amount)).toFixed(2)),
+            paidBank: Number((invoice.paidBank + (cashCode.startsWith('102') ? allocation.amount : 0)).toFixed(2)),
+            creditAmount: nextOutstanding,
+            status: nextOutstanding <= 0.000001 ? 'settled' as const : 'issued' as const,
+            paymentAllocations: [...(invoice.paymentAllocations ?? []), paymentAllocation],
+          },
+        };
       });
+
+      if (user) {
+        const batch = writeBatch(db);
+        batch.set(doc(db, 'vouchers', voucherId), {
+          ownerId, voucherNumber, date: payload.date, description: voucher.description,
+          voucherType: 'treasury', status: 'permanent',
+          totalDebit: payload.amount, totalCredit: payload.amount,
+          ...(voucher.referenceId ? { referenceId: voucher.referenceId } : {}),
+          lines, createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
+        });
+        for (const update of invoiceUpdates) {
+          const { id: _id, ownerId: _ownerId, ...invoicePatch } = update.next;
+          batch.update(doc(db, 'invoices', update.invoiceId), {
+            paidCash: invoicePatch.paidCash,
+            paidBank: invoicePatch.paidBank,
+            creditAmount: invoicePatch.creditAmount,
+            status: invoicePatch.status,
+            paymentAllocations: invoicePatch.paymentAllocations,
+            updatedAt: serverTimestamp(),
+          });
+        }
+        await batch.commit();
+      } else {
+        setVouchers((previous) => [...previous, voucher]);
+      }
+      if (invoiceUpdates.length) {
+        setInvoices((previous) => previous.map((invoice) =>
+          invoiceUpdates.find((update) => update.invoiceId === invoice.id)?.next ?? invoice
+        ));
+      }
+      showToast(allocations.length
+        ? `سند خزانه شماره ${voucherNumber} ثبت شد و ${allocations.length} تخصیص فاکتور به‌صورت یکجا ذخیره شد.`
+        : `سند خزانه شماره ${voucherNumber} ثبت شد.`);
     },
-    [parties, accounts, createVoucher]
+    [parties, accounts, invoices, vouchers, ownerId, user, showToast]
   );
 
   const recordBankTransfer = useCallback(
