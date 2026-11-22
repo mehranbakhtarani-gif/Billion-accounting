@@ -221,6 +221,58 @@ export interface FifoResult {
   weightedUnitCost: number;
 }
 
+export interface InventoryLotLedgerMovement {
+  id: string;
+  lotId: string;
+  movementType: 'receipt' | 'issue' | 'return' | 'waste' | 'transfer-in' | 'transfer-out' | 'adjustment' | 'reversal';
+  quantity: number;
+}
+
+export interface InventoryLotReconciliation {
+  lotId: string;
+  expectedRemaining: number;
+  actualRemaining: number;
+  difference: number;
+}
+
+/** Reconciles the mutable lot balance against its append-only signed movement ledger. */
+export function reconcileInventoryLotLedger(
+  lots: StockLot[],
+  movements: InventoryLotLedgerMovement[],
+): InventoryLotReconciliation[] {
+  const lotById = new Map<string, StockLot>();
+  for (const lot of lots) {
+    if (!lot.id.trim() || lotById.has(lot.id)) throw new Error('شناسه بچ در تطبیق دفتر تکراری یا خالی است.');
+    if (!Number.isFinite(lot.quantityRemaining) || lot.quantityRemaining < 0) throw new Error('مانده بچ برای تطبیق معتبر نیست.');
+    lotById.set(lot.id, lot);
+  }
+  const movementIds = new Set<string>();
+  const signedTotals = new Map<string, number>();
+  for (const movement of movements) {
+    if (!movement.id.trim() || movementIds.has(movement.id)) throw new Error('شناسه گردش بچ تکراری یا خالی است.');
+    movementIds.add(movement.id);
+    if (!lotById.has(movement.lotId)) throw new Error(`گردش به بچ ناشناخته ${movement.lotId} اشاره می‌کند.`);
+    if (!Number.isFinite(movement.quantity) || Math.abs(movement.quantity) < 1e-9) throw new Error('مقدار گردش بچ معتبر نیست.');
+    if (['receipt', 'return', 'transfer-in'].includes(movement.movementType) && movement.quantity < 0) {
+      throw new Error('گردش ورود بچ باید مقدار مثبت داشته باشد.');
+    }
+    if (['issue', 'waste', 'transfer-out'].includes(movement.movementType) && movement.quantity > 0) {
+      throw new Error('گردش خروج بچ باید مقدار منفی داشته باشد.');
+    }
+    signedTotals.set(movement.lotId, (signedTotals.get(movement.lotId) ?? 0) + movement.quantity);
+  }
+  return lots.map((lot) => {
+    const expectedRemaining = Number((signedTotals.get(lot.id) ?? 0).toFixed(6));
+    const actualRemaining = Number(lot.quantityRemaining.toFixed(6));
+    return {
+      lotId: lot.id,
+      expectedRemaining,
+      actualRemaining,
+      difference: Number((actualRemaining - expectedRemaining).toFixed(6)),
+    };
+  }).filter((row) => Math.abs(row.difference) > 0.0001);
+}
+
 export interface StockIssueLine {
   productId: string;
   quantity: number;
