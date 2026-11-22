@@ -34,7 +34,7 @@ import {
 import { createHolooSeedData } from '../data/holooSeed';
 import { getOrCreateLocalDeviceIdentity, loadLocalAccountingSnapshot, LocalDeviceIdentity, saveLocalAccountingSnapshot } from '../lib/localAccountingStore';
 import { FxRevaluationRow } from '../lib/enterpriseAccounting';
-import { assertSufficientStock, getChequeStatusTransitionError, validateJournalEntryPayload, validateTreasuryOperationPayload, validateTreasuryAccountSelection, validateTreasuryTransferAccounts, validateChequeDateRange } from '../lib/enterpriseControls';
+import { assertSufficientStock, getChequeStatusTransitionError, validateJournalEntryPayload, validateTreasuryOperationPayload, validateTreasuryAccountSelection, validateTreasuryTransferAccounts, validateChequeDateRange, validatePartyTreasuryAccount } from '../lib/enterpriseControls';
 import {
   AuditReport,
   buildInvoiceVoucherLines,
@@ -2008,9 +2008,12 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       validateTreasuryAccountSelection(cashAcc ? { code: cashAcc.code, level: cashAcc.level } : undefined);
       const cashCode = cashAcc!.code;
       const cashTitle = cashAcc!.title;
-      const partyCode = party.accountCode || (party.partyType === 'vendor' ? '30101' : '10401');
-      const partyTitle =
-        partyCode === '30101' ? 'بستانکاران و تأمین‌کنندگان' : 'بدهکاران تجاری و مشتریان';
+      const partyAcc = accounts.find((account) => account.code === party.accountCode);
+      validatePartyTreasuryAccount(
+        partyAcc ? { code: partyAcc.code, level: partyAcc.level } : undefined,
+      );
+      const partyCode = partyAcc!.code;
+      const partyTitle = partyAcc!.title;
 
       const lines: VoucherLine[] =
         payload.direction === 'receipt'
