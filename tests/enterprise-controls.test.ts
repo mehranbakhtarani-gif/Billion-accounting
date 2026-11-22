@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   allocateStockFIFO,
   reconcileInventoryLotLedger,
+  calculateLotReturnableQuantity,
   assertSufficientStock,
   assertFiscalPeriodOpen,
   auditTreasuryVoucherLinks,
@@ -172,6 +173,26 @@ test('FIFO allocates oldest eligible lots and excludes expired lots', () => {
   assert.throws(() => allocateStockFIFO([{ ...lots[0], unitCost: Number.NaN }], 1, {
     productId: 'p1', warehouse: 'w1', asOfDate: '2026-11-22',
   }), /بهای واحد/);
+});
+
+test('sales returns cannot exceed net sold quantity of the source lot', () => {
+  const movements = [
+    { id: 'sale-issue', lotId: 'lot-a', movementType: 'issue', quantity: -5 },
+    { id: 'return-in', lotId: 'return-lot-1', movementType: 'return', quantity: 2, sourceLotId: 'lot-a' },
+  ];
+  assert.equal(calculateLotReturnableQuantity('lot-a', movements), 3);
+  assert.equal(calculateLotReturnableQuantity('lot-a', [
+    ...movements,
+    { id: 'return-reversal', lotId: 'return-lot-1', movementType: 'reversal', quantity: -2, sourceLotId: 'lot-a' },
+  ]), 5);
+  assert.equal(calculateLotReturnableQuantity('lot-a', [
+    ...movements,
+    { id: 'sale-reversal', lotId: 'lot-a', movementType: 'reversal', quantity: 5, reversalOfMovementId: 'sale-issue' },
+  ]), 0);
+  assert.equal(calculateLotReturnableQuantity('lot-a', [
+    { id: 'sale-issue', lotId: 'lot-a', movementType: 'issue', quantity: -5 },
+    { id: 'return-in', lotId: 'return-lot-1', movementType: 'return', quantity: 5, sourceLotId: 'lot-a' },
+  ]), 0);
 });
 
 test('inventory lot balances reconcile to append-only receipts, issues and reversals', () => {
