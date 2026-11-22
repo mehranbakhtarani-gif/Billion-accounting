@@ -253,7 +253,9 @@ export function calculateLotReturnableQuantity(
       movement.sourceLotId === sourceLotId &&
       (movement.movementType === 'return' || movement.movementType === 'reversal'))
     .reduce((sum, movement) => sum + movement.quantity, 0);
-  return Number(Math.max(0, -netIssued - netReturned).toFixed(4));
+  const soldQuantity = Math.max(0, -netIssued);
+  const returnedQuantity = Math.max(0, netReturned);
+  return Number(Math.max(0, soldQuantity - returnedQuantity).toFixed(4));
 }
 
 export interface InventoryLotReconciliation {
