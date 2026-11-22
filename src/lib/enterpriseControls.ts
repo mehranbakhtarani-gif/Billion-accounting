@@ -88,6 +88,14 @@ export function parseCsvRecords(input: string): string[][] {
   if (fields.some((field) => field.length > 0)) records.push(fields);
   return records;
 }
+/** Stock movement sign for invoice lifecycle documents: -1 outbound, +1 inbound, 0 non-posting. */
+export function getInvoiceStockDirection(invoiceType: string): -1 | 0 | 1 {
+  if (invoiceType === 'sale' || invoiceType === 'purchase_return' || invoiceType === 'waste') return -1;
+  if (invoiceType === 'purchase' || invoiceType === 'sale_return') return 1;
+  if (invoiceType === 'proforma') return 0;
+  throw new Error('نوع فاکتور برای گردش موجودی معتبر نیست.');
+}
+
 export type FiscalPeriodStatus = 'open' | 'closed';
 
 export interface FiscalPeriod {
