@@ -23,6 +23,7 @@ import {
   validateSyncOperation,
   validateJournalEntryPayload,
   validateSalesOrderDispatchQuantities,
+  validateInvoicePaymentAllocations,
 } from '../src/lib/enterpriseControls.ts';
 import { calculateLandedCostAllocation, computeReceivablesAging, computePayablesAging, computeFxRevaluationReport } from '../src/lib/enterpriseAccounting.ts';
 import { calculateEmployeePayroll, calculateMonthlyDepreciation, computeAccountLedger, computeAuditReport, computePartyBalances, computePartyLedger, computeTrialBalance } from '../src/lib/accountingEngine.ts';
@@ -599,4 +600,41 @@ test('sales dispatch cannot exceed ordered weight or hide negative and invalid s
   assert.throws(() => validateSalesOrderDispatchQuantities(order, [
     { productId: 'unknown', orderedWeightKg: 1, actualWeighedKg: 1 },
   ]), /با سفارش اصلی تطابق ندارد/);
+});
+
+
+test('explicit invoice payment allocation validation supports partial and multi-invoice settlement', () => {
+  const invoices = [
+    { id: 's1', partyId: 'p1', invoiceType: 'sale', status: 'issued', creditAmount: 600 },
+    { id: 's2', partyId: 'p1', invoiceType: 'sale', status: 'issued', creditAmount: 500 },
+    { id: 'p1-inv', partyId: 'p1', invoiceType: 'purchase', status: 'issued', creditAmount: 900 },
+  ];
+  assert.deepEqual(validateInvoicePaymentAllocations({
+    direction: 'receipt', partyId: 'p1', amount: 700,
+    allocations: [{ invoiceId: 's1', amount: 200 }, { invoiceId: 's2', amount: 500 }],
+    invoices,
+  }), [{ invoiceId: 's1', amount: 200 }, { invoiceId: 's2', amount: 500 }]);
+  assert.deepEqual(validateInvoicePaymentAllocations({
+    direction: 'receipt', partyId: 'p1', amount: 300,
+    allocations: [{ invoiceId: 's1', amount: 300 }], invoices,
+  }), [{ invoiceId: 's1', amount: 300 }]);
+});
+
+test('invoice payment allocations reject duplicates, wrong party/type and over-settlement', () => {
+  const invoices = [
+    { id: 's1', partyId: 'p1', invoiceType: 'sale', status: 'issued', creditAmount: 100 },
+    { id: 'p1-inv', partyId: 'p1', invoiceType: 'purchase', status: 'issued', creditAmount: 100 },
+    { id: 's2', partyId: 'p2', invoiceType: 'sale', status: 'issued', creditAmount: 100 },
+    { id: 'cancelled', partyId: 'p1', invoiceType: 'sale', status: 'cancelled', creditAmount: 100 },
+  ];
+  const base = { direction: 'receipt' as const, partyId: 'p1', amount: 100, invoices };
+  assert.throws(() => validateInvoicePaymentAllocations({ ...base, allocations: [{ invoiceId: 's1', amount: 50 }, { invoiceId: 's1', amount: 50 }] }), /تکراری/);
+  assert.throws(() => validateInvoicePaymentAllocations({ ...base, allocations: [{ invoiceId: 's2', amount: 50 }] }), /متعلق به این طرف‌حساب/);
+  assert.throws(() => validateInvoicePaymentAllocations({ ...base, allocations: [{ invoiceId: 'p1-inv', amount: 50 }] }), /فاکتور فروش/);
+  assert.throws(() => validateInvoicePaymentAllocations({ ...base, allocations: [{ invoiceId: 'cancelled', amount: 50 }] }), /فاکتور فروش/);
+  assert.throws(() => validateInvoicePaymentAllocations({ ...base, allocations: [{ invoiceId: 's1', amount: 101 }] }), /مانده باز/);
+  assert.throws(() => validateInvoicePaymentAllocations({ ...base, allocations: [{ invoiceId: 's1', amount: 80 }, { invoiceId: 's2', amount: 30 }] }), /جمع تخصیص‌ها/);
+  assert.throws(() => validateInvoicePaymentAllocations({ ...base, allocations: [{ invoiceId: 's1', amount: Number.NaN }] }), /مثبت و معتبر/);
+  assert.throws(() => validateInvoicePaymentAllocations({ ...base, allocations: [{ invoiceId: 's1', amount: -1 }] }), /مثبت و معتبر/);
+  assert.throws(() => validateInvoicePaymentAllocations({ ...base, direction: 'payment', allocations: [{ invoiceId: 's1', amount: 50 }] }), /فاکتور خرید/);
 });
