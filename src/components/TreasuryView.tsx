@@ -22,7 +22,7 @@ import {
 import { addDaysToShamsi, diffShamsiDays, useChequeAlertPreferences } from '../lib/chequeAlerts';
 import { fuzzyFilterAndRank } from '../lib/fuzzySearch';
 import { numberToPersianWords } from '../lib/enterpriseAccounting';
-import { parseCsvRow, reconcileBankLines, validateTreasuryOperationPayload, validateTreasuryAccountSelection, validateTreasuryTransferAccounts } from '../lib/enterpriseControls';
+import { parseCsvRecords, reconcileBankLines, validateTreasuryOperationPayload, validateTreasuryAccountSelection, validateTreasuryTransferAccounts } from '../lib/enterpriseControls';
 import { computeFxRevaluationReport } from '../lib/enterpriseAccounting';
 import { SmartSearchCombobox, SmartSearchOption } from './SmartSearchCombobox';
 import { FuzzyTableOption, FuzzyTableSearch } from './FuzzyTableSearch';
@@ -268,10 +268,14 @@ export const TreasuryView: React.FC<TreasuryViewProps> = ({ initialIntent, clear
       });
     }));
     const rowOccurrences = new Map<string, number>();
-    let parsedLineIndex = 0;
-    const parsedBankRows = bankCsvText.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).map((line) => {
-      const idx = parsedLineIndex++;
-      const parts = parseCsvRow(line);
+    let csvParseError: string | undefined;
+    let csvRecords: string[][] = [];
+    try {
+      csvRecords = parseCsvRecords(bankCsvText);
+    } catch (error) {
+      csvParseError = error instanceof Error ? error.message : 'ساختار فایل CSV معتبر نیست.';
+    }
+    const parsedBankRows = csvRecords.map((parts, idx) => {
       const date = (parts[0] || '').trim();
       const desc = (parts[1] || '').trim() || ('تراکنش بانکی ' + (idx + 1));
       const parseAmount = (raw: string | undefined) => {
@@ -305,7 +309,8 @@ export const TreasuryView: React.FC<TreasuryViewProps> = ({ initialIntent, clear
     return {
       ledgerTx, bankRows, matchedCount: matching.matches.length,
       unmatchedRows: bankRows.filter((row) => !row.validationError && !row.matched && !row.ambiguous),
-      invalidCount: bankRows.filter((row) => row.validationError).length,
+      invalidCount: bankRows.filter((row) => row.validationError).length + (csvParseError ? 1 : 0),
+      parseError: csvParseError,
       ambiguousCount: matching.ambiguousStatementIds.length, unmatchedLedgerCount: matching.unmatchedLedgerIds.length,
     };
   }, [bankCsvText, reconBankCode, vouchers]);
@@ -1431,6 +1436,9 @@ export const TreasuryView: React.FC<TreasuryViewProps> = ({ initialIntent, clear
               </div>
             </div>
 
+            {reconResult.parseError && (
+              <p className="text-xs text-rose-700 dark:text-rose-400" role="alert">{reconResult.parseError}</p>
+            )}
             <textarea
               rows={4}
               dir="ltr"
