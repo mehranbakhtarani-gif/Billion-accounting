@@ -2588,7 +2588,6 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             }
           } else {
             const lotId = generateSafeId('lot');
-            const lotNumber = (item.lotNumber || product.lotNumber || `${payload.invoiceNumber}-${lotId.slice(-6)}`).trim();
             const returnedSourceLot = payload.invoiceType === 'sale_return'
               ? inventoryLots.find((candidate) => candidate.productId === product.id &&
                   candidate.warehouse === payload.warehouse && candidate.lotNumber === item.lotNumber)
@@ -2596,6 +2595,15 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             if (payload.invoiceType === 'sale_return' && !returnedSourceLot &&
                 inventoryLotMovements.some((movement) => movement.productId === product.id && movement.warehouse === payload.warehouse && movement.movementType === 'issue')) {
               throw new Error('برای برگشت فروش باید شماره بچ اصلیِ فروش‌شده وارد شود؛ بچ ناشناس قابل برگشت نیست.');
+            }
+            const lotNumber = (payload.invoiceType === 'sale_return' && returnedSourceLot
+              ? `${returnedSourceLot.lotNumber}-RET-${lotId.slice(-6)}`
+              : (item.lotNumber || product.lotNumber || `${payload.invoiceNumber}-${lotId.slice(-6)}`)).trim().slice(0, 80);
+            if (payload.invoiceType === 'purchase' && (
+              inventoryLots.some((lot) => lot.productId === product.id && lot.warehouse === payload.warehouse && lot.lotNumber === lotNumber) ||
+              lotReceipts.some((lot) => lot.productId === product.id && lot.warehouse === payload.warehouse && lot.lotNumber === lotNumber)
+            )) {
+              throw new Error(`شماره بچ ${lotNumber} برای این کالا و انبار قبلاً ثبت شده است؛ شماره یکتا وارد کنید.`);
             }
             if (returnedSourceLot) {
               const movementReturned = calculateLotReturnedQuantity(returnedSourceLot.id, inventoryLotMovements);
@@ -2616,7 +2624,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             const documentedUnitCost = Math.max(0, grossLineCost - Math.min(grossLineCost, item.discount || 0)) / item.quantity;
             const lot: InventoryLot = {
               id: lotId, ownerId, productId: product.id, warehouse: payload.warehouse,
-              lotNumber: lotNumber.slice(0, 80), receivedDate: payload.invoiceType === 'sale_return' ? asOfDate : (item.receivedDate || asOfDate),
+              lotNumber, receivedDate: payload.invoiceType === 'sale_return' ? asOfDate : (item.receivedDate || asOfDate),
               ...(item.expiryDate ? { expiryDate: item.expiryDate } : returnedSourceLot?.expiryDate ? { expiryDate: returnedSourceLot.expiryDate } : {}),
               quantityReceived: item.quantity, quantityRemaining: item.quantity,
               unitCost: returnedSourceLot?.unitCost ?? (payload.invoiceType === 'sale_return' ? product.buyPrice : documentedUnitCost),
