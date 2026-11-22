@@ -2489,6 +2489,10 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
               ? inventoryLots.find((candidate) => candidate.productId === product.id &&
                   candidate.warehouse === payload.warehouse && candidate.lotNumber === item.lotNumber)
               : undefined;
+            if (payload.invoiceType === 'sale_return' && !returnedSourceLot &&
+                inventoryLotMovements.some((movement) => movement.productId === product.id && movement.warehouse === payload.warehouse && movement.movementType === 'issue')) {
+              throw new Error('برای برگشت فروش باید شماره بچ اصلیِ فروش‌شده وارد شود؛ بچ ناشناس قابل برگشت نیست.');
+            }
             if (returnedSourceLot) {
               const returnable = calculateLotReturnableQuantity(returnedSourceLot.id, inventoryLotMovements);
               if (item.quantity > returnable + 0.0001) {
