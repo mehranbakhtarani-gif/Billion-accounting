@@ -804,7 +804,10 @@ export function buildInvoiceAllocationReversal(
     throw new Error('شناسه سند یا حساب صندوق/بانک برای برگشت تخصیص معتبر نیست.');
   }
   const isBank = cashAccountCode.startsWith('102');
-  const updates = [];
+  const updates: Array<{
+    invoiceId: string; creditAmount: number; paidCash: number; paidBank: number;
+    status: InvoiceStatus; paymentAllocations: InvoicePaymentAllocation[];
+  }> = [];
   for (const invoice of invoices) {
     const existing = invoice.paymentAllocations ?? [];
     const reversed = existing.filter((allocation) => allocation.voucherId === originalVoucherId);
