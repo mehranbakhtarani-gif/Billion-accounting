@@ -25,6 +25,7 @@ import {
   formatNumber,
   formatWeight,
   getTodayShamsi,
+  getLocalIsoDate,
   numberToPersianWords,
   toPersianDigits,
 } from '../lib/format';
@@ -189,7 +190,7 @@ export const InvoicesView: React.FC<{ initialIntent?: string; clearIntent?: () =
       unitPrice: price,
       discount: 0,
       lotNumber: prod?.lotNumber || '',
-      receivedDate: new Date().toISOString().slice(0, 10),
+      receivedDate: getLocalIsoDate(),
       expiryDate: '',
     };
   };
@@ -517,7 +518,7 @@ export const InvoicesView: React.FC<{ initialIntent?: string; clearIntent?: () =
           ...row,
           productId: newProdId,
           lotNumber: prod?.lotNumber || '',
-          receivedDate: new Date().toISOString().slice(0, 10),
+          receivedDate: getLocalIsoDate(),
           expiryDate: '',
           cartonCount: cartons,
           quantity: Math.round(cartons * kgPerCtn * 100) / 100,
