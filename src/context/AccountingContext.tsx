@@ -2480,6 +2480,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             status: persistedInvoice.status,
             ...(voucherId ? { voucherId } : {}),
             items: persistedInvoice.items.slice(0, 100),
+            ...(persistedInvoice.lotMovements ? { lotMovements: persistedInvoice.lotMovements } : {}),
             createdAt: serverTimestamp(),
             updatedAt: serverTimestamp(),
           });
@@ -2606,8 +2607,60 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             reversalVoucher = await createVoucher({ date: getTodayShamsi(), description: `سند ابطال فاکتور ${inv.invoiceNumber} (معکوس سند #${origVoucher.voucherNumber})`, voucherType: 'general', status: 'permanent', lines: origVoucher.lines.map((line) => ({ ...line, description: `ابطال فاکتور ${inv.invoiceNumber}: ${line.description}`, debit: line.credit, credit: line.debit, foreignDebit: line.foreignCredit, foreignCredit: line.foreignDebit })), referenceId: inv.id });
           }
         }
-        if (user) await updateDoc(doc(db, 'invoices', invoiceId), { status: 'cancelled', updatedAt: serverTimestamp() });
-        else setInvoices((prev) => prev.map((invoice) => invoice.id === invoiceId ? { ...invoice, status: 'cancelled' } : invoice));
+        const lotUpdates = new Map<string, InventoryLot>();
+        const reversalMovements: InventoryLotMovement[] = [];
+        const wasOutForLots = getInvoiceStockDirection(inv.invoiceType) === -1;
+        if (inv.invoiceType !== 'proforma') {
+          for (const item of inv.items) {
+            if (wasOutForLots && item.lotAllocations?.length) {
+              for (const allocation of item.lotAllocations) {
+                const lot = lotUpdates.get(allocation.lotId) ?? inventoryLots.find((candidate) => candidate.id === allocation.lotId);
+                if (!lot) throw new Error(`بچ ${allocation.lotNumber} برای ابطال فاکتور یافت نشد.`);
+                const nextQty = Number((lot.quantityRemaining + allocation.quantity).toFixed(4));
+                if (nextQty > lot.quantityReceived + 0.0001) throw new Error('ابطال باعث افزایش مانده بچ بیش از مقدار دریافتی می‌شود؛ عملیات متوقف شد.');
+                lotUpdates.set(lot.id, { ...lot, quantityRemaining: nextQty });
+                const originalMovement = inventoryLotMovements.find((movement) =>
+                  movement.referenceId === inv.id && movement.lotId === lot.id && movement.quantity < 0);
+                reversalMovements.push({
+                  id: generateSafeId('lotmove'), ownerId, lotId: lot.id, productId: lot.productId,
+                  warehouse: lot.warehouse, movementType: 'reversal', quantity: allocation.quantity,
+                  unitCost: allocation.unitCost, referenceId: 'cancel:' + inv.id,
+                  referenceNumber: inv.invoiceNumber, date: new Date().toISOString().slice(0, 10),
+                  ...(originalMovement ? { reversalOfMovementId: originalMovement.id } : {}),
+                });
+              }
+            } else if (!wasOutForLots && item.receivedLotId) {
+              const lot = lotUpdates.get(item.receivedLotId) ?? inventoryLots.find((candidate) => candidate.id === item.receivedLotId);
+              if (!lot) throw new Error('بچ ورودی فاکتور برای ابطال یافت نشد.');
+              if (Math.abs(lot.quantityRemaining - lot.quantityReceived) > 0.0001) {
+                throw new Error(`بچ ${lot.lotNumber} پس از ثبت فاکتور مصرف یا تغییر کرده است؛ ابتدا گردش‌های بعدی را تعیین تکلیف کنید.`);
+              }
+              lotUpdates.set(lot.id, { ...lot, quantityRemaining: 0 });
+              const originalMovement = inventoryLotMovements.find((movement) =>
+                movement.referenceId === inv.id && movement.lotId === lot.id && movement.quantity > 0);
+              reversalMovements.push({
+                id: generateSafeId('lotmove'), ownerId, lotId: lot.id, productId: lot.productId,
+                warehouse: lot.warehouse, movementType: 'reversal', quantity: -lot.quantityReceived,
+                unitCost: lot.unitCost, referenceId: 'cancel:' + inv.id,
+                referenceNumber: inv.invoiceNumber, date: new Date().toISOString().slice(0, 10),
+                ...(originalMovement ? { reversalOfMovementId: originalMovement.id } : {}),
+              });
+            }
+          }
+        }
+        if (user) {
+          const cancellationBatch = writeBatch(db);
+          lotUpdates.forEach((lot) => cancellationBatch.update(doc(db, 'inventoryLots', lot.id), {
+            quantityRemaining: lot.quantityRemaining, updatedAt: serverTimestamp(),
+          }));
+          reversalMovements.forEach((movement) => cancellationBatch.set(doc(db, 'inventoryLotMovements', movement.id), movement));
+          cancellationBatch.update(doc(db, 'invoices', invoiceId), { status: 'cancelled', updatedAt: serverTimestamp() });
+          await cancellationBatch.commit();
+        } else {
+          setInvoices((prev) => prev.map((invoice) => invoice.id === invoiceId ? { ...invoice, status: 'cancelled' } : invoice));
+        }
+        if (lotUpdates.size) setInventoryLots((prev) => prev.map((lot) => lotUpdates.get(lot.id) ?? lot));
+        if (reversalMovements.length) setInventoryLotMovements((prev) => [...prev, ...reversalMovements]);
       } catch (error) {
         const compensationFailures: string[] = [];
         for (const snapshot of appliedStock.reverse()) {
@@ -2648,7 +2701,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       }
       showToast(`فاکتور ${inv.invoiceNumber} ابطال شد و گردش موجودی/سند معکوس ثبت گردید.`);
     },
-    [invoices, products, vouchers, salesOrders, subcontractJobs, adjustProductStock, createVoucher, user, showToast]
+    [invoices, products, inventoryLots, inventoryLotMovements, vouchers, salesOrders, subcontractJobs, adjustProductStock, createVoucher, user, ownerId, showToast]
   );
 
   const convertProformaToSale = useCallback(
