@@ -2812,7 +2812,9 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
                 const sourceLot = lotUpdates.get(lot.sourceLotId) ?? inventoryLots.find((candidate) => candidate.id === lot.sourceLotId);
                 if (!sourceLot) throw new Error('بچ اصلی برگشت فروش برای اصلاح مانده برگشت یافت نشد.');
                 const movementReturned = calculateLotReturnedQuantity(sourceLot.id, inventoryLotMovements);
-                const returnedSoFar = Math.max(sourceLot.returnedQuantity ?? 0, movementReturned);
+                const returnedSoFar = lotUpdates.has(sourceLot.id)
+                  ? (sourceLot.returnedQuantity ?? movementReturned)
+                  : Math.max(sourceLot.returnedQuantity ?? 0, movementReturned);
                 if (returnedSoFar + 0.0001 < lot.quantityReceived) throw new Error('مانده برگشت ثبت‌شده در بچ اصلی با فاکتور برگشت سازگار نیست.');
                 lotUpdates.set(sourceLot.id, { ...sourceLot, returnedQuantity: Number((returnedSoFar - lot.quantityReceived).toFixed(4)) });
               }
