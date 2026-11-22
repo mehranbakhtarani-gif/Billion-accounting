@@ -71,6 +71,8 @@ export const InventoryView: React.FC<{ initialIntent?: string; clearIntent?: () 
 }) => {
   const {
     products,
+    inventoryLots,
+    createOpeningInventoryLot,
     invoices,
     profile,
     addProduct,
@@ -93,7 +95,7 @@ export const InventoryView: React.FC<{ initialIntent?: string; clearIntent?: () 
   const [stockInputMode, setStockInputMode] = useState<'kg' | 'carton'>('kg');
   const [stockReason, setStockReason] = useState('شمارش باسکول و انبارگردانی دوره‌ای نخ');
   const [targetWarehouse, setTargetWarehouse] = useState('انبار پخش یزد');
-  const [panelTab, setPanelTab] = useState<'kardex' | 'stocktake' | 'transfer'>('stocktake');
+  const [panelTab, setPanelTab] = useState<'kardex' | 'stocktake' | 'transfer' | 'lots'>('lots');
   const stockInputRef = useRef<HTMLInputElement | null>(null);
 
   // Bulk Stocktaking & Bulk Price Update states (Billion)
@@ -104,6 +106,11 @@ export const InventoryView: React.FC<{ initialIntent?: string; clearIntent?: () 
   const [showFullKardexModal, setShowFullKardexModal] = useState(false);
   const [priceTarget, setPriceTarget] = useState<'sellPrice' | 'buyPrice'>('sellPrice');
   const [pricePercent, setPricePercent] = useState(10);
+  const [openingLotNumber, setOpeningLotNumber] = useState('');
+  const [openingLotQty, setOpeningLotQty] = useState('');
+  const [openingLotCost, setOpeningLotCost] = useState('');
+  const [openingLotDate, setOpeningLotDate] = useState(new Date().toISOString().slice(0, 10));
+  const [openingLotExpiry, setOpeningLotExpiry] = useState('');
 
   // Product form (Textile Yarn Multi-Unit)
   const [sku, setSku] = useState('');
@@ -1254,6 +1261,7 @@ export const InventoryView: React.FC<{ initialIntent?: string; clearIntent?: () 
               <div className="flex items-center gap-1 p-1 bg-slate-100 dark:bg-slate-950 rounded-lg text-[11px]">
                 {(
                   [
+                    { id: 'lots', label: 'دفتر بچ / FIFO' },
                     { id: 'stocktake', label: 'اصلاح موجودی / باسکول' },
                     { id: 'transfer', label: 'انتقال انبار' },
                     { id: 'kardex', label: 'کاردکس نخ' },
@@ -1272,6 +1280,61 @@ export const InventoryView: React.FC<{ initialIntent?: string; clearIntent?: () 
                   </button>
                 ))}
               </div>
+
+              {panelTab === 'lots' && (
+                <div className="p-3.5 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 space-y-3 text-xs">
+                  <div className="flex items-center justify-between gap-2">
+                    <div>
+                      <div className="font-semibold text-slate-800 dark:text-slate-200">دفتر مستقل بچ کالا</div>
+                      <div className="text-[10px] text-slate-500 mt-1">خروج فاکتورهای فروش، برگشت خرید و ضایعات از قدیمی‌ترین بچ مجاز انجام می‌شود.</div>
+                    </div>
+                    <span className="rounded-md bg-teal-100 text-teal-800 dark:bg-teal-950 dark:text-teal-300 px-2 py-1">{toPersianDigits(inventoryLots.filter((lot) => lot.productId === selectedProduct?.id).length)} بچ</span>
+                  </div>
+                  {!selectedProduct ? (
+                    <p className="text-slate-500">ابتدا یک کالا انتخاب کنید.</p>
+                  ) : (
+                    <>
+                      <div className="overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
+                        <table className="w-full text-right min-w-[620px]">
+                          <thead className="bg-slate-100 dark:bg-slate-800 text-slate-500">
+                            <tr><th className="p-2">شماره بچ</th><th className="p-2">انبار</th><th className="p-2">تاریخ ورود</th><th className="p-2">انقضا</th><th className="p-2">مانده</th><th className="p-2">بهای واحد</th><th className="p-2">مبنای بها</th></tr>
+                          </thead>
+                          <tbody>
+                            {inventoryLots.filter((lot) => lot.productId === selectedProduct.id).sort((a,b) => a.receivedDate.localeCompare(b.receivedDate) || a.id.localeCompare(b.id)).map((lot) => (
+                              <tr key={lot.id} className="border-t border-slate-100 dark:border-slate-800">
+                                <td className="p-2 font-semibold">{lot.lotNumber}</td><td className="p-2">{lot.warehouse}</td><td className="p-2 font-mono">{toPersianDigits(lot.receivedDate)}</td><td className="p-2 font-mono">{lot.expiryDate ? toPersianDigits(lot.expiryDate) : '—'}</td><td className="p-2 font-mono">{formatWeight(lot.quantityRemaining)} / {formatWeight(lot.quantityReceived)}</td><td className="p-2 font-mono">{formatMoney(lot.unitCost, unit, false)}</td><td className="p-2">{lot.costBasis === 'documented' ? 'مستند خرید' : lot.costBasis === 'estimated-opening' ? 'افتتاحیه برآوردی' : 'برگشت برآوردی'}</td>
+                              </tr>
+                            ))}
+                            {inventoryLots.filter((lot) => lot.productId === selectedProduct.id).length === 0 && <tr><td colSpan={7} className="p-4 text-center text-slate-500">برای این کالا هنوز بچی ثبت نشده است.</td></tr>}
+                          </tbody>
+                        </table>
+                      </div>
+                      {inventoryLots.filter((lot) => lot.productId === selectedProduct.id && lot.warehouse === selectedProduct.warehouse).length === 0 && selectedProduct.stock > 0 && (
+                        <div className="rounded-lg border border-amber-300 dark:border-amber-900 bg-amber-50/70 dark:bg-amber-950/20 p-3 space-y-2">
+                          <div className="font-semibold text-amber-900 dark:text-amber-300">ثبت بچ افتتاحیه برای موجودی فعلی</div>
+                          <p className="text-[10px] text-amber-800 dark:text-amber-300">این عملیات موجودی کالا را تغییر نمی‌دهد. مقدار بچ باید دقیقاً با موجودی فعلی برابر باشد. بهای آن برآوردی است و سابقه خرید تاریخی تلقی نمی‌شود.</p>
+                          <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+                            <label className="space-y-1"><span>شماره بچ</span><input value={openingLotNumber} onChange={(e) => setOpeningLotNumber(e.target.value)} className="w-full rounded border p-2 bg-white dark:bg-slate-900" placeholder="OPEN-001" /></label>
+                            <label className="space-y-1"><span>مقدار ({selectedProduct.unit})</span><input type="number" min="0" value={openingLotQty || String(selectedProduct.stock)} onChange={(e) => setOpeningLotQty(e.target.value)} className="w-full rounded border p-2 bg-white dark:bg-slate-900" /></label>
+                            <label className="space-y-1"><span>بهای واحد برآوردی</span><input type="number" min="0" value={openingLotCost || String(selectedProduct.buyPrice)} onChange={(e) => setOpeningLotCost(e.target.value)} className="w-full rounded border p-2 bg-white dark:bg-slate-900" /></label>
+                            <label className="space-y-1"><span>تاریخ ورود</span><input type="date" value={openingLotDate} onChange={(e) => setOpeningLotDate(e.target.value)} className="w-full rounded border p-2 bg-white dark:bg-slate-900" /></label>
+                            <label className="space-y-1"><span>تاریخ انقضا (اختیاری)</span><input type="date" value={openingLotExpiry} onChange={(e) => setOpeningLotExpiry(e.target.value)} className="w-full rounded border p-2 bg-white dark:bg-slate-900" /></label>
+                          </div>
+                          <button type="button" onClick={async () => {
+                            await createOpeningInventoryLot({
+                              productId: selectedProduct.id, lotNumber: openingLotNumber,
+                              quantity: Number(openingLotQty || selectedProduct.stock),
+                              unitCost: Number(openingLotCost || selectedProduct.buyPrice),
+                              receivedDate: openingLotDate, ...(openingLotExpiry ? { expiryDate: openingLotExpiry } : {}),
+                            });
+                            setOpeningLotNumber(''); setOpeningLotQty(''); setOpeningLotCost(''); setOpeningLotExpiry('');
+                          }} className="w-full py-2 rounded-lg bg-teal-700 hover:bg-teal-800 text-white font-semibold">ثبت بچ افتتاحیه برآوردی</button>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              )}
 
               {panelTab === 'stocktake' && (
                 <div className="p-3.5 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 space-y-3 text-xs">
