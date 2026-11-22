@@ -34,7 +34,7 @@ import {
 import { createHolooSeedData } from '../data/holooSeed';
 import { getOrCreateLocalDeviceIdentity, loadLocalAccountingSnapshot, LocalDeviceIdentity, saveLocalAccountingSnapshot } from '../lib/localAccountingStore';
 import { FxRevaluationRow } from '../lib/enterpriseAccounting';
-import { assertSufficientStock, validateJournalEntryPayload } from '../lib/enterpriseControls';
+import { assertSufficientStock, getChequeStatusTransitionError, validateJournalEntryPayload } from '../lib/enterpriseControls';
 import {
   AuditReport,
   buildInvoiceVoucherLines,
@@ -1673,6 +1673,12 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     ) => {
       const chq = cheques.find((c) => c.id === chequeId);
       if (!chq || chq.status === newStatus) return;
+
+      const transitionError = getChequeStatusTransitionError(chq.direction, chq.status, newStatus);
+      if (transitionError) {
+        showToast(transitionError);
+        return;
+      }
 
       if (chq.status === 'cancelled') {
         showToast('چک ابطال‌شده قابل تغییر وضعیت نیست.');
