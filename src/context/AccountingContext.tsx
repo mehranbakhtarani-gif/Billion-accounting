@@ -34,7 +34,7 @@ import {
 import { createHolooSeedData } from '../data/holooSeed';
 import { getOrCreateLocalDeviceIdentity, loadLocalAccountingSnapshot, LocalDeviceIdentity, saveLocalAccountingSnapshot } from '../lib/localAccountingStore';
 import { FxRevaluationRow } from '../lib/enterpriseAccounting';
-import { assertSufficientStock, getChequeStatusTransitionError, validateJournalEntryPayload, validateTreasuryOperationPayload, validateTreasuryAccountSelection, validateTreasuryTransferAccounts } from '../lib/enterpriseControls';
+import { assertSufficientStock, getChequeStatusTransitionError, validateJournalEntryPayload, validateTreasuryOperationPayload, validateTreasuryAccountSelection, validateTreasuryTransferAccounts, validateChequeDateRange } from '../lib/enterpriseControls';
 import {
   AuditReport,
   buildInvoiceVoucherLines,
@@ -1542,6 +1542,10 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       if (cheques.some((cheque) => cheque.sayadiId.trim() === normalizedSayadiId)) {
         throw new Error('شناسه صیادی این چک قبلاً در سیستم ثبت شده است.');
       }
+      validateChequeDateRange(payload.issueDate, payload.dueDate);
+      if (!parties.some((party) => party.id === payload.partyId)) {
+        throw new Error('طرف‌حساب انتخاب‌شده برای چک معتبر نیست.');
+      }
       const id = generateSafeId('chq');
       const full: Cheque = { ...payload, id, ownerId };
 
@@ -1645,6 +1649,9 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       chequeId: string,
       patch: Partial<Pick<Cheque, 'bankName' | 'branch' | 'dueDate' | 'notes'>>
     ) => {
+      const existingCheque = cheques.find((cheque) => cheque.id === chequeId);
+      if (!existingCheque) throw new Error('چک موردنظر برای ویرایش یافت نشد.');
+      validateChequeDateRange(existingCheque.issueDate, patch.dueDate ?? existingCheque.dueDate);
       if (user) {
         try {
           const payload: Record<string, unknown> = { updatedAt: serverTimestamp() };
@@ -1690,7 +1697,10 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       }
 
       const bankCode = options?.bankAccountCode || '10201';
-      const bankAcc = accounts.find((a) => a.code === bankCode);
+      const bankAcc = accounts.find((a) => a.code === bankCode && a.level === 'moein' && a.code.startsWith('102'));
+      if ((newStatus === 'cleared' || chq.status === 'cleared') && !bankAcc) {
+        throw new Error('برای وصول یا عودت چک، حساب بانکی معین معتبر انتخاب کنید.');
+      }
       const bankTitle = bankAcc?.title || 'بانک ملت — حساب جاری شرکتی';
 
       let lines: VoucherLine[] = [];
@@ -1880,6 +1890,28 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
               partyId: chq.partyId,
               partyName: chq.partyName,
               description: `بازگشت بدهی به حساب ${chq.partyName}`,
+              debit: 0,
+              credit: chq.amount,
+            },
+          ];
+        } else if (newStatus === 'in_box' && chq.status === 'bounced') {
+          desc = `بازگشت چک پرداختی ${chq.sayadiId} به وضعیت اسناد پرداختنی`;
+          lines = [
+            {
+              accountCode: '30101',
+              accountTitle: 'بستانکاران و تأمین‌کنندگان',
+              partyId: chq.partyId,
+              partyName: chq.partyName,
+              description: desc,
+              debit: chq.amount,
+              credit: 0,
+            },
+            {
+              accountCode: '30201',
+              accountTitle: 'اسناد پرداختنی تجاری (چک‌های صادره)',
+              partyId: chq.partyId,
+              partyName: chq.partyName,
+              description: `ثبت مجدد چک پرداختی ${chq.sayadiId}`,
               debit: 0,
               credit: chq.amount,
             },
