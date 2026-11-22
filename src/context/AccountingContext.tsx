@@ -4315,6 +4315,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           !Number.isFinite(job.expectedLossPct) || job.expectedLossPct < 0 || job.expectedLossPct >= 100) {
         throw new Error('کالای خام، پیمانکار، وزن، بهای مواد یا نرخ اجرت پیمانکاری معتبر نیست.');
       }
+      validateJalaliDate(job.date, 'تاریخ ارسال پیمانکاری');
       const reservations = [
         ...subcontractJobs.filter((item) => item.status === 'sent' && item.rawProductId === job.rawProductId)
           .map((item) => ({ productId: item.rawProductId, quantity: item.sentWeightKg })),
@@ -4416,6 +4417,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         throw new Error('مانده بچ‌های نخ خام با موجودی کالا برابر نیست؛ ابتدا دفتر بچ را تطبیق دهید.');
       }
       const movementDate = shamsiToGregorianIso(payload.completionDate);
+      const rawIssueDate = shamsiToGregorianIso(job.date);
       let rawLotAllocations = job.rawLotAllocations || [];
       if (!rawLotAllocations.length) {
         const reservedLots = new Map<string, number>();
@@ -4428,7 +4430,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           quantityRemaining: Math.max(0, lot.quantityRemaining - (reservedLots.get(lot.id) || 0)),
         }));
         rawLotAllocations = allocateStockFIFO(availableLots as any, job.sentWeightKg, {
-          productId: rawProduct.id, warehouse: rawProduct.warehouse, asOfDate: movementDate,
+          productId: rawProduct.id, warehouse: rawProduct.warehouse, asOfDate: rawIssueDate,
         }).allocations;
       }
       const rawTotalCost = Math.round(rawLotAllocations.reduce((sum, allocation) => sum + allocation.totalCost, 0));
@@ -4474,7 +4476,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         const rawMovements: InventoryLotMovement[] = rawLotAllocations.map((allocation) => ({
           id: generateSafeId('lotmove'), ownerId, lotId: allocation.lotId, productId: rawProduct.id,
           warehouse: rawProduct.warehouse, movementType: 'issue', quantity: -allocation.quantity,
-          unitCost: allocation.unitCost, referenceId: job.id, referenceNumber: job.jobNumber, date: movementDate,
+          unitCost: allocation.unitCost, referenceId: job.id, referenceNumber: job.jobNumber, date: rawIssueDate,
           notes: 'مصرف نخ خام در پیمانکاری بر اساس FIFO',
         }));
         const finishedMovement: InventoryLotMovement = {
