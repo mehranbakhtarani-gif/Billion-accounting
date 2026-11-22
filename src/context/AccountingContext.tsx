@@ -1995,8 +1995,13 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
       const isStockOut = ['sale', 'purchase_return', 'waste'].includes(payload.invoiceType);
       if (isStockOut) {
+        const subcontractReservations = new Map<string, number>();
+        for (const job of subcontractJobs) {
+          if (job.status !== 'sent') continue;
+          subcontractReservations.set(job.rawProductId, (subcontractReservations.get(job.rawProductId) ?? 0) + job.sentWeightKg);
+        }
         assertSufficientStock(
-          new Map(products.map((product) => [product.id, product.stock])),
+          new Map(products.map((product) => [product.id, Math.max(0, product.stock - (subcontractReservations.get(product.id) ?? 0))])),
           payload.items.map((item) => ({ productId: item.productId, quantity: item.quantity })),
         );
       }
@@ -2110,7 +2115,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       );
       return full;
     },
-    [products, currencies, adjustProductStock, createVoucher, addCheque, ownerId, user, showToast]
+    [products, subcontractJobs, currencies, adjustProductStock, createVoucher, addCheque, ownerId, user, showToast]
   );
 
   const cancelInvoice = useCallback(
@@ -3189,6 +3194,10 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           reservedByOtherOrders.set(item.productId, (reservedByOtherOrders.get(item.productId) || 0) + Math.max(0, quantity));
         }
       }
+      for (const job of subcontractJobs) {
+        if (job.status !== 'sent') continue;
+        reservedByOtherOrders.set(job.rawProductId, (reservedByOtherOrders.get(job.rawProductId) || 0) + job.sentWeightKg);
+      }
       const available = new Map(products.map((product) => [product.id, Math.max(0, product.stock - (reservedByOtherOrders.get(product.id) || 0))]));
       assertSufficientStock(available, requestedLines);
       const dispatchNumber = order.dispatchNumber || `DSP-${profile.fiscalYear}-${String(salesOrders.filter((item) => item.dispatchNumber).length + 1).padStart(4, '0')}`;
@@ -3196,7 +3205,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       logActivity('انبار و باسکول', `صدور حواله خروج ${dispatchNumber}`, `توزین نهایی سفارش ${order.orderNumber} (${order.partyName})`);
       showToast(`حواله خروج باسکول ${dispatchNumber} ثبت شد.`);
     },
-    [salesOrders, products, profile.fiscalYear, logActivity, showToast]
+    [salesOrders, products, subcontractJobs, profile.fiscalYear, logActivity, showToast]
   );
 
   const invoiceSalesOrder = useCallback(
