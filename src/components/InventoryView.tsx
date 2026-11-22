@@ -75,6 +75,7 @@ export const InventoryView: React.FC<{ initialIntent?: string; clearIntent?: () 
     inventoryLots,
     inventoryLotMovements,
     createOpeningInventoryLot,
+    reconcileProductLotsToStock,
     invoices,
     profile,
     addProduct,
@@ -1323,6 +1324,13 @@ export const InventoryView: React.FC<{ initialIntent?: string; clearIntent?: () 
                         </table>
                       </div>
                       <div className={`rounded-md border p-2 text-[10px] ${lotLedgerStatus.startsWith('تطبیق دفتر') ? 'border-emerald-200 bg-emerald-50 text-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300' : 'border-amber-300 bg-amber-50 text-amber-900 dark:bg-amber-950/30 dark:text-amber-300'}`}>{lotLedgerStatus}</div>
+                      {inventoryLots.some((lot) => lot.productId === selectedProduct.id && lot.warehouse === selectedProduct.warehouse) &&
+                        Math.abs(selectedProduct.stock - inventoryLots.filter((lot) => lot.productId === selectedProduct.id && lot.warehouse === selectedProduct.warehouse).reduce((sum, lot) => sum + lot.quantityRemaining, 0)) > 0.01 && (
+                        <div className="rounded-md border border-amber-300 bg-amber-50 dark:bg-amber-950/30 p-2 space-y-2">
+                          <div className="text-[10px] text-amber-900 dark:text-amber-300">موجودی کالا با جمع مانده بچ‌ها برابر نیست. فروش FIFO تا تطبیق مانده بچ‌ها قابل اتکا نیست.</div>
+                          <button type="button" onClick={() => reconcileProductLotsToStock(selectedProduct.id)} className="w-full rounded-md bg-amber-700 hover:bg-amber-800 text-white py-2 font-semibold">تطبیق بچ‌ها با موجودی شمارش‌شده</button>
+                        </div>
+                      )}
                       <div className="space-y-1">
                         <div className="font-semibold text-slate-700 dark:text-slate-300">آخرین گردش‌های بچ این کالا</div>
                         <div className="max-h-48 overflow-y-auto rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
