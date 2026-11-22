@@ -143,7 +143,7 @@ async function readLocalCollection(collectionName: string) {
   })).filter((record) => record.legacy_record_id);
 }
 
-async function fetchOne(ref: RecordRef) {
+async function fetchOne(ref: RecordRef, cacheRevision = true) {
   const companyId = requireCompany();
   type StoredRecord = { legacy_record_id: string; payload: Record<string, any>; revision?: number };
   let row: StoredRecord | null = null;
@@ -158,7 +158,7 @@ async function fetchOne(ref: RecordRef) {
     if (error) throw error;
     const fetchedRow = data as StoredRecord | null;
     row = fetchedRow;
-    if (fetchedRow?.revision !== undefined) {
+    if (cacheRevision && fetchedRow?.revision !== undefined) {
       await cacheLocalRecordRevisions([{
         key: revisionKey(ref.collection, ref.id),
         recordType: ref.collection,
@@ -175,7 +175,7 @@ async function fetchOne(ref: RecordRef) {
   return rows.find((candidate) => candidate.legacy_record_id === ref.id) ?? null;
 }
 
-async function fetchMany(ref: CollectionRef | QueryRef) {
+async function fetchMany(ref: CollectionRef | QueryRef, cacheRevision = true) {
   const companyId = requireCompany();
   let rows: Array<{ legacy_record_id: string; payload: Record<string, any>; revision?: number }>;
   try {
@@ -187,7 +187,7 @@ async function fetchMany(ref: CollectionRef | QueryRef) {
       .order('created_at', { ascending: true });
     if (error) throw error;
     rows = (data ?? []) as typeof rows;
-    await cacheLocalRecordRevisions(rows.filter((row) => row.revision !== undefined).map((row) => ({
+    if (cacheRevision) await cacheLocalRecordRevisions(rows.filter((row) => row.revision !== undefined).map((row) => ({
       key: revisionKey(recordType(ref), row.legacy_record_id),
       recordType: recordType(ref),
       recordId: row.legacy_record_id,
@@ -457,16 +457,27 @@ export function onSnapshot(
   onError?: (error: unknown) => void,
 ): () => void {
   let closed = false;
+  let initialRevisionLoadComplete = false;
+  let initialRevisionLoadInFlight = false;
   const companyId = requireCompany();
   const refresh = async () => {
     if (closed) return;
+    const captureInitialRevision = !initialRevisionLoadComplete && !initialRevisionLoadInFlight;
+    if (captureInitialRevision) initialRevisionLoadInFlight = true;
     try {
-      if (ref.kind === 'record') onNext(snapshot(await fetchOne(ref)));
+      if (ref.kind === 'record') onNext(snapshot(await fetchOne(ref, captureInitialRevision)));
       else {
-        const docs = await fetchMany(ref);
+        const docs = await fetchMany(ref, captureInitialRevision);
         onNext({ docs, empty: docs.length === 0, size: docs.length });
       }
-    } catch (error) { onError?.(error); }
+      if (captureInitialRevision && (typeof navigator === 'undefined' || navigator.onLine)) {
+        initialRevisionLoadComplete = true;
+      }
+    } catch (error) {
+      onError?.(error);
+    } finally {
+      if (captureInitialRevision) initialRevisionLoadInFlight = false;
+    }
   };
   const unsubscribeLocal = subscribeLocalChanges(() => { void refresh(); });
   const channel = supabase.channel('billion-records-' + companyId + '-' + Math.random().toString(36).slice(2))
