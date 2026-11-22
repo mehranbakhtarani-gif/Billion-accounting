@@ -3234,17 +3234,31 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           const previousQuantity = product.stock;
           const nextQuantity = Number((previousQuantity + item.weightKg).toFixed(2));
           const weightedBuy = nextQuantity > 0 ? Math.round((previousQuantity * product.buyPrice + item.weightKg * item.finalUnitCostIrr) / nextQuantity) : item.finalUnitCostIrr;
-          await updateProduct(product.id, { stock: nextQuantity, buyPrice: weightedBuy, lotNumber: item.lotNumber || product.lotNumber });
+          // Record the snapshot before the write: a cloud write may succeed remotely
+          // and still surface a transport error locally.
           updated.push({ item, product });
+          await updateProduct(product.id, { stock: nextQuantity, buyPrice: weightedBuy, lotNumber: item.lotNumber || product.lotNumber });
         }
       } catch (error) {
-        for (const { product } of updated) {
+        const rollbackFailures: string[] = [];
+        for (const { product } of updated.reverse()) {
           try { await updateProduct(product.id, { stock: product.stock, buyPrice: product.buyPrice, lotNumber: product.lotNumber }); }
-          catch (rollbackError) { console.error('Import stock rollback failed', product.id, rollbackError); }
+          catch (rollbackError) {
+            rollbackFailures.push(`برگشت موجودی ${product.sku}: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`);
+            console.error('Import stock rollback failed', product.id, rollbackError);
+          }
         }
-        try { await createVoucher({ date: getTodayShamsi(), description: `سند معکوس خودکار ترخیص ناموفق پرونده ${dossier.dossierNumber}`, voucherType: 'general', status: 'permanent', referenceId: `import-reversal:${dossier.id}`, lines: voucher.lines.map((line) => ({ ...line, description: `برگشت سند ترخیص #${voucher.voucherNumber}: ${line.description}`, debit: line.credit, credit: line.debit, foreignDebit: line.foreignCredit, foreignCredit: line.foreignDebit })) }); }
-        catch (reversalError) { console.error('Import clearance voucher compensation failed', voucher.id, reversalError); }
-        throw new Error(`ترخیص پرونده کامل نشد؛ تلاش برای برگشت سند و موجودی انجام شد. علت: ${error instanceof Error ? error.message : String(error)}`);
+        try {
+          await createVoucher({ date: getTodayShamsi(), description: `سند معکوس خودکار ترخیص ناموفق پرونده ${dossier.dossierNumber}`, voucherType: 'general', status: 'permanent', referenceId: `import-reversal:${dossier.id}`, lines: voucher.lines.map((line) => ({ ...line, description: `برگشت سند ترخیص #${voucher.voucherNumber}: ${line.description}`, debit: line.credit, credit: line.debit, foreignDebit: line.foreignCredit, foreignCredit: line.foreignDebit })) });
+        } catch (reversalError) {
+          rollbackFailures.push(`برگشت سند ${voucher.voucherNumber}: ${reversalError instanceof Error ? reversalError.message : String(reversalError)}`);
+          console.error('Import clearance voucher compensation failed', voucher.id, reversalError);
+        }
+        const failureDetail = error instanceof Error ? error.message : String(error);
+        if (rollbackFailures.length) {
+          throw new Error(`ترخیص پرونده ناموفق بود و برگشت خودکار کامل نشد. علت اصلی: ${failureDetail}. موارد نیازمند رسیدگی دستی: ${rollbackFailures.join('؛ ')}`);
+        }
+        throw new Error(`ترخیص پرونده کامل نشد؛ سند و موجودی با موفقیت به وضعیت قبل برگردانده شدند. علت: ${failureDetail}`);
       }
       setImportDossiers((prev) => prev.map((item) => item.id === dossierId ? { ...item, status: 'cleared', voucherId: voucher.id } : item));
       logActivity('واردات و ترخیص', `ترخیص و قطعی‌سازی پرونده ${dossier.dossierNumber}`, `سند #${voucher.voucherNumber} ثبت شد و موجودی و بهای میانگین موزون کالاها به‌روزرسانی گردید.`);
