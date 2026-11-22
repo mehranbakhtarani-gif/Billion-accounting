@@ -347,6 +347,7 @@ function collectAgingInvoices(
       if (!Number.isFinite(outstanding) || outstanding < 0) {
         throw new Error(`مانده باز فاکتور ${invoice.invoiceNumber || invoice.id} معتبر نیست.`);
       }
+      if (outstanding === 0) return null;
       const dueDate = invoice.dueDate || invoice.date;
       const days = diffShamsiDays(todayShamsi, dueDate);
       if (days === null) {
@@ -354,7 +355,7 @@ function collectAgingInvoices(
       }
       return { invoice, dueDate, overdueDays: Math.max(0, days), outstanding };
     })
-    .filter((item) => item.outstanding > 0);
+    .filter((item): item is ValidatedAgingInvoice => item !== null);
 }
 
 function addAgingAmount(
