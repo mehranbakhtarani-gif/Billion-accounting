@@ -2748,6 +2748,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             lotUpdates.forEach((lot) => lotBatch.update(doc(db, 'inventoryLots', lot.id), {
               quantityRemaining: lot.quantityRemaining,
               ...(lot.returnedQuantity !== undefined ? { returnedQuantity: lot.returnedQuantity } : {}),
+              ...(lot.reservedQuantity !== undefined ? { reservedQuantity: lot.reservedQuantity } : {}),
               updatedAt: serverTimestamp(),
             }));
             lotMovementsToSave.forEach((movement) => lotBatch.set(doc(db, 'inventoryLotMovements', movement.id), movement));
