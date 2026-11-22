@@ -2045,6 +2045,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         fromAcc ? { code: fromAcc.code, level: fromAcc.level } : undefined,
         toAcc ? { code: toAcc.code, level: toAcc.level } : undefined,
       );
+      if (!fromAcc || !toAcc) throw new Error('حساب مبدأ یا مقصد انتقال معتبر نیست.');
 
       await createVoucher({
         date: payload.date,
