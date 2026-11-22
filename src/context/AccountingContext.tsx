@@ -2465,6 +2465,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             }));
             const fifo = allocateStockFIFO(fifoAvailableLots as any, item.quantity, {
               productId: product.id, warehouse: payload.warehouse, asOfDate,
+              allowExpired: payload.invoiceType === 'waste',
             });
             item.lotAllocations = fifo.allocations;
             fifo.allocations.forEach((allocation) => {
