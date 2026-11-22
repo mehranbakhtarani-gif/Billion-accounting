@@ -224,7 +224,7 @@ export interface FifoResult {
 export interface InventoryLotLedgerMovement {
   id: string;
   lotId: string;
-  movementType: 'receipt' | 'issue' | 'return' | 'waste' | 'transfer-in' | 'transfer-out' | 'adjustment' | 'reversal';
+  movementType: 'receipt' | 'issue' | 'return' | 'purchase-return' | 'waste' | 'transfer-in' | 'transfer-out' | 'adjustment' | 'reversal';
   quantity: number;
 }
 
@@ -256,7 +256,7 @@ export function reconcileInventoryLotLedger(
     if (['receipt', 'return', 'transfer-in'].includes(movement.movementType) && movement.quantity < 0) {
       throw new Error('گردش ورود بچ باید مقدار مثبت داشته باشد.');
     }
-    if (['issue', 'waste', 'transfer-out'].includes(movement.movementType) && movement.quantity > 0) {
+    if (['issue', 'purchase-return', 'waste', 'transfer-out'].includes(movement.movementType) && movement.quantity > 0) {
       throw new Error('گردش خروج بچ باید مقدار منفی داشته باشد.');
     }
     signedTotals.set(movement.lotId, (signedTotals.get(movement.lotId) ?? 0) + movement.quantity);
