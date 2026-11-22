@@ -258,15 +258,13 @@ export const InventoryView: React.FC<{ initialIntent?: string; clearIntent?: () 
   }, [warehouseScopedProducts, search]);
 
   const inventoryStats = useMemo(() => {
-    let totalValue = 0;
     let totalKg = 0;
     let totalCartons = 0;
     for (const p of products) {
-      totalValue += Math.round(p.stock * p.buyPrice);
       totalKg += p.stock;
       totalCartons += computeCartons(p.stock, p.kgPerCarton);
     }
-    return { totalValue, totalKg, totalCartons };
+    return { totalKg, totalCartons };
   }, [products]);
 
   const inventoryValuation = useMemo(
@@ -566,9 +564,9 @@ export const InventoryView: React.FC<{ initialIntent?: string; clearIntent?: () 
             </span>
             <span>·</span>
             <span>
-              ارزش کل موجودی (بهای تمام‌شده):{' '}
+              ارزش برآوردی موجودی (میانگین موزون):{' '}
               <strong className="font-code tabular-nums text-slate-800 dark:text-slate-200">
-                {formatMoney(inventoryStats.totalValue, unit)}
+                {formatMoney(inventoryValuationTotals.inventoryValue, unit)}
               </strong>
             </span>
           </div>
