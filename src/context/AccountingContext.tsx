@@ -2772,6 +2772,9 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
                 lotUpdates.set(lot.id, { ...lot, quantityRemaining: nextQty });
                 const originalMovement = inventoryLotMovements.find((movement) =>
                   movement.referenceId === inv.id && movement.lotId === lot.id && movement.quantity < 0);
+                if (inv.invoiceType === 'sale' && inv.lotMovements?.length && !originalMovement) {
+                  throw new Error('گردش اصلی FIFO فاکتور در دفتر بچ پیدا نشد؛ ابطال برای جلوگیری از مخدوش‌شدن سابقه برگشت فروش متوقف شد.');
+                }
                 reversalMovements.push({
                   id: generateSafeId('lotmove'), ownerId, lotId: lot.id, productId: lot.productId,
                   warehouse: lot.warehouse, movementType: 'reversal', quantity: allocation.quantity,
