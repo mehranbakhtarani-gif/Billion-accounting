@@ -179,6 +179,14 @@ export interface InvoiceItem {
   foreignLineTotal?: number;
 }
 
+export interface InvoicePaymentAllocation {
+  id: string;
+  voucherId: string;
+  date: string;
+  direction: 'receipt' | 'payment';
+  amount: number;
+}
+
 export interface Invoice {
   id: string;
   ownerId: string;
@@ -207,6 +215,7 @@ export interface Invoice {
   paidBank: number;
   paidCheque: number;
   creditAmount: number;
+  paymentAllocations?: InvoicePaymentAllocation[];
   status: InvoiceStatus;
   voucherId?: string;
   salesOrderId?: string;
