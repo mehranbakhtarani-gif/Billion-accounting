@@ -2438,7 +2438,10 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           if (!rawProduct) throw new Error('کالای خام یک حواله باز پیمانکاری یافت نشد؛ فروش متوقف شد.');
           const availableForLegacyJob = workingLots.map((lot) => ({
             ...lot,
-            quantityRemaining: Math.max(0, lot.quantityRemaining - (reservedLotQuantities.get(lot.id) || 0)),
+            quantityRemaining: Math.max(0, lot.quantityRemaining - Math.max(
+              lot.reservedQuantity || 0,
+              (reservedLotQuantities.get(lot.id) || 0) + (currentOrderReservedLotQuantities.get(lot.id) || 0),
+            )),
           }));
           reservations = allocateStockFIFO(availableForLegacyJob as any, job.sentWeightKg, {
             productId: rawProduct.id, warehouse: rawProduct.warehouse, asOfDate: shamsiToGregorianIso(job.date),
@@ -2457,7 +2460,10 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             const quantity = item.actualWeighedKg > 0 ? item.actualWeighedKg : item.orderedWeightKg;
             const availableForLegacyOrder = workingLots.map((lot) => ({
               ...lot,
-              quantityRemaining: Math.max(0, lot.quantityRemaining - Math.max(lot.reservedQuantity || 0, reservedLotQuantities.get(lot.id) || 0)),
+              quantityRemaining: Math.max(0, lot.quantityRemaining - Math.max(
+                lot.reservedQuantity || 0,
+                (reservedLotQuantities.get(lot.id) || 0) + (currentOrderReservedLotQuantities.get(lot.id) || 0),
+              )),
             }));
             reservations = allocateStockFIFO(availableForLegacyOrder as any, quantity, {
               productId: product.id, warehouse: order.warehouse,
@@ -4690,7 +4696,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             if (!otherProduct) throw new Error('کالای خام یک حواله باز پیمانکاری یافت نشد.');
             const otherAvailableLots = inventoryLots.map((lot) => ({
               ...lot,
-              quantityRemaining: Math.max(0, lot.quantityRemaining - (reservedLots.get(lot.id) || 0)),
+              quantityRemaining: Math.max(0, lot.quantityRemaining - Math.max(lot.reservedQuantity || 0, reservedLots.get(lot.id) || 0)),
             }));
             otherAllocations = allocateStockFIFO(otherAvailableLots as any, otherJob.sentWeightKg, {
               productId: otherProduct.id, warehouse: otherProduct.warehouse, asOfDate: shamsiToGregorianIso(otherJob.date),
