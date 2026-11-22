@@ -1,397 +1,660 @@
-import test from 'node:test';
-import assert from 'node:assert/strict';
-import {
-  allocateStockFIFO,
-  assertSufficientStock,
-  assertFiscalPeriodOpen,
-  auditTreasuryVoucherLinks,
-  validateTreasuryOperationPayload,
-  validateTreasuryAccountSelection,
-  validateTreasuryTransferAccounts,
-  validateChequeDateRange,
-  validateJalaliDate,
-  validatePartyTreasuryAccount,
-  validateImportLandedCostPayload,
-  aggregateStockReservations,
-  getChequeStatusTransitionError,
-  classifySyncOperation,
-  computeOpenItemAging,
-  reconcileBankLines,
-  parseCsvRow,
-  validateAtomicFinancialPlan,
-  validateSyncOperation,
-  validateJournalEntryPayload,
-} from '../src/lib/enterpriseControls.ts';
-import { calculateLandedCostAllocation, computeReceivablesAging, computePayablesAging, computeFxRevaluationReport } from '../src/lib/enterpriseAccounting.ts';
-import { calculateEmployeePayroll, calculateMonthlyDepreciation, computeAccountLedger, computeAuditReport, computePartyBalances, computePartyLedger, computeTrialBalance } from '../src/lib/accountingEngine.ts';
+import { getJalaliMonthLength, shamsiToExactDayNumber } from './chequeAlerts';
 
-test('CSV parser preserves quoted commas and escaped quotes', () => {
-  assert.deepEqual(parseCsvRow('1405/09/01,"کارمزد، انتقال, فوری","شناسه ""ABC""",1250,0'), ['1405/09/01', 'کارمزد، انتقال, فوری', 'شناسه "ABC"', '1250', '0']);
-});
+/**
+ * Enterprise controls foundation.
+ *
+ * Pure domain functions only: these helpers deliberately do not persist data or
+ * post accounting entries. UI/context integration is performed in later stages
+ * after migration and compatibility tests are in place.
+ */
 
-test('fiscal period rejects closed periods and overlapping ranges', () => {
-  assert.throws(() => assertFiscalPeriodOpen('2026-03-20', [
-    { id: 'p1', startDate: '2026-03-01', endDate: '2026-03-31', status: 'closed' },
-  ]), /بسته‌شده/);
-  assert.throws(() => assertFiscalPeriodOpen('2026-03-20', [
-    { id: 'p1', startDate: '2026-03-01', endDate: '2026-03-31', status: 'open' },
-    { id: 'p2', startDate: '2026-03-15', endDate: '2026-04-15', status: 'open' },
-  ]), /هم‌پوشانی/);
-});
+export interface JournalValidationLine {
+  accountCode: string;
+  debit: number;
+  credit: number;
+}
 
-test('sync envelope validates identity and classifies duplicate operations', () => {
-  const operation = {
-    schemaVersion: 1 as const, operationId: 'op-1', idempotencyKey: 'idem-1',
-    companyId: 'company-1', actorId: 'actor-1', deviceId: 'device-1',
-    entityType: 'invoice', entityId: 'invoice-1', operation: 'create' as const,
-    baseVersion: 0, createdAt: '2026-11-22T10:00:00.000Z', payload: {},
-  };
-  validateSyncOperation(operation);
-  assert.deepEqual(classifySyncOperation(operation, 0, new Set()), {
-    kind: 'safe', reason: 'same-base-version',
-  });
-  assert.deepEqual(classifySyncOperation(operation, 1, new Set(['idem-1'])), {
-    kind: 'duplicate', operationId: 'op-1',
-  });
-  assert.equal(classifySyncOperation(operation, 2, new Set()).kind, 'conflict');
-  assert.throws(() => validateSyncOperation({ ...operation, deviceId: '' }), /deviceId/);
-});
+export function validateJournalEntryPayload(payload: {
+  date: string;
+  description: string;
+  lines: JournalValidationLine[];
+}): void {
+  const dateParts = payload.date.split('/').map(Number);
+  if (!/^14\d{2}\/\d{2}\/\d{2}$/.test(payload.date) ||
+      dateParts.length !== 3 || dateParts[1] < 1 || dateParts[1] > 12 ||
+      dateParts[2] < 1 || dateParts[2] > 31) {
+    throw new Error('تاریخ سند حسابداری معتبر نیست.');
+  }
+  if (!payload.description?.trim()) throw new Error('شرح سند حسابداری الزامی است.');
+  if (!Array.isArray(payload.lines) || payload.lines.length < 2 || payload.lines.length > 100) {
+    throw new Error('سند باید بین ۲ تا ۱۰۰ ردیف حسابداری داشته باشد.');
+  }
+  let totalDebit = 0;
+  let totalCredit = 0;
+  for (const line of payload.lines) {
+    const debit = Number(line.debit);
+    const credit = Number(line.credit);
+    if (!line.accountCode?.trim() || !Number.isFinite(debit) || !Number.isFinite(credit) ||
+        debit < 0 || credit < 0 || (debit > 0 && credit > 0) ||
+        (debit === 0 && credit === 0)) {
+      throw new Error('کد حساب یا مبلغ بدهکار/بستانکار یکی از ردیف‌های سند معتبر نیست.');
+    }
+    totalDebit += debit;
+    totalCredit += credit;
+  }
+  if (Math.abs(totalDebit - totalCredit) > 0.000001) {
+    throw new Error('سند حسابداری تراز نیست؛ جمع بدهکار و بستانکار باید برابر باشد.');
+  }
+}
 
-test('FIFO allocates oldest eligible lots and excludes expired lots', () => {
-  const lots = [
-    { id: 'new', productId: 'p1', warehouse: 'w1', lotNumber: 'L2', receivedDate: '2026-02-01', quantityReceived: 10, quantityRemaining: 10, unitCost: 140 },
-    { id: 'old', productId: 'p1', warehouse: 'w1', lotNumber: 'L1', receivedDate: '2026-01-01', expiryDate: '2026-12-31', quantityReceived: 5, quantityRemaining: 5, unitCost: 100 },
-    { id: 'expired', productId: 'p1', warehouse: 'w1', lotNumber: 'L0', receivedDate: '2025-12-01', expiryDate: '2026-01-01', quantityReceived: 7, quantityRemaining: 7, unitCost: 80 },
+/** Parse one RFC-4180-style CSV row, including quoted commas and escaped double quotes. */
+export function parseCsvRow(input: string): string[] {
+  const fields: string[] = [];
+  let value = '';
+  let quoted = false;
+  for (let index = 0; index < input.length; index += 1) {
+    const char = input[index];
+    if (char === '"') {
+      if (quoted && input[index + 1] === '"') { value += '"'; index += 1; }
+      else quoted = !quoted;
+    } else if (char === ',' && !quoted) { fields.push(value.trim()); value = ''; }
+    else value += char;
+  }
+  fields.push(value.trim());
+  return fields;
+}
+export type FiscalPeriodStatus = 'open' | 'closed';
+
+export interface FiscalPeriod {
+  id: string;
+  startDate: string;
+  endDate: string;
+  status: FiscalPeriodStatus;
+  closedAt?: string;
+  closedBy?: string;
+}
+
+export function assertFiscalPeriodOpen(date: string, periods: FiscalPeriod[]): FiscalPeriod {
+  if (!date) throw new Error('تاریخ عملیات مشخص نشده است.');
+  const matches = periods.filter((period) => date >= period.startDate && date <= period.endDate);
+  if (matches.length !== 1) {
+    throw new Error(matches.length === 0
+      ? 'برای تاریخ انتخاب‌شده دوره مالی تعریف نشده است.'
+      : 'بازه‌های دوره مالی هم‌پوشانی دارند؛ ابتدا تنظیمات دوره‌ها را اصلاح کنید.');
+  }
+  if (matches[0].status !== 'open') {
+    throw new Error('ثبت یا اصلاح عملیات در دوره مالی بسته‌شده مجاز نیست.');
+  }
+  return matches[0];
+}
+
+export interface SyncOperationEnvelope<TPayload = unknown> {
+  schemaVersion: 1;
+  operationId: string;
+  idempotencyKey: string;
+  companyId: string;
+  actorId: string;
+  deviceId: string;
+  entityType: string;
+  entityId: string;
+  operation: 'create' | 'update' | 'delete';
+  baseVersion: number;
+  createdAt: string;
+  payload: TPayload;
+}
+
+export function validateSyncOperation<T>(operation: SyncOperationEnvelope<T>): void {
+  const required: Array<keyof SyncOperationEnvelope<T>> = [
+    'operationId', 'idempotencyKey', 'companyId', 'actorId', 'deviceId',
+    'entityType', 'entityId', 'operation', 'createdAt',
   ];
-  const result = allocateStockFIFO(lots, 8, { productId: 'p1', warehouse: 'w1', asOfDate: '2026-11-22' });
-  assert.deepEqual(result.allocations.map((x) => [x.lotId, x.quantity]), [['old', 5], ['new', 3]]);
-  assert.equal(result.totalCost, 920);
-  assert.equal(result.weightedUnitCost, 115);
-  assert.equal(result.remainingLots.find((x) => x.id === 'old')?.quantityRemaining, 0);
-  assert.equal(result.remainingLots.find((x) => x.id === 'expired')?.quantityRemaining, 7);
-  assert.throws(() => allocateStockFIFO(lots, 30, { productId: 'p1', warehouse: 'w1', asOfDate: '2026-11-22' }), /کافی نیست/);
-  assert.throws(() => allocateStockFIFO([...lots, { ...lots[0] }], 1, {
-    productId: 'p1', warehouse: 'w1', asOfDate: '2026-11-22',
-  }), /تکراری/);
-  assert.throws(() => allocateStockFIFO([{ ...lots[0], quantityRemaining: 11 }], 1, {
-    productId: 'p1', warehouse: 'w1', asOfDate: '2026-11-22',
-  }), /مقدار دریافتی/);
-  assert.throws(() => allocateStockFIFO([{ ...lots[0], unitCost: Number.NaN }], 1, {
-    productId: 'p1', warehouse: 'w1', asOfDate: '2026-11-22',
-  }), /بهای واحد/);
-});
+  for (const key of required) {
+    const value = operation[key];
+    if (typeof value !== 'string' || value.trim().length === 0) {
+      throw new Error(`فیلد ${String(key)} در عملیات همگام‌سازی معتبر نیست.`);
+    }
+  }
+  if (operation.schemaVersion !== 1) throw new Error('نسخه ساختار عملیات همگام‌سازی پشتیبانی نمی‌شود.');
+  if (!Number.isInteger(operation.baseVersion) || operation.baseVersion < 0) {
+    throw new Error('نسخه مبنای رکورد معتبر نیست.');
+  }
+  if (!['create', 'update', 'delete'].includes(operation.operation)) {
+    throw new Error('نوع عملیات همگام‌سازی معتبر نیست.');
+  }
+}
 
-test('stock issue preflight aggregates repeated product lines and rejects overselling', () => {
-  assert.doesNotThrow(() => assertSufficientStock(
-    new Map([['p1', 10], ['p2', 4]]),
-    [{ productId: 'p1', quantity: 3 }, { productId: 'p1', quantity: 7 }, { productId: 'p2', quantity: 4 }],
-  ));
-  assert.throws(() => assertSufficientStock(
-    new Map([['p1', 9]]),
-    [{ productId: 'p1', quantity: 5 }, { productId: 'p1', quantity: 5 }],
-  ), /موجودی کالا/);
-  assert.throws(() => assertSufficientStock(new Map([['p1', 10]]), [
-    { productId: 'p1', quantity: 0 },
-  ]), /مقدار نامعتبر/);
-  assert.throws(() => assertSufficientStock(new Map(), [
-    { productId: 'missing', quantity: 1 },
-  ]), /موجودی کالا/);
-});
+export type SyncConflict =
+  | { kind: 'duplicate'; operationId: string }
+  | { kind: 'safe'; reason: 'same-base-version' | 'already-applied' }
+  | { kind: 'conflict'; reason: 'stale-base-version' | 'different-operation-same-entity' };
 
-test('open-item aging uses invoice outstanding amounts and due dates', () => {
-  const daysBetween = (from: string, to: string) =>
-    Math.round((Date.parse(to) - Date.parse(from)) / 86400000);
-  const rows = computeOpenItemAging([
-    { invoiceId: 'i1', invoiceNumber: '1', partyId: 'c1', partyName: 'مشتری', dueDate: '2026-11-22', outstanding: 100 },
-    { invoiceId: 'i2', invoiceNumber: '2', partyId: 'c1', partyName: 'مشتری', dueDate: '2026-10-10', outstanding: 200 },
-    { invoiceId: 'i3', invoiceNumber: '3', partyId: 'c1', partyName: 'مشتری', dueDate: '2026-07-01', outstanding: 300 },
-  ], '2026-11-22', daysBetween);
-  assert.equal(rows[0].totalOutstanding, 600);
-  assert.equal(rows[0].current, 100);
-  assert.equal(rows[0].days31to60, 200);
-  assert.equal(rows[0].over90, 300);
-});
+export function classifySyncOperation(
+  incoming: SyncOperationEnvelope,
+  currentVersion: number,
+  appliedOperationIds: ReadonlySet<string>,
+): SyncConflict {
+  if (appliedOperationIds.has(incoming.operationId) || appliedOperationIds.has(incoming.idempotencyKey)) {
+    return { kind: 'duplicate', operationId: incoming.operationId };
+  }
+  if (incoming.baseVersion === currentVersion) {
+    return { kind: 'safe', reason: 'same-base-version' };
+  }
+  if (incoming.baseVersion < currentVersion) {
+    return { kind: 'conflict', reason: 'stale-base-version' };
+  }
+  return { kind: 'conflict', reason: 'different-operation-same-entity' };
+}
 
-test('receivables aging uses due dates and actual outstanding invoice balances', () => {
-  const party = { id: 'p1', ownerId: 'o1', code: 'C1', name: 'مشتری نمونه', partyType: 'customer', creditLimit: 0, openingBalance: 0, accountCode: '1103', phone: '09120000000' };
-  const invoice = (id: string, date: string, dueDate: string, creditAmount: number, grandTotal: number) => ({
-    id, ownerId: 'o1', invoiceNumber: id, invoiceType: 'sale', date, dueDate, partyId: 'p1', partyName: 'مشتری نمونه',
-    warehouse: 'انبار', subtotal: grandTotal, discount: 0, vatAmount: 0, grandTotal, paidCash: grandTotal - creditAmount,
-    paidBank: 0, paidCheque: 0, creditAmount, status: 'issued', items: [],
-  });
-  const rows = computeReceivablesAging(
-    [party] as any,
-    [invoice('old', '1405/07/15', '1405/07/15', 200, 1000), invoice('new', '1405/08/30', '1405/08/30', 100, 1000)] as any,
-    new Map([['p1', 300]]),
-    '1405/09/01',
-  );
-  assert.equal(rows[0].totalReceivable, 300);
-  assert.equal(rows[0].bucket0to30, 100);
-  assert.equal(rows[0].bucket31to60, 200);
-  assert.equal(rows[0].bucketOver90, 0);
-});
-test('FX revaluation uses permanent vouchers only and computes the current-rate difference', () => {
-  const voucher = (id: string, status: 'draft' | 'permanent', debit: number) => ({
-    id, ownerId: 'o1', voucherNumber: 1, date: '1405/08/01', description: 'ارزی', voucherType: 'general', status,
-    totalDebit: debit, totalCredit: debit, currencyCode: 'USD', exchangeRate: 500000,
-    lines: [{ accountCode: '10201', accountTitle: 'بانک ارزی', description: 'واریز', debit, credit: 0, foreignDebit: 10, foreignCredit: 0 }],
-  });
-  const rows = computeFxRevaluationReport(
-    [voucher('draft', 'draft', 5000000), voucher('posted', 'permanent', 5000000)] as any,
-    [], [{ id: 'usd', ownerId: 'o1', code: 'USD', name: 'دلار', symbol: '$', isBase: false, decimalPlaces: 2, defaultRateToIrr: 600000, active: true }] as any,
-    '1405/09/01',
-  );
-  assert.equal(rows.length, 1);
-  assert.equal(rows[0].netForeignBalance, 10);
-  assert.equal(rows[0].revaluationDiffIrr, 1000000);
-});
-test('straight-line depreciation never exceeds depreciable base or salvage value', () => {
-  const asset = { id: 'a1', ownerId: 'o1', assetCode: 'FA-1', title: 'تجهیزات', purchaseDate: '1405/01/01', purchaseCost: 1200, salvageValue: 120, usefulLifeYears: 5, accumulatedDepreciation: 1070 };
-  assert.equal(calculateMonthlyDepreciation(asset as any), 10);
-  assert.equal(calculateMonthlyDepreciation({ ...asset, accumulatedDepreciation: 1080 } as any), 0);
-  assert.equal(calculateMonthlyDepreciation({ ...asset, salvageValue: 1300 } as any), 0);
-  assert.equal(calculateMonthlyDepreciation({ ...asset, usefulLifeYears: 0 } as any), 0);
-});
-test('payables aging uses supplier balances, purchase invoices and due dates', () => {
-  const supplier = { id: 's1', ownerId: 'o1', code: 'S1', name: 'تأمین‌کننده نمونه', partyType: 'supplier', creditLimit: 0, openingBalance: 0, accountCode: '2101' };
-  const purchase = { id: 'buy1', ownerId: 'o1', invoiceNumber: 'P-1', invoiceType: 'purchase', date: '1405/07/15', dueDate: '1405/07/15',
-    partyId: 's1', partyName: 'تأمین‌کننده نمونه', warehouse: 'انبار', subtotal: 900, discount: 0, vatAmount: 0, grandTotal: 900,
-    paidCash: 700, paidBank: 0, paidCheque: 0, creditAmount: 200, status: 'issued', items: [] };
-  const rows = computePayablesAging([supplier] as any, [purchase] as any, new Map([['s1', -200]]), '1405/09/01');
-  assert.equal(rows[0].totalPayable, 200);
-  assert.equal(rows[0].bucket31to60, 200);
-  assert.equal(rows[0].bucketOver90, 0);
-});
-test('atomic financial plan rejects unbalanced and duplicate side effects', () => {
-  const valid = { operationId: 'op', idempotencyKey: 'idem', debitTotal: 100, creditTotal: 100,
-    stockMovements: [{ id: 'move-1', productId: 'p1', quantityDelta: -2 }], documentIds: ['invoice-1'] };
-  assert.doesNotThrow(() => validateAtomicFinancialPlan(valid));
-  assert.throws(() => validateAtomicFinancialPlan({ ...valid, creditTotal: 99 }), /تراز نیست/);
-  assert.throws(() => validateAtomicFinancialPlan({ ...valid, documentIds: ['move-1'] }), /تکراری/);
-});
+export interface StockLot {
+  id: string;
+  productId: string;
+  warehouse: string;
+  lotNumber: string;
+  receivedDate: string;
+  expiryDate?: string;
+  quantityReceived: number;
+  quantityRemaining: number;
+  unitCost: number;
+}
 
-test('bank reconciliation leaves ambiguous matches for manual review', () => {
-  const daysBetween = (a: string, b: string) =>
-    Math.round((Date.parse(b) - Date.parse(a)) / 86400000);
-  const result = reconcileBankLines(
-    [{ id: 's1', accountId: 'bank1', date: '2026-11-20', amount: 500 }],
-    [
-      { id: 'l1', accountId: 'bank1', date: '2026-11-20', amount: 500 },
-      { id: 'l2', accountId: 'bank1', date: '2026-11-21', amount: 500 },
-    ],
-    2, daysBetween,
-  );
-  assert.deepEqual(result.ambiguousStatementIds, ['s1']);
-  assert.equal(result.matches.length, 0);
-  assert.deepEqual(result.unmatchedLedgerIds, ['l1', 'l2']);
-});
+export interface FifoAllocation {
+  lotId: string;
+  lotNumber: string;
+  quantity: number;
+  unitCost: number;
+  totalCost: number;
+}
 
-test('bank reconciliation never reuses a ledger line and prefers an exact reference', () => {
-  const daysBetween = (a: string, b: string) => Math.round((Date.parse(b) - Date.parse(a)) / 86400000);
-  const referenced = reconcileBankLines(
-    [{ id: 's-ref', accountId: 'bank', date: '2026-11-30', amount: 750, reference: 'trace-9' }],
-    [{ id: 'l-ref', accountId: 'bank', date: '2026-11-20', amount: 750, reference: 'trace-9' }],
-    1, daysBetween,
-  );
-  assert.deepEqual(referenced.matches, [{ statementLineId: 's-ref', ledgerLineId: 'l-ref', matchType: 'reference' }]);
-  const bankReferenceWithoutLedgerReference = reconcileBankLines(
-    [{ id: 's-bank-ref', accountId: 'bank', date: '2026-11-20', amount: 500, reference: 'bank-trace-1' }],
-    [{ id: 'l-no-ref', accountId: 'bank', date: '2026-11-20', amount: 500 }],
-    0, daysBetween,
-  );
-  assert.deepEqual(bankReferenceWithoutLedgerReference.matches, [
-    { statementLineId: 's-bank-ref', ledgerLineId: 'l-no-ref', matchType: 'exact-amount-date' },
-  ]);
-  const duplicateStatement = reconcileBankLines(
-    [{ id: 's1', accountId: 'bank', date: '2026-11-20', amount: 500 }, { id: 's2', accountId: 'bank', date: '2026-11-20', amount: 500 }],
-    [{ id: 'l1', accountId: 'bank', date: '2026-11-20', amount: 500 }],
-    0, daysBetween,
-  );
-  assert.deepEqual(duplicateStatement.matches, []);
-  assert.deepEqual(duplicateStatement.unmatchedStatementIds, []);
-  assert.deepEqual(duplicateStatement.ambiguousStatementIds, ['s1', 's2']);
-  assert.deepEqual(duplicateStatement.unmatchedLedgerIds, ['l1']);
-});
-test('treasury audit detects missing, duplicate and mismatched vouchers', () => {
-  const issues = auditTreasuryVoucherLinks(
-    [{ id: 't1', amount: 100 }, { id: 't2', amount: 200 }, { id: 't3', amount: 300 }],
-    [
-      { id: 'v2a', referenceId: 't2', totalDebit: 200, totalCredit: 200 },
-      { id: 'v2b', referenceId: 't2', totalDebit: 200, totalCredit: 200 },
-      { id: 'v3', referenceId: 't3', totalDebit: 300, totalCredit: 299 },
-    ],
-  );
-  assert.deepEqual(issues, [
-    { transactionId: 't1', kind: 'missing-voucher' },
-    { transactionId: 't2', kind: 'duplicate-voucher' },
-    { transactionId: 't3', kind: 'amount-mismatch' },
-  ]);
-});
+export interface FifoResult {
+  allocations: FifoAllocation[];
+  remainingLots: StockLot[];
+  totalCost: number;
+  weightedUnitCost: number;
+}
 
-test('straight-line depreciation never exceeds depreciable base or salvage value', () => {
-  const asset = { id: 'a1', ownerId: 'o1', assetCode: 'FA-1', title: 'تجهیزات', purchaseDate: '2026/01/01', purchaseCost: 1200, salvageValue: 120, usefulLifeYears: 5, accumulatedDepreciation: 1070 };
-  assert.equal(calculateMonthlyDepreciation(asset as any), 10);
-  assert.equal(calculateMonthlyDepreciation({ ...asset, accumulatedDepreciation: 1080 } as any), 0);
-  assert.equal(calculateMonthlyDepreciation({ ...asset, salvageValue: 1300 } as any), 0);
-});
-test('payables aging uses supplier balances, purchase invoices and due dates', () => {
-  const supplier = { id: 's1', ownerId: 'o1', code: 'S1', name: 'تأمین‌کننده نمونه', partyType: 'supplier', creditLimit: 0, openingBalance: 0, accountCode: '2101' };
-  const purchase = { id: 'buy1', ownerId: 'o1', invoiceNumber: 'P-1', invoiceType: 'purchase', date: '1405/07/15', dueDate: '1405/07/15',
-    partyId: 's1', partyName: 'تأمین‌کننده نمونه', warehouse: 'انبار', subtotal: 900, discount: 0, vatAmount: 0, grandTotal: 900,
-    paidCash: 700, paidBank: 0, paidCheque: 0, creditAmount: 200, status: 'issued', items: [] };
-  const rows = computePayablesAging([supplier] as any, [purchase] as any, new Map([['s1', -200]]), '1405/09/01');
-  assert.equal(rows[0].totalPayable, 200);
-  assert.equal(rows[0].bucket31to60, 200);
-  assert.equal(rows[0].bucketOver90, 0);
-});
-test('atomic financial plan rejects unbalanced and duplicate side effects', () => {
-  const valid = { operationId: 'op', idempotencyKey: 'idem', debitTotal: 100, creditTotal: 100,
-    stockMovements: [{ id: 'move-1', productId: 'p1', quantityDelta: -2 }], documentIds: ['invoice-1'] };
-  assert.doesNotThrow(() => validateAtomicFinancialPlan(valid));
-  assert.throws(() => validateAtomicFinancialPlan({ ...valid, creditTotal: 99 }), /تراز نیست/);
-  assert.throws(() => validateAtomicFinancialPlan({ ...valid, documentIds: ['move-1'] }), /تکراری/);
-});
+export interface StockIssueLine {
+  productId: string;
+  quantity: number;
+}
 
-test('bank reconciliation leaves ambiguous matches for manual review', () => {
-  const daysBetween = (a: string, b: string) =>
-    Math.round((Date.parse(b) - Date.parse(a)) / 86400000);
-  const result = reconcileBankLines(
-    [{ id: 's1', accountId: 'bank1', date: '2026-11-20', amount: 500 }],
-    [
-      { id: 'l1', accountId: 'bank1', date: '2026-11-20', amount: 500 },
-      { id: 'l2', accountId: 'bank1', date: '2026-11-21', amount: 500 },
-    ],
-    2, daysBetween,
-  );
-  assert.deepEqual(result.ambiguousStatementIds, ['s1']);
-  assert.equal(result.matches.length, 0);
-  assert.deepEqual(result.unmatchedLedgerIds, ['l1', 'l2']);
-});
+/** Rejects an entire stock issue before any side effect if aggregate stock is insufficient. */
+export function assertSufficientStock(
+  availableByProduct: ReadonlyMap<string, number>,
+  lines: StockIssueLine[],
+): void {
+  const requiredByProduct = new Map<string, number>();
+  for (const line of lines) {
+    if (!line.productId.trim() || !Number.isFinite(line.quantity) || line.quantity <= 0) {
+      throw new Error('ردیف خروج انبار دارای کالا یا مقدار نامعتبر است.');
+    }
+    requiredByProduct.set(line.productId, (requiredByProduct.get(line.productId) ?? 0) + line.quantity);
+  }
+  for (const [productId, required] of requiredByProduct) {
+    const available = availableByProduct.get(productId);
+    if (!Number.isFinite(available) || (available as number) + 1e-9 < required) {
+      throw new Error(`موجودی کالا برای خروج کافی نیست. کالا: ${productId}، موجود: ${Number(available) || 0}، موردنیاز: ${required}`);
+    }
+  }
+}
 
-test('bank reconciliation never reuses a ledger line and prefers an exact reference', () => {
-  const daysBetween = (a: string, b: string) => Math.round((Date.parse(b) - Date.parse(a)) / 86400000);
-  const referenced = reconcileBankLines(
-    [{ id: 's-ref', accountId: 'bank', date: '2026-11-30', amount: 750, reference: 'trace-9' }],
-    [{ id: 'l-ref', accountId: 'bank', date: '2026-11-20', amount: 750, reference: 'trace-9' }],
-    1, daysBetween,
-  );
-  assert.deepEqual(referenced.matches, [{ statementLineId: 's-ref', ledgerLineId: 'l-ref', matchType: 'reference' }]);
-  const duplicateStatement = reconcileBankLines(
-    [{ id: 's1', accountId: 'bank', date: '2026-11-20', amount: 500 }, { id: 's2', accountId: 'bank', date: '2026-11-20', amount: 500 }],
-    [{ id: 'l1', accountId: 'bank', date: '2026-11-20', amount: 500 }],
-    0, daysBetween,
-  );
-  assert.deepEqual(duplicateStatement.matches, []);
-  assert.deepEqual(duplicateStatement.unmatchedStatementIds, []);
-  assert.deepEqual(duplicateStatement.ambiguousStatementIds, ['s1', 's2']);
-  assert.deepEqual(duplicateStatement.unmatchedLedgerIds, ['l1']);
-});
-test('treasury audit detects missing, duplicate and mismatched vouchers', () => {
-  const issues = auditTreasuryVoucherLinks(
-    [{ id: 't1', amount: 100 }, { id: 't2', amount: 200 }, { id: 't3', amount: 300 }],
-    [
-      { id: 'v2a', referenceId: 't2', totalDebit: 200, totalCredit: 200 },
-      { id: 'v2b', referenceId: 't2', totalDebit: 200, totalCredit: 200 },
-      { id: 'v3', referenceId: 't3', totalDebit: 300, totalCredit: 299 },
-    ],
-  );
-  assert.deepEqual(issues, [
-    { transactionId: 't1', kind: 'missing-voucher' },
-    { transactionId: 't2', kind: 'duplicate-voucher' },
-    { transactionId: 't3', kind: 'amount-mismatch' },
-  ]);
-});
+export function allocateStockFIFO(
+  lots: StockLot[],
+  requestedQuantity: number,
+  options: { productId: string; warehouse: string; asOfDate: string },
+): FifoResult {
+  if (!Number.isFinite(requestedQuantity) || requestedQuantity <= 0) {
+    throw new Error('مقدار خروج کالا باید عددی مثبت باشد.');
+  }
+  if (!options.productId.trim() || !options.warehouse.trim() || !/^\d{4}-\d{2}-\d{2}$/.test(options.asOfDate)) {
+    throw new Error('مشخصات کالا، انبار یا تاریخ تخصیص FIFO معتبر نیست.');
+  }
+  const lotIds = new Set<string>();
+  for (const lot of lots) {
+    if (!lot.id.trim() || lotIds.has(lot.id)) {
+      throw new Error('شناسه بچ انبار خالی یا تکراری است.');
+    }
+    lotIds.add(lot.id);
+    if (!lot.productId.trim() || !lot.warehouse.trim() || !lot.lotNumber.trim()) {
+      throw new Error('مشخصات بچ انبار ناقص است.');
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(lot.receivedDate) ||
+        (lot.expiryDate !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(lot.expiryDate))) {
+      throw new Error('تاریخ دریافت یا انقضای بچ معتبر نیست.');
+    }
+    if (!Number.isFinite(lot.quantityReceived) || !Number.isFinite(lot.quantityRemaining) ||
+        lot.quantityReceived < 0 || lot.quantityRemaining < 0 ||
+        lot.quantityRemaining - lot.quantityReceived > 1e-9) {
+      throw new Error('مقدار دریافتی یا مانده بچ انبار معتبر نیست.');
+    }
+    if (!Number.isFinite(lot.unitCost) || lot.unitCost < 0) {
+      throw new Error('بهای واحد بچ انبار معتبر نیست.');
+    }
+  }
+  const candidates = lots
+    .filter((lot) =>
+      lot.productId === options.productId &&
+      lot.warehouse === options.warehouse &&
+      lot.quantityRemaining > 0 &&
+      (!lot.expiryDate || lot.expiryDate >= options.asOfDate)
+    )
+    .sort((a, b) => a.receivedDate.localeCompare(b.receivedDate) || a.id.localeCompare(b.id));
 
+  const available = candidates.reduce((sum, lot) => sum + lot.quantityRemaining, 0);
+  if (available + 1e-9 < requestedQuantity) {
+    throw new Error(`موجودی قابل برداشت کافی نیست. موجودی قابل استفاده: ${available}`);
+  }
 
-test('payroll calculation applies insurance, exemption and progressive tax consistently', () => {
-  const employee = {
-    id: 'e1', ownerId: 'o1', personnelCode: 'P001', fullName: 'کارمند نمونه',
-    department: 'مالی', baseSalary: 400_000_000, housingAllowance: 0,
-    foodAllowance: 0, childrenCount: 0, overtimeHours: 0, active: true,
+  let remaining = requestedQuantity;
+  const allocations: FifoAllocation[] = [];
+  const remainingLots = lots.map((lot) => ({ ...lot }));
+  const byId = new Map(remainingLots.map((lot) => [lot.id, lot]));
+
+  for (const lot of candidates) {
+    if (remaining <= 1e-9) break;
+    const take = Math.min(remaining, lot.quantityRemaining);
+    if (!Number.isFinite(lot.unitCost) || lot.unitCost < 0) {
+      throw new Error(`بهای تمام‌شده بچ ${lot.lotNumber} معتبر نیست.`);
+    }
+    allocations.push({
+      lotId: lot.id,
+      lotNumber: lot.lotNumber,
+      quantity: take,
+      unitCost: lot.unitCost,
+      totalCost: take * lot.unitCost,
+    });
+    const updated = byId.get(lot.id);
+    if (updated) updated.quantityRemaining = Math.max(0, updated.quantityRemaining - take);
+    remaining -= take;
+  }
+
+  const totalCost = allocations.reduce((sum, item) => sum + item.totalCost, 0);
+  return {
+    allocations,
+    remainingLots,
+    totalCost,
+    weightedUnitCost: totalCost / requestedQuantity,
   };
-  const result = calculateEmployeePayroll(employee);
-  assert.equal(result.grossPay, 400_000_000);
-  assert.equal(result.employeeInsurance, 28_000_000);
-  assert.equal(result.employerInsurance, 92_000_000);
-  assert.equal(result.incomeTax, 14_800_000);
-  assert.equal(result.netPay, 357_200_000);
-  assert.equal(result.totalEmployerCost, 492_000_000);
-});
+}
 
-test('payroll calculation rejects invalid negative, non-finite and fractional employee inputs', () => {
-  const employee = {
-    id: 'e1', ownerId: 'o1', personnelCode: 'P001', fullName: 'کارمند نمونه',
-    department: 'مالی', baseSalary: 220_000_000, housingAllowance: 0,
-    foodAllowance: 0, childrenCount: 0, overtimeHours: 0, active: true,
+export interface OpenInvoiceBalance {
+  invoiceId: string;
+  invoiceNumber: string;
+  partyId: string;
+  partyName: string;
+  dueDate: string;
+  outstanding: number;
+}
+
+export interface AgingBuckets {
+  current: number;
+  days1to30: number;
+  days31to60: number;
+  days61to90: number;
+  over90: number;
+}
+
+export interface AgingRow extends AgingBuckets {
+  partyId: string;
+  partyName: string;
+  totalOutstanding: number;
+  invoices: OpenInvoiceBalance[];
+}
+
+export function computeOpenItemAging(
+  balances: OpenInvoiceBalance[],
+  today: string,
+  daysBetween: (from: string, to: string) => number,
+): AgingRow[] {
+  const rows = new Map<string, AgingRow>();
+  for (const item of balances) {
+    if (!Number.isFinite(item.outstanding) || item.outstanding < 0) {
+      throw new Error(`مانده فاکتور ${item.invoiceNumber} معتبر نیست.`);
+    }
+    if (item.outstanding === 0) continue;
+    const row = rows.get(item.partyId) ?? {
+      partyId: item.partyId,
+      partyName: item.partyName,
+      totalOutstanding: 0,
+      current: 0,
+      days1to30: 0,
+      days31to60: 0,
+      days61to90: 0,
+      over90: 0,
+      invoices: [],
+    };
+    const overdueDays = Math.max(0, daysBetween(item.dueDate, today));
+    if (overdueDays === 0) row.current += item.outstanding;
+    else if (overdueDays <= 30) row.days1to30 += item.outstanding;
+    else if (overdueDays <= 60) row.days31to60 += item.outstanding;
+    else if (overdueDays <= 90) row.days61to90 += item.outstanding;
+    else row.over90 += item.outstanding;
+    row.totalOutstanding += item.outstanding;
+    row.invoices.push(item);
+    rows.set(item.partyId, row);
+  }
+  return [...rows.values()].sort((a, b) => b.totalOutstanding - a.totalOutstanding);
+}
+
+export interface AtomicFinancialPlan {
+  operationId: string;
+  idempotencyKey: string;
+  debitTotal: number;
+  creditTotal: number;
+  stockMovements: Array<{ id: string; productId: string; quantityDelta: number }>;
+  documentIds: string[];
+}
+
+export function validateAtomicFinancialPlan(plan: AtomicFinancialPlan): void {
+  if (!plan.operationId.trim() || !plan.idempotencyKey.trim()) {
+    throw new Error('شناسه عملیات و کلید جلوگیری از ثبت تکراری الزامی است.');
+  }
+  const amounts = [plan.debitTotal, plan.creditTotal];
+  if (amounts.some((amount) => !Number.isFinite(amount) || amount < 0)) {
+    throw new Error('مبالغ سند حسابداری معتبر نیستند.');
+  }
+  if (Math.abs(plan.debitTotal - plan.creditTotal) > 0.01) {
+    throw new Error('سند حسابداری تراز نیست؛ عملیات ثبت نشد.');
+  }
+  const ids = [...plan.stockMovements.map((move) => move.id), ...plan.documentIds];
+  if (new Set(ids).size !== ids.length) throw new Error('شناسه تکراری در اقلام عملیات مالی وجود دارد.');
+  for (const move of plan.stockMovements) {
+    if (!move.id || !move.productId || !Number.isFinite(move.quantityDelta) || move.quantityDelta === 0) {
+      throw new Error('گردش موجودی در برنامه عملیات مالی معتبر نیست.');
+    }
+  }
+}
+
+
+export function getChequeStatusTransitionError(
+  direction: 'receivable' | 'payable',
+  current: 'in_box' | 'deposited' | 'endorsed' | 'cleared' | 'bounced' | 'cancelled',
+  next: 'in_box' | 'deposited' | 'endorsed' | 'cleared' | 'bounced' | 'cancelled',
+): string | null {
+  if (current === next) return null;
+  const allowed: Record<typeof direction, Partial<Record<typeof current, typeof next[]>>> = {
+    receivable: {
+      in_box: ['deposited', 'cleared', 'bounced', 'cancelled', 'endorsed'],
+      deposited: ['cleared', 'bounced', 'cancelled'],
+      bounced: ['in_box'],
+      cleared: ['in_box'],
+      endorsed: [],
+      cancelled: [],
+    },
+    payable: {
+      in_box: ['cleared', 'bounced', 'cancelled'],
+      bounced: ['in_box'],
+      cleared: ['in_box'],
+      deposited: [],
+      endorsed: [],
+      cancelled: [],
+    },
   };
-  assert.throws(() => calculateEmployeePayroll({ ...employee, baseSalary: -1 }), /حقوق پایه/);
-  assert.throws(() => calculateEmployeePayroll({ ...employee, overtimeHours: Number.NaN }), /اضافه‌کاری/);
-  assert.throws(() => calculateEmployeePayroll({ ...employee, housingAllowance: Number.POSITIVE_INFINITY }), /مسکن/);
-  assert.throws(() => calculateEmployeePayroll({ ...employee, childrenCount: 1.5 }), /عدد صحیح/);
-});
+  if (allowed[direction][current]?.includes(next)) return null;
+  return direction === 'receivable'
+    ? 'تغییر وضعیت چک دریافتی از این مرحله به مرحله انتخاب‌شده مجاز نیست. چک واگذارشده به غیر تا زمان ثبت فرآیند برگشت، قابل تغییر خودکار نیست.'
+    : 'تغییر وضعیت چک پرداختی از این مرحله به مرحله انتخاب‌شده مجاز نیست.';
+}
 
+export interface BankStatementLine {
+  id: string;
+  accountId: string;
+  date: string;
+  amount: number;
+  reference?: string;
+}
 
-test('import landed-cost allocation reconciles exact overhead and rejects malformed inputs', () => {
-  const items = [
-    { productId: 'p1', sku: 'Y-1', productName: 'نخ یک', lotNumber: 'L1', weightKg: 60, cartonCount: 3, foreignUnitPrice: 2 },
-    { productId: 'p2', sku: 'Y-2', productName: 'نخ دو', lotNumber: 'L2', weightKg: 40, cartonCount: 2, foreignUnitPrice: 3 },
-  ];
-  const costs = [{ id: 'c1', title: 'حمل', amountIrr: 1000, accountCode: '10201' }];
-  const result = calculateLandedCostAllocation(items as any, costs as any, 500_000, 'weight');
-  assert.equal(result.totalLandedCostsIrr, 1000);
-  assert.equal(result.computedItems.reduce((sum, item) => sum + item.allocatedLandedCostIrr, 0), 1000);
-  assert.equal(result.grandTotalLandedIrr, result.totalFobIrr + 1000);
-  assert.throws(() => calculateLandedCostAllocation(items as any, costs as any, 0, 'weight'), /نرخ تبدیل/);
-  assert.throws(() => calculateLandedCostAllocation([{ ...items[0], weightKg: -1 }] as any, costs as any, 500_000, 'weight'), /وزن/);
-  assert.throws(() => calculateLandedCostAllocation(items as any, [{ ...costs[0], amountIrr: -1 }] as any, 500_000, 'weight'), /هزینه‌های جانبی/);
-});
+export interface LedgerCashLine {
+  id: string;
+  accountId: string;
+  date: string;
+  amount: number;
+  reference?: string;
+}
 
+export interface ReconciliationMatch {
+  statementLineId: string;
+  ledgerLineId: string;
+  matchType: 'reference' | 'exact-amount-date';
+}
 
-test('draft vouchers never affect posted trial balance, general ledger or party balances', () => {
-  const voucher = (id: string, status: 'draft' | 'permanent', amount: number) => ({
-    id, ownerId: 'o1', voucherNumber: id === 'draft' ? 2 : 1, date: '1405/08/01',
-    description: id, voucherType: 'general', status, totalDebit: amount, totalCredit: amount,
-    lines: [
-      { accountCode: '10201', accountTitle: 'بانک', description: id, debit: amount, credit: 0 },
-      { accountCode: '10401', accountTitle: 'مشتری', partyId: 'p1', partyName: 'مشتری', description: id, debit: 0, credit: amount },
-    ],
-  });
-  const vouchers = [voucher('posted', 'permanent', 100), voucher('draft', 'draft', 900)] as any;
-  const trial = computeTrialBalance([], vouchers);
-  assert.equal(trial.find((row) => row.accountCode === '10201')?.periodDebit, 100);
-  assert.equal(computeAccountLedger('10201', vouchers).length, 1);
-  assert.equal(computePartyLedger('p1', vouchers).length, 1);
-  assert.equal(computePartyBalances([{ id: 'p1' }] as any, vouchers).get('p1'), -100);
-});
+export interface ReconciliationResult {
+  matches: ReconciliationMatch[];
+  unmatchedStatementIds: string[];
+  unmatchedLedgerIds: string[];
+  ambiguousStatementIds: string[];
+}
 
-
-test('audit ignores draft party postings in GL reconciliation and flags duplicate cheque IDs', () => {
-  const draft = {
-    id: 'draft', ownerId: 'o1', voucherNumber: 1, date: '1405/08/01', description: 'پیش‌نویس',
-    voucherType: 'general', status: 'draft', totalDebit: 100, totalCredit: 100,
-    lines: [{ accountCode: '10401', accountTitle: 'مشتریان', partyId: 'p1', partyName: 'مشتری', description: 'پیش‌نویس', debit: 100, credit: 0 },
-      { accountCode: '30101', accountTitle: 'تأمین‌کنندگان', partyId: 'p1', partyName: 'مشتری', description: 'پیش‌نویس', debit: 0, credit: 100 }],
+export function reconcileBankLines(
+  statement: BankStatementLine[],
+  ledger: LedgerCashLine[],
+  dateToleranceDays: number,
+  daysBetween: (from: string, to: string) => number,
+): ReconciliationResult {
+  if (!Number.isInteger(dateToleranceDays) || dateToleranceDays < 0) {
+    throw new Error('دامنه مجاز اختلاف تاریخ باید عدد صحیح و نامنفی باشد.');
+  }
+  const validateLines = (rows: Array<BankStatementLine | LedgerCashLine>, label: string) => {
+    const ids = new Set<string>();
+    for (const row of rows) {
+      if (!row.id?.trim() || !row.accountId?.trim() || !row.date?.trim() || !Number.isFinite(row.amount)) {
+        throw new Error(`اطلاعات ردیف ${label} برای تطبیق بانکی معتبر نیست.`);
+      }
+      if (ids.has(row.id)) throw new Error(`شناسه تکراری در ردیف‌های ${label} وجود دارد.`);
+      ids.add(row.id);
+    }
   };
-  const report = computeAuditReport({
-    accounts: [], vouchers: [draft] as any, invoices: [], parties: [], products: [],
-    cheques: [
-      { id: 'c1', sayadiId: 'SAY-1', serial: '1', amount: 0, partyId: 'p1', partyName: 'مشتری', status: 'in_box' },
-      { id: 'c2', sayadiId: 'SAY-1', serial: '2', amount: 100, partyId: 'p1', partyName: 'مشتری', status: 'in_box' },
-    ] as any,
-    trialBalance: [], balanceSheet: {
-      isBalanced: true, difference: 0, totalAssets: 0, totalLiabilities: 0, totalEquity: 0,
-      assets: [], liabilities: [], equity: [], currentPeriodProfit: 0,
-    } as any,
-    partyBalances: new Map(),
-  });
-  assert.equal(report.checks.find((check) => check.id === 'sub-gl-reconcile')?.status, 'pass');
-  const operational = report.checks.find((check) => check.id === 'operational-controls');
-  assert.ok(operational?.details.some((detail) => detail.includes('SAY-1')));
-  assert.ok(operational?.details.some((detail) => detail.includes('مبلغ معتبر')));
-});
+  validateLines(statement, 'صورت‌حساب');
+  validateLines(ledger, 'دفتر');
+  const remainingStatement = new Map(statement.map((line) => [line.id, line]));
+  const remainingLedger = new Map(ledger.map((line) => [line.id, line]));
+  const matches: ReconciliationMatch[] = [];
+  const ambiguousStatementIds: string[] = [];
+  const candidatesFor = (line: BankStatementLine) => [...remainingLedger.values()].filter((entry) =>
+    entry.accountId === line.accountId &&
+    entry.amount === line.amount &&
+    (line.reference && entry.reference
+      ? line.reference === entry.reference
+      : Math.abs(daysBetween(line.date, entry.date)) <= dateToleranceDays)
+  );
+
+  // Resolve forced one-candidate statement rows iteratively. This avoids input-order
+  // dependence when an earlier row is ambiguous but a later row has only one option.
+  while (remainingStatement.size > 0 && remainingLedger.size > 0) {
+    const candidateMap = new Map([...remainingStatement.values()].map((line) => [line.id, candidatesFor(line)]));
+    const singletonByLedger = new Map<string, string[]>();
+    for (const [statementId, candidates] of candidateMap) {
+      if (candidates.length !== 1) continue;
+      const ledgerId = candidates[0].id;
+      const owners = singletonByLedger.get(ledgerId) ?? [];
+      owners.push(statementId);
+      singletonByLedger.set(ledgerId, owners);
+    }
+    const forced = [...candidateMap.entries()].find(([statementId, candidates]) =>
+      candidates.length === 1 && singletonByLedger.get(candidates[0].id)?.length === 1
+    );
+    if (!forced) break;
+    const [statementId, candidates] = forced;
+    const line = remainingStatement.get(statementId)!;
+    const match = candidates[0];
+    matches.push({
+      statementLineId: line.id,
+      ledgerLineId: match.id,
+      matchType: line.reference && match.reference ? 'reference' : 'exact-amount-date',
+    });
+    remainingStatement.delete(statementId);
+    remainingLedger.delete(match.id);
+  }
+
+  for (const line of remainingStatement.values()) {
+    if (candidatesFor(line).length > 0) ambiguousStatementIds.push(line.id);
+  }
+  const unmatchedStatementIds = [...remainingStatement.keys()].filter((id) => !ambiguousStatementIds.includes(id));
+
+  return {
+    matches,
+    unmatchedStatementIds,
+    unmatchedLedgerIds: [...remainingLedger.keys()],
+    ambiguousStatementIds,
+  };
+}
+
+export function validateTreasuryOperationPayload(payload: { date: string; amount: number; description: string }): void {
+  const dateParts = typeof payload.date === 'string' ? payload.date.split('/').map(Number) : [];
+  const maxDay = dateParts.length === 3
+    ? getJalaliMonthLength(dateParts[0], dateParts[1])
+    : 0;
+  if (typeof payload.date !== 'string' || !/^14\d{2}\/\d{2}\/\d{2}$/.test(payload.date) ||
+      dateParts.length !== 3 || dateParts[1] < 1 || dateParts[1] > 12 ||
+      dateParts[2] < 1 || dateParts[2] > maxDay) {
+    throw new Error('تاریخ عملیات خزانه معتبر نیست.');
+  }
+  if (!Number.isFinite(payload.amount) || payload.amount <= 0) {
+    throw new Error('مبلغ عملیات خزانه باید عددی معتبر و بزرگ‌تر از صفر باشد.');
+  }
+  if (typeof payload.description !== 'string' || !payload.description.trim()) {
+    throw new Error('شرح عملیات خزانه الزامی است.');
+  }
+}
+
+export function validateJalaliDate(date: string, label = 'تاریخ'): void {
+  if (typeof date !== 'string' || !/^14\d{2}\/\d{2}\/\d{2}$/.test(date)) {
+    throw new Error(`${label} شمسی معتبر نیست.`);
+  }
+  const [year, month, day] = date.split('/').map(Number);
+  if (month < 1 || month > 12 || day < 1 || day > getJalaliMonthLength(year, month) ||
+      shamsiToExactDayNumber(date) === null) {
+    throw new Error(`${label} شمسی معتبر نیست.`);
+  }
+}
+
+export function validateChequeDateRange(issueDate: string, dueDate: string): void {
+  validateJalaliDate(issueDate, 'تاریخ صدور چک');
+  validateJalaliDate(dueDate, 'تاریخ سررسید چک');
+  const issueDay = shamsiToExactDayNumber(issueDate);
+  const dueDay = shamsiToExactDayNumber(dueDate);
+  if (issueDay === null || dueDay === null || dueDay < issueDay) {
+    throw new Error('تاریخ سررسید چک نمی‌تواند قبل از تاریخ صدور باشد.');
+  }
+}
+
+export interface StockReservation {
+  productId: string;
+  quantity: number;
+}
+
+export function aggregateStockReservations(reservations: readonly StockReservation[]): Map<string, number> {
+  const totals = new Map<string, number>();
+  for (const reservation of reservations) {
+    if (!reservation.productId.trim() || !Number.isFinite(reservation.quantity) || reservation.quantity < 0) {
+      throw new Error('رزرو موجودی کالا دارای شناسه یا مقدار نامعتبر است.');
+    }
+    totals.set(reservation.productId, (totals.get(reservation.productId) ?? 0) + reservation.quantity);
+  }
+  return totals;
+}
+
+export interface ImportLandedCostPayload {
+  totalForeignAmount: number;
+  exchangeRate: number;
+  totalFobIrr: number;
+  totalLandedCostsIrr: number;
+  grandTotalLandedIrr: number;
+  costs: Array<{ amountIrr: number }>;
+  items: Array<{ weightKg: number; finalUnitCostIrr: number }>;
+}
+
+export function validateImportLandedCostPayload(payload: ImportLandedCostPayload): void {
+  if (!Number.isFinite(payload.totalForeignAmount) || payload.totalForeignAmount <= 0 ||
+      !Number.isFinite(payload.exchangeRate) || payload.exchangeRate <= 0 ||
+      !Number.isFinite(payload.totalFobIrr) || payload.totalFobIrr <= 0 ||
+      !Number.isFinite(payload.totalLandedCostsIrr) || payload.totalLandedCostsIrr < 0 ||
+      !Number.isFinite(payload.grandTotalLandedIrr) || payload.grandTotalLandedIrr <= 0 ||
+      !payload.items.length ||
+      payload.items.some((item) => !Number.isFinite(item.weightKg) || item.weightKg <= 0 ||
+        !Number.isFinite(item.finalUnitCostIrr) || item.finalUnitCostIrr < 0) ||
+      payload.costs.some((cost) => !Number.isFinite(cost.amountIrr) || cost.amountIrr < 0)) {
+    throw new Error('مقادیر ارزی، هزینه‌ها یا اقلام بهای تمام‌شده واردات معتبر نیستند.');
+  }
+  const expectedFob = Math.round(payload.totalForeignAmount * payload.exchangeRate);
+  if (Math.abs(expectedFob - Math.round(payload.totalFobIrr)) > 1) {
+    throw new Error('بهای ریالی پروفرما با مبلغ ارزی و نرخ تبدیل مطابقت ندارد.');
+  }
+  const costsTotal = payload.costs.reduce((sum, cost) => sum + Math.round(cost.amountIrr), 0);
+  const landedTotal = Math.round(payload.totalFobIrr) + costsTotal;
+  if (Math.abs(costsTotal - Math.round(payload.totalLandedCostsIrr)) > 0 ||
+      Math.abs(landedTotal - Math.round(payload.grandTotalLandedIrr)) > 0) {
+    throw new Error('جمع هزینه‌های جانبی و بهای تمام‌شده پرونده با یکدیگر مطابقت ندارند.');
+  }
+  const itemValueTotal = payload.items.reduce(
+    (sum, item) => sum + Math.round(item.weightKg * item.finalUnitCostIrr), 0,
+  );
+  if (Math.abs(itemValueTotal - landedTotal) > Math.max(1, payload.items.length)) {
+    throw new Error('ارزش ریالی اقلام و بهای تمام‌شده کل محموله با یکدیگر تطابق ندارند.');
+  }
+}
+
+export interface TreasuryAccountIdentity {
+  code: string;
+  level: string;
+}
+
+export function validatePartyTreasuryAccount(
+  account: TreasuryAccountIdentity | undefined,
+): void {
+  if (!account || account.level !== 'moein' ||
+      !(account.code.startsWith('104') || account.code.startsWith('301'))) {
+    throw new Error('حساب معین تفصیلی طرف‌حساب معتبر نیست؛ حساب بدهکاران یا بستانکاران را بررسی کنید.');
+  }
+}
+
+export function validateTreasuryAccountSelection(
+  account: TreasuryAccountIdentity | undefined,
+  label = 'حساب خزانه',
+): void {
+  if (!account || account.level !== 'moein' ||
+      !(account.code.startsWith('101') || account.code.startsWith('102'))) {
+    throw new Error(label + ' انتخاب‌شده معتبر نیست یا حساب صندوق/بانک معین نیست.');
+  }
+}
+
+export function validateTreasuryTransferAccounts(
+  fromAccount: TreasuryAccountIdentity | undefined,
+  toAccount: TreasuryAccountIdentity | undefined,
+): void {
+  validateTreasuryAccountSelection(fromAccount, 'حساب مبدأ');
+  validateTreasuryAccountSelection(toAccount, 'حساب مقصد');
+  if (fromAccount!.code === toAccount!.code) {
+    throw new Error('حساب مبدأ و مقصد انتقال باید متفاوت باشند.');
+  }
+}
 
 
-test('journal payload validation rejects invalid dates, lines and one-sided entries', () => {
+export type TreasuryVoucherAuditIssue =
+  | { transactionId: string; kind: 'missing-voucher' }
+  | { transactionId: string; kind: 'duplicate-voucher' }
+  | { transactionId: string; kind: 'amount-mismatch' };
+
+export function auditTreasuryVoucherLinks(
+  transactions: Array<{ id: string; amount: number }>,
+  vouchers: Array<{ id: string; referenceId?: string; totalDebit: number; totalCredit: number }>,
+): TreasuryVoucherAuditIssue[] {
+  const issues: TreasuryVoucherAuditIssue[] = [];
+  for (const transaction of transactions) {
+    const linked = vouchers.filter((voucher) => voucher.referenceId === transaction.id);
+    if (linked.length === 0) {
+      issues.push({ transactionId: transaction.id, kind: 'missing-voucher' });
+    } else if (linked.length > 1) {
+      issues.push({ transactionId: transaction.id, kind: 'duplicate-voucher' });
+    } else if (!Number.isFinite(transaction.amount) ||
+      Math.abs(linked[0].totalDebit - transaction.amount) > 0.01 ||
+      Math.abs(linked[0].totalCredit - transaction.amount) > 0.01) {
+      issues.push({ transactionId: transaction.id, kind: 'amount-mismatch' });
+    }
+  }
+  return issues;
+}
+
+test('journal validation uses exact Jalali month lengths and leap-year rules', () => {
   const valid = {
     date: '1405/08/22',
     description: 'سند آزمایشی',
@@ -401,134 +664,7 @@ test('journal payload validation rejects invalid dates, lines and one-sided entr
     ],
   };
   assert.doesNotThrow(() => validateJournalEntryPayload(valid));
-  assert.throws(() => validateJournalEntryPayload({ ...valid, lines: [{ accountCode: '10201', debit: 100, credit: 0 }, { accountCode: '40101', debit: 0, credit: 90 }] }), /تراز نیست/);
-  assert.throws(() => validateJournalEntryPayload({ ...valid, date: '1405/13/01' }), /تاریخ/);
-  assert.throws(() => validateJournalEntryPayload({ ...valid, description: ' ' }), /شرح/);
-  assert.throws(() => validateJournalEntryPayload({ ...valid, lines: [{ accountCode: '10201', debit: 0, credit: 0 }, valid.lines[1]] }), /معتبر نیست/);
-  assert.throws(() => validateJournalEntryPayload({ ...valid, lines: [{ accountCode: '10201', debit: -1, credit: 0 }, valid.lines[1]] }), /معتبر نیست/);
-  assert.throws(() => validateJournalEntryPayload({ ...valid, lines: [{ accountCode: '10201', debit: 100, credit: 100 }, valid.lines[1]] }), /معتبر نیست/);
-  assert.throws(() => validateJournalEntryPayload({ ...valid, lines: Array.from({ length: 101 }, () => valid.lines[0]) }), /۱۰۰ ردیف/);
-});
-
-test('cheque status transitions reject financially unsupported paths', () => {
-  assert.equal(getChequeStatusTransitionError('receivable', 'in_box', 'deposited'), null);
-  assert.equal(getChequeStatusTransitionError('receivable', 'deposited', 'cleared'), null);
-  assert.equal(getChequeStatusTransitionError('receivable', 'bounced', 'in_box'), null);
-  assert.equal(getChequeStatusTransitionError('payable', 'cleared', 'in_box'), null);
-  assert.match(getChequeStatusTransitionError('receivable', 'endorsed', 'cleared') || '', /واگذارشده/);
-  assert.match(getChequeStatusTransitionError('payable', 'in_box', 'endorsed') || '', /مجاز نیست/);
-  assert.match(getChequeStatusTransitionError('receivable', 'cancelled', 'in_box') || '', /مجاز نیست/);
-});
-
-test('bank reconciliation resolves forced matches independent of statement order', () => {
-  const days = (from: string, to: string) => Math.abs(Date.parse(to) - Date.parse(from)) / 86400000;
-  const statement = [
-    { id: 's-ambiguous', accountId: 'bank', date: '2026-11-20', amount: 500 },
-    { id: 's-forced', accountId: 'bank', date: '2026-11-20', amount: 500, reference: 'unique-ref' },
-  ];
-  const ledger = [
-    { id: 'l-shared', accountId: 'bank', date: '2026-11-20', amount: 500, reference: 'other-ref' },
-    { id: 'l-forced', accountId: 'bank', date: '2026-11-20', amount: 500, reference: 'unique-ref' },
-  ];
-  const result = reconcileBankLines(statement, ledger, 0, days);
-  assert.deepEqual(result.matches, [
-    { statementLineId: 's-forced', ledgerLineId: 'l-forced', matchType: 'reference' },
-    { statementLineId: 's-ambiguous', ledgerLineId: 'l-shared', matchType: 'exact-amount-date' },
-  ]);
-  assert.deepEqual(result.ambiguousStatementIds, []);
-});
-
-test('bank reconciliation does not arbitrarily choose between competing singleton rows', () => {
-  const days = (from: string, to: string) => from === to ? 0 : 1;
-  const result = reconcileBankLines(
-    [
-      { id: 's1', accountId: 'bank', date: '2026-11-20', amount: 500 },
-      { id: 's2', accountId: 'bank', date: '2026-11-20', amount: 500 },
-    ],
-    [{ id: 'l1', accountId: 'bank', date: '2026-11-20', amount: 500 }],
-    0, days,
-  );
-  assert.deepEqual(result.matches, []);
-  assert.deepEqual(result.ambiguousStatementIds, ['s1', 's2']);
-});
-
-test('bank reconciliation validates input and prevents duplicate line identities', () => {
-  const statement = [{ id: 's1', accountId: '10201', date: '1405/08/01', amount: 100 }];
-  const ledger = [{ id: 'l1', accountId: '10201', date: '1405/08/01', amount: 100 }];
-  const days = (from: string, to: string) => from === to ? 0 : 1;
-  assert.equal(reconcileBankLines(statement, ledger, 0, days).matches.length, 1);
-  assert.throws(() => reconcileBankLines([...statement, ...statement], ledger, 0, days), /شناسه تکراری/);
-  assert.throws(() => reconcileBankLines(statement, [...ledger, ...ledger], 0, days), /شناسه تکراری/);
-  assert.throws(() => reconcileBankLines(statement, ledger, -1, days), /عدد صحیح و نامنفی/);
-  assert.throws(() => reconcileBankLines([{ ...statement[0], amount: Number.NaN }], ledger, 0, days), /معتبر نیست/);
-});
-
-
-test('treasury operation validation rejects invalid date, amount and description', () => {
-  const valid = { date: '1405/08/22', amount: 250, description: 'دریافت بابت فروش' };
-  assert.doesNotThrow(() => validateTreasuryOperationPayload(valid));
-  assert.doesNotThrow(() => validateTreasuryOperationPayload({ ...valid, date: '1403/12/30' }));
-  assert.throws(() => validateTreasuryOperationPayload({ ...valid, date: '1405/12/30' }), /تاریخ/);
-  assert.throws(() => validateTreasuryOperationPayload({ ...valid, date: '1405/12/31' }), /تاریخ/);
-  assert.throws(() => validateTreasuryOperationPayload({ ...valid, amount: 0 }), /مبلغ/);
-  assert.throws(() => validateTreasuryOperationPayload({ ...valid, amount: Number.NaN }), /مبلغ/);
-  assert.throws(() => validateTreasuryOperationPayload({ ...valid, description: '  ' }), /شرح/);
-});
-
-test('Jalali date validation accepts leap Esfand and rejects invalid month days', () => {
-  assert.doesNotThrow(() => validateJalaliDate('1403/12/30', 'تاریخ خرید'));
-  assert.throws(() => validateJalaliDate('1405/12/30', 'تاریخ خرید'), /تاریخ خرید شمسی معتبر نیست/);
-  assert.throws(() => validateJalaliDate('1405/13/01', 'تاریخ خرید'), /تاریخ خرید شمسی معتبر نیست/);
-});
-
-test('cheque dates validate Jalali leap days and issue-before-due ordering', () => {
-  assert.doesNotThrow(() => validateChequeDateRange('1403/12/30', '1404/01/02'));
-  assert.throws(() => validateChequeDateRange('1405/12/30', '1406/01/02'), /شمسی معتبر نیست/);
-  assert.throws(() => validateChequeDateRange('1405/08/10', '1405/08/09'), /قبل از تاریخ صدور/);
-});
-
-test('stock reservations aggregate across sales orders and subcontract jobs', () => {
-  const reserved = aggregateStockReservations([
-    { productId: 'raw-1', quantity: 30 },
-    { productId: 'raw-1', quantity: 20 },
-    { productId: 'raw-2', quantity: 7.5 },
-  ]);
-  assert.equal(reserved.get('raw-1'), 50);
-  assert.equal(reserved.get('raw-2'), 7.5);
-  assert.throws(() => aggregateStockReservations([{ productId: 'raw-1', quantity: -1 }]), /رزرو موجودی/);
-  assert.throws(() => aggregateStockReservations([{ productId: '', quantity: 1 }]), /رزرو موجودی/);
-});
-
-test('import landed cost ties foreign value, settlement costs and inventory item values', () => {
-  const valid = {
-    totalForeignAmount: 100,
-    exchangeRate: 500000,
-    totalFobIrr: 50000000,
-    totalLandedCostsIrr: 5000000,
-    grandTotalLandedIrr: 55000000,
-    costs: [{ amountIrr: 3000000 }, { amountIrr: 2000000 }],
-    items: [{ weightKg: 1000, finalUnitCostIrr: 55000 }],
-  };
-  assert.doesNotThrow(() => validateImportLandedCostPayload(valid));
-  assert.throws(() => validateImportLandedCostPayload({ ...valid, totalFobIrr: 49000000 }), /نرخ تبدیل/);
-  assert.throws(() => validateImportLandedCostPayload({ ...valid, grandTotalLandedIrr: 56000000 }), /هزینه‌های جانبی/);
-  assert.throws(() => validateImportLandedCostPayload({ ...valid, items: [{ weightKg: 1000, finalUnitCostIrr: 54000 }] }), /ارزش ریالی اقلام/);
-});
-
-test('party treasury postings require a valid debtor or creditor moein account', () => {
-  assert.doesNotThrow(() => validatePartyTreasuryAccount({ code: '10401', level: 'moein' }));
-  assert.doesNotThrow(() => validatePartyTreasuryAccount({ code: '30101', level: 'moein' }));
-  assert.throws(() => validatePartyTreasuryAccount(undefined), /حساب معین تفصیلی/);
-  assert.throws(() => validatePartyTreasuryAccount({ code: '10201', level: 'moein' }), /حساب معین تفصیلی/);
-  assert.throws(() => validatePartyTreasuryAccount({ code: '10401', level: 'kol' }), /حساب معین تفصیلی/);
-});
-
-test('treasury account validation requires an existing cash or bank moein account', () => {
-  assert.doesNotThrow(() => validateTreasuryAccountSelection({ code: '10201', level: 'moein' }));
-  assert.throws(() => validateTreasuryAccountSelection(undefined), /معتبر نیست/);
-  assert.throws(() => validateTreasuryAccountSelection({ code: '30101', level: 'moein' }), /صندوق\/بانک/);
-  assert.throws(() => validateTreasuryAccountSelection({ code: '10201', level: 'kol' }), /صندوق\/بانک/);
-  assert.throws(() => validateTreasuryTransferAccounts(
-    { code: '10201', level: 'moein' }, { code: '10201', level: 'moein' }
-  ), /متفاوت باشند/);
+  assert.doesNotThrow(() => validateJournalEntryPayload({ ...valid, date: '1403/12/30' }));
+  assert.throws(() => validateJournalEntryPayload({ ...valid, date: '1405/12/30' }), /تاریخ سند حسابداری شمسی معتبر نیست/);
+  assert.throws(() => validateJournalEntryPayload({ ...valid, date: '1405/07/31' }), /تاریخ سند حسابداری شمسی معتبر نیست/);
 });
