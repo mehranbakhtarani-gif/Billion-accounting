@@ -517,7 +517,7 @@ export function validateTreasuryOperationPayload(payload: { date: string; amount
 }
 
 export function validateJalaliDate(date: string, label = 'تاریخ'): void {
-  if (typeof date !== 'string' || !/^14\\d{2}\\/\\d{2}\\/\\d{2}$/.test(date)) {
+  if (typeof date !== 'string' || !/^14\d{2}\/\d{2}\/\d{2}$/.test(date)) {
     throw new Error(`${label} شمسی معتبر نیست.`);
   }
   const [year, month, day] = date.split('/').map(Number);
