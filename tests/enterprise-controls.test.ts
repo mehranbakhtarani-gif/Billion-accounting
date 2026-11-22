@@ -401,3 +401,14 @@ test('cheque status transitions reject financially unsupported paths', () => {
   assert.match(getChequeStatusTransitionError('payable', 'in_box', 'endorsed') || '', /مجاز نیست/);
   assert.match(getChequeStatusTransitionError('receivable', 'cancelled', 'in_box') || '', /مجاز نیست/);
 });
+
+test('bank reconciliation validates input and prevents duplicate line identities', () => {
+  const statement = [{ id: 's1', accountId: '10201', date: '1405/08/01', amount: 100 }];
+  const ledger = [{ id: 'l1', accountId: '10201', date: '1405/08/01', amount: 100 }];
+  const days = (from: string, to: string) => from === to ? 0 : 1;
+  assert.equal(reconcileBankLines(statement, ledger, 0, days).matches.length, 1);
+  assert.throws(() => reconcileBankLines([...statement, ...statement], ledger, 0, days), /شناسه تکراری/);
+  assert.throws(() => reconcileBankLines(statement, [...ledger, ...ledger], 0, days), /شناسه تکراری/);
+  assert.throws(() => reconcileBankLines(statement, ledger, -1, days), /عدد صحیح و نامنفی/);
+  assert.throws(() => reconcileBankLines([{ ...statement[0], amount: Number.NaN }], ledger, 0, days), /معتبر نیست/);
+});
