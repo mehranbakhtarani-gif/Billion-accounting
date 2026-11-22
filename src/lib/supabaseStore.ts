@@ -23,6 +23,58 @@ export function setActiveCompanyId(companyId: string | null) {
   activeCompanyId = companyId;
 }
 
+export type BillionDeviceSyncStatus = {
+  devices: Array<{
+    device_id: string;
+    device_label: string;
+    platform: string;
+    status: 'active' | 'revoked';
+    last_seen_at: string | null;
+    last_sequence: number;
+  }>;
+  operations: Array<{
+    operation_id: string;
+    device_id: string;
+    device_sequence: number;
+    operation_type: string;
+    summary: string;
+    client_created_at: string;
+    server_applied_at: string;
+  }>;
+};
+
+export async function getBillionDeviceSyncStatus(): Promise<BillionDeviceSyncStatus> {
+  const companyId = requireCompany();
+  const [devices, operations] = await Promise.all([
+    supabase
+      .from('billion_company_devices')
+      .select('device_id,device_label,platform,status,last_seen_at,last_sequence')
+      .eq('company_id', companyId)
+      .order('last_seen_at', { ascending: false }),
+    supabase
+      .from('billion_operation_log')
+      .select('operation_id,device_id,device_sequence,operation_type,summary,client_created_at,server_applied_at')
+      .eq('company_id', companyId)
+      .order('server_applied_at', { ascending: false })
+      .limit(50),
+  ]);
+  if (devices.error) handleSupabaseError(devices.error, OperationType.LIST, 'billion_company_devices');
+  if (operations.error) handleSupabaseError(operations.error, OperationType.LIST, 'billion_operation_log');
+  return {
+    devices: (devices.data ?? []) as BillionDeviceSyncStatus['devices'],
+    operations: (operations.data ?? []) as BillionDeviceSyncStatus['operations'],
+  };
+}
+
+export async function touchBillionDevice(deviceId: string): Promise<void> {
+  const companyId = requireCompany();
+  const { error } = await supabase.rpc('billion_touch_device', {
+    p_company_id: companyId,
+    p_device_id: deviceId,
+  });
+  if (error) handleSupabaseError(error, OperationType.UPDATE, 'billion_company_devices');
+}
+
 type RecordRef = { kind: 'record'; collection: string; id: string };
 type CollectionRef = { kind: 'collection'; collection: string };
 type QueryRef = { kind: 'query'; collection: string; filters: Array<{ field: string; value: unknown }> };
@@ -78,6 +130,9 @@ type PendingSyncPayload = {
   companyId: string;
   changes: BatchChange[];
   expectedRevisions: Record<string, number>;
+  deviceId: string;
+  operationId: string;
+  clientCreatedAt: string;
 };
 
 const localChangeListeners = new Set<() => void>();
@@ -204,21 +259,29 @@ async function fetchMany(ref: CollectionRef | QueryRef, cacheRevision = true) {
   return overlaid.map(toSnapshot);
 }
 
+function createOperationId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+  const bytes = new Uint8Array(16);
+  if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') crypto.getRandomValues(bytes);
+  else for (let i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256);
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+  return hex.slice(0, 8) + '-' + hex.slice(8, 12) + '-' + hex.slice(12, 16) + '-' + hex.slice(16, 20) + '-' + hex.slice(20);
+}
+
 async function queueOfflineChanges(
   companyId: string,
   changes: BatchChange[],
   expectedRevisions: Record<string, number>,
+  metadata: { deviceId: string; operationId: string; clientCreatedAt: string },
 ) {
-  const identity = await getOrCreateLocalDeviceIdentity();
-  const operationId = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-    ? crypto.randomUUID()
-    : 'offline-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2);
   await enqueueLocalSyncOperation<PendingSyncPayload>({
-    operationId,
-    idempotencyKey: operationId,
-    deviceId: identity.deviceId,
-    createdAt: new Date().toISOString(),
-    payload: { companyId, changes, expectedRevisions },
+    operationId: metadata.operationId,
+    idempotencyKey: metadata.operationId,
+    deviceId: metadata.deviceId,
+    createdAt: metadata.clientCreatedAt,
+    payload: { companyId, changes, expectedRevisions, ...metadata },
   });
   notifyLocalChanges();
 }
@@ -259,10 +322,20 @@ async function changesAlreadyApplied(
 
 async function applyChanges(
   changes: BatchChange[],
-  options: { allowQueue?: boolean; expectedRevisions?: Record<string, number> } = {},
+  options: {
+    allowQueue?: boolean;
+    expectedRevisions?: Record<string, number>;
+    deviceId?: string;
+    operationId?: string;
+    clientCreatedAt?: string;
+  } = {},
 ) {
   const companyId = requireCompany();
   if (!changes.length) return;
+  const localIdentity = await getOrCreateLocalDeviceIdentity();
+  const deviceId = options.deviceId ?? localIdentity.deviceId;
+  const operationId = options.operationId ?? createOperationId();
+  const clientCreatedAt = options.clientCreatedAt ?? new Date().toISOString();
 
   const identities = new Set<string>();
   for (const change of changes) {
@@ -299,6 +372,9 @@ async function applyChanges(
     const { error } = await supabase.rpc('billion_apply_record_batch', {
       p_company_id: companyId,
       p_changes: versionedChanges,
+      p_device_id: deviceId,
+      p_operation_id: operationId,
+      p_client_created_at: clientCreatedAt,
     });
     if (error) throw error;
     await cacheLocalRecordRevisions(changes
@@ -318,7 +394,7 @@ async function applyChanges(
       throw new Error('این رکورد روی دستگاه دیگری تغییر کرده است. صفحه را تازه‌سازی کنید، رکورد را دوباره باز کنید و سپس تغییر را اعمال کنید؛ دادهٔ دستگاه دیگر بازنویسی نشد.');
     }
     if (options.allowQueue !== false && isSupabaseOfflineError(error)) {
-      await queueOfflineChanges(companyId, changes, expectedRevisions);
+      await queueOfflineChanges(companyId, changes, expectedRevisions, { deviceId, operationId, clientCreatedAt });
       return;
     }
     throw error;
@@ -336,7 +412,13 @@ export async function flushLocalSyncOutbox(): Promise<{ synced: number; failed: 
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt))) {
     const payload = operation.payload as PendingSyncPayload;
     try {
-      await applyChanges(payload.changes, { allowQueue: false, expectedRevisions: payload.expectedRevisions });
+      await applyChanges(payload.changes, {
+        allowQueue: false,
+        expectedRevisions: payload.expectedRevisions,
+        deviceId: payload.deviceId ?? operation.deviceId,
+        operationId: payload.operationId ?? operation.operationId,
+        clientCreatedAt: payload.clientCreatedAt ?? operation.createdAt,
+      });
       const revisionUpdates = Object.fromEntries(payload.changes
         .filter((change) => change.action !== 'delete')
         .map((change) => {

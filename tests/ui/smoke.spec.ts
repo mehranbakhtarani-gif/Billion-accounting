@@ -45,6 +45,8 @@ test('audit center is reachable from the main navigation and exposes CSV export'
   await expect(auditEntry).toBeVisible();
   await auditEntry.click();
   await expect(page.getByRole('button', { name: 'خروجی حسابرسی (CSV)' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'وضعیت همگام‌سازی و دستگاه‌های ثبت‌شده' })).toBeVisible();
+  await expect(page.getByText('برای مشاهده دستگاه‌های ثبت‌شده و گردش همگام‌سازی، ابتدا شرکت را به Supabase متصل کنید.')).toBeVisible();
 });
 
 test('PWA deep link opens the FIFO lot valuation management report', async ({ page }) => {

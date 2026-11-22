@@ -4,7 +4,7 @@ import {
   auth, db, collection, deleteDoc, doc, getDoc, getDocs, onAuthStateChanged,
   onSnapshot, query, serverTimestamp, setDoc, updateDoc, where, writeBatch,
   handleSupabaseError, isSupabaseOfflineError, OperationType, signOutAccount,
-  testSupabaseConnection, setActiveCompanyId, flushLocalSyncOutbox,
+  testSupabaseConnection, setActiveCompanyId, flushLocalSyncOutbox, touchBillionDevice,
 } from '../lib/supabaseStore';
 import { ensurePasswordlessSession, getBillionMembership, acceptBillionInvite, bootstrapBillionCompany, createBillionInvite } from '../lib/supabaseEnrollment';
 import {
@@ -428,6 +428,8 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           return;
         }
         setActiveCompanyId(membership.company_id);
+        if (!deviceIdentity?.deviceId) throw new Error('شناسه این دستگاه برای همگام‌سازی آماده نیست.');
+        await touchBillionDevice(deviceIdentity.deviceId);
         const offlineSync = await flushLocalSyncOutbox();
         if (offlineSync.synced > 0) showToast(`${offlineSync.synced} عملیات آفلاین با موفقیت همگام شد.`);
         if (offlineSync.failed > 0) showToast(`${offlineSync.failed} عملیات آفلاین به‌دلیل تعارض یا خطای داده نیازمند بررسی است؛ اطلاعات دستگاه دیگر بازنویسی نشد.`);
@@ -521,7 +523,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         setIsSyncing(false);
       }
     },
-    [showToast]
+    [showToast, deviceIdentity]
   );
 
   useEffect(() => {
@@ -663,7 +665,11 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     const platform = typeof navigator !== 'undefined' && /android/i.test(navigator.userAgent)
       ? 'android'
       : typeof navigator !== 'undefined' && /iphone|ipad/i.test(navigator.userAgent) ? 'ios' : 'web';
-    const deviceLabel = platform === 'android' ? 'دستگاه Android' : platform === 'ios' ? 'دستگاه iOS' : 'دستگاه مرورگر';
+    const defaultDeviceLabel = platform === 'android' ? 'دستگاه Android' : platform === 'ios' ? 'دستگاه iOS' : 'دستگاه مرورگر';
+    const enteredDeviceLabel = typeof window !== 'undefined'
+      ? window.prompt('برای شناسایی این دستگاه در فهرست همگام‌سازی، یک نام وارد کنید:', defaultDeviceLabel)
+      : defaultDeviceLabel;
+    const deviceLabel = String(enteredDeviceLabel ?? defaultDeviceLabel).trim().slice(0, 80) || defaultDeviceLabel;
     if (mode === 'bootstrap') {
       await bootstrapBillionCompany({
         bootstrapToken: token,
