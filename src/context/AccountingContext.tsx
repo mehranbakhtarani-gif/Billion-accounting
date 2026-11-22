@@ -241,6 +241,31 @@ const AccountingContext = createContext<AccountingContextValue | null>(null);
 
 const DEMO_OWNER = 'demo_holoo_apex';
 
+const getShamsiYearEndDate = (yearLabel: string): string => {
+  const year = Number(yearLabel);
+  if (!Number.isInteger(year) || year < 1200 || year > 1600) {
+    throw new Error('سال مالی برای محاسبه تاریخ اختتامیه معتبر نیست.');
+  }
+  const formatter = new Intl.DateTimeFormat('en-US-u-ca-persian', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  });
+  const targetNextYear = year + 1;
+  for (let day = 19; day <= 22; day += 1) {
+    const newYearDate = new Date(Date.UTC(year + 622, 2, day, 12));
+    const parts = formatter.formatToParts(newYearDate);
+    const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+    if (Number(values.year) === targetNextYear && Number(values.month) === 1 && Number(values.day) === 1) {
+      const lastDay = new Date(newYearDate.getTime() - 24 * 60 * 60 * 1000);
+      const endParts = formatter.formatToParts(lastDay);
+      const endValues = Object.fromEntries(endParts.map((part) => [part.type, part.value]));
+      return `${year}/12/${String(Number(endValues.day)).padStart(2, '0')}`;
+    }
+  }
+  throw new Error(`تاریخ پایان سال شمسی ${year} قابل محاسبه نیست.`);
+};
+
 const DEFAULT_PROFILE: CompanyProfile = {
   uid: DEMO_OWNER,
   displayName: 'مهندس مهران باختری',
@@ -2773,7 +2798,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     }
 
     await createVoucher({
-      date: `${profile.fiscalYear}/12/29`,
+      date: getShamsiYearEndDate(profile.fiscalYear),
       description: `سند بستن حساب‌های موقت و انتقال سود سال مالی ${profile.fiscalYear}`,
       voucherType: 'closing',
       status: 'permanent',
