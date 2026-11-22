@@ -2518,8 +2518,12 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
               }
               const normalizedAllocations: InvoiceLotAllocation[] = [];
               for (const allocation of item.lotAllocations) {
+                if (!Number.isFinite(allocation.quantity) || allocation.quantity <= 0) {
+                  throw new Error('مقدار تخصیص‌یافته در حواله معتبر نیست.');
+                }
                 const lot = workingLots.find((candidate) => candidate.id === allocation.lotId);
-                if (!lot || lot.productId !== product.id || lot.warehouse !== payload.warehouse) {
+                if (!lot || lot.productId !== product.id || lot.warehouse !== payload.warehouse ||
+                    lot.lotNumber !== allocation.lotNumber || !Number.isFinite(lot.unitCost) || lot.unitCost < 0) {
                   throw new Error(`بچ تخصیص‌یافته ${allocation.lotNumber} با کالا یا انبار فاکتور سازگار نیست.`);
                 }
                 if (lot.receivedDate > asOfDate || (lot.expiryDate && lot.expiryDate < asOfDate)) {
