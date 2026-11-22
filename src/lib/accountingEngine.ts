@@ -565,7 +565,7 @@ export function computeAuditReport(input: {
     const sumD = voucher.lines.reduce((sum, line) => sum + (Number(line.debit) || 0), 0);
     const sumC = voucher.lines.reduce((sum, line) => sum + (Number(line.credit) || 0), 0);
     if (Math.abs(sumD - sumC) > 0.0001 || voucher.lines.length < 2 || Math.abs(sumD - voucher.totalDebit) > 0.0001) {
-      unbalancedVouchers.push(\`سند #\${voucher.voucherNumber} (بدهکار: \${sumD} / بستانکار: \${sumC})\`);
+      unbalancedVouchers.push(`سند #${voucher.voucherNumber} (بدهکار: ${sumD} / بستانکار: ${sumC})`);
     }
   }
   checks.push({
@@ -574,8 +574,8 @@ export function computeAuditReport(input: {
     category: 'هسته حسابداری',
     status: unbalancedVouchers.length === 0 ? 'pass' : 'error',
     summary: unbalancedVouchers.length === 0
-      ? \`تمامی \${postedVouchers.length} سند قطعی دارای تراز بدهکار/بستانکار و حداقل ۲ آرتیکل معتبر هستند؛ اسناد موقت جداگانه هشدار می‌گیرند.\`
-      : \`\${unbalancedVouchers.length} سند قطعی دارای عدم توازن یا خطای آرتیکل شناسایی شد.\`,
+      ? `تمامی ${postedVouchers.length} سند قطعی دارای تراز بدهکار/بستانکار و حداقل ۲ آرتیکل معتبر هستند؛ اسناد موقت جداگانه هشدار می‌گیرند.`
+      : `${unbalancedVouchers.length} سند قطعی دارای عدم توازن یا خطای آرتیکل شناسایی شد.`,
     details: unbalancedVouchers,
     targetModule: 'vouchers',
   });
@@ -586,12 +586,12 @@ export function computeAuditReport(input: {
   for (let i = 0; i < sortedByNum.length; i++) {
     const expected = i + 1;
     if (sortedByNum[i].voucherNumber !== expected) {
-      seqIssues.push(\`گسست در شماره اسناد قطعی: انتظار #\${expected} اما سند #\${sortedByNum[i].voucherNumber} ثبت شده است.\`);
+      seqIssues.push(`گسست در شماره اسناد قطعی: انتظار #${expected} اما سند #${sortedByNum[i].voucherNumber} ثبت شده است.`);
       break;
     }
     if (i > 0 && sortedByNum[i].date < sortedByNum[i - 1].date) {
       seqIssues.push(
-        \`عدم ترتیب تاریخی بین سند #\${sortedByNum[i - 1].voucherNumber} (\${sortedByNum[i - 1].date}) و سند #\${sortedByNum[i].voucherNumber} (\${sortedByNum[i].date}).\`
+        `عدم ترتیب تاریخی بین سند #${sortedByNum[i - 1].voucherNumber} (${sortedByNum[i - 1].date}) و سند #${sortedByNum[i].voucherNumber} (${sortedByNum[i].date}).`
       );
     }
   }
@@ -619,8 +619,8 @@ export function computeAuditReport(input: {
     status: tbBalanced ? 'pass' : 'error',
     summary: tbBalanced
       ? 'جمع گردش و مانده بدهکار/بستانکار تراز آزمایشی برابر است.'
-      : \`اختلاف در تراز آزمایشی: گردش (\${totD - totC}) / مانده (\${balD - balC}).\`,
-    details: tbBalanced ? [] : [\`اختلاف گردش: \${totD - totC}\`, \`اختلاف مانده: \${balD - balC}\`],
+      : `اختلاف در تراز آزمایشی: گردش (${totD - totC}) / مانده (${balD - balC}).`,
+    details: tbBalanced ? [] : [`اختلاف گردش: ${totD - totC}`, `اختلاف مانده: ${balD - balC}`],
     targetModule: 'reports',
   });
 
@@ -631,10 +631,10 @@ export function computeAuditReport(input: {
     status: balanceSheet.isBalanced ? 'pass' : 'error',
     summary: balanceSheet.isBalanced
       ? 'معادله ترازنامه با احتساب سود/زیان دوره جاری متوازن است.'
-      : \`ترازنامه دارای اختلاف \${Math.abs(balanceSheet.difference)} ریال است.\`,
+      : `ترازنامه دارای اختلاف ${Math.abs(balanceSheet.difference)} ریال است.`,
     details: balanceSheet.isBalanced ? [] : [
-      \`جمع دارایی‌ها: \${balanceSheet.totalAssets}\`,
-      \`جمع بدهی و حقوق صاحبان سهام: \${balanceSheet.totalLiabilities + balanceSheet.totalEquity}\`,
+      `جمع دارایی‌ها: ${balanceSheet.totalAssets}`,
+      `جمع بدهی و حقوق صاحبان سهام: ${balanceSheet.totalLiabilities + balanceSheet.totalEquity}`,
     ],
     targetModule: 'reports',
   });
@@ -650,20 +650,20 @@ export function computeAuditReport(input: {
     for (const direction of directions) {
       let control = accountByCode.get(party.accountCode);
       if (!control) {
-        controlConfigIssues.push(\`حساب تفصیلی طرف‌حساب «\${party.name}» در سرفصل‌ها یافت نشد.\`);
+        controlConfigIssues.push(`حساب تفصیلی طرف‌حساب «${party.name}» در سرفصل‌ها یافت نشد.`);
         break;
       }
       const visited = new Set<string>();
       while (control.level !== 'kol') {
         if (!control.parentCode || visited.has(control.code)) {
-          controlConfigIssues.push(\`حساب کنترل کل طرف‌حساب «\${party.name}» قابل تشخیص نیست.\`);
+          controlConfigIssues.push(`حساب کنترل کل طرف‌حساب «${party.name}» قابل تشخیص نیست.`);
           control = undefined;
           break;
         }
         visited.add(control.code);
         control = accountByCode.get(control.parentCode);
         if (!control) {
-          controlConfigIssues.push(\`سرفصل بالادستی حساب طرف‌حساب «\${party.name}» ناقص است.\`);
+          controlConfigIssues.push(`سرفصل بالادستی حساب طرف‌حساب «${party.name}» ناقص است.`);
           break;
         }
       }
@@ -671,12 +671,12 @@ export function computeAuditReport(input: {
       const expectedCategory = direction === 'receivable' ? 'asset' : 'liability';
       if (control.category !== expectedCategory) {
         if (party.partyType === 'both') continue;
-        controlConfigIssues.push(\`ماهیت حساب کنترل طرف‌حساب «\${party.name}» با گزارش \${direction === 'receivable' ? 'دریافتنی' : 'پرداختنی'} سازگار نیست.\`);
+        controlConfigIssues.push(`ماهیت حساب کنترل طرف‌حساب «${party.name}» با گزارش ${direction === 'receivable' ? 'دریافتنی' : 'پرداختنی'} سازگار نیست.`);
         continue;
       }
       const previousDirection = controlAccounts.get(control.code);
       if (previousDirection && previousDirection !== direction) {
-        controlConfigIssues.push(\`حساب کنترل \${control.code} هم‌زمان برای دریافتنی و پرداختنی تعریف شده است.\`);
+        controlConfigIssues.push(`حساب کنترل ${control.code} هم‌زمان برای دریافتنی و پرداختنی تعریف شده است.`);
         continue;
       }
       controlAccounts.set(control.code, direction);
@@ -721,8 +721,8 @@ export function computeAuditReport(input: {
       : 'مانده حساب‌های کنترل دریافتنی و پرداختنی با جمع تفصیلی اشخاص منطبق است.',
     details: [
       ...controlConfigIssues,
-      ...(subDiffAr >= 1 ? [\`اختلاف حساب کنترل دریافتنی و تفصیلی مشتریان: \${subDiffAr} ریال\`] : []),
-      ...(subDiffAp >= 1 ? [\`اختلاف حساب کنترل پرداختنی و تفصیلی تأمین‌کنندگان: \${subDiffAp} ریال\`] : []),
+      ...(subDiffAr >= 1 ? [`اختلاف حساب کنترل دریافتنی و تفصیلی مشتریان: ${subDiffAr} ریال`] : []),
+      ...(subDiffAp >= 1 ? [`اختلاف حساب کنترل پرداختنی و تفصیلی تأمین‌کنندگان: ${subDiffAp} ریال`] : []),
     ],
     targetModule: 'parties',
   });
@@ -775,7 +775,7 @@ export function computeAuditReport(input: {
     summary: lotIssues === undefined
       ? 'اطلاعات دفتر بچ برای این اجرای گزارش ارائه نشده است.'
       : lotIssues.length
-        ? \`\${lotIssues.length} مغایرت یا نقص در دفتر بچ شناسایی شد.\`
+        ? `${lotIssues.length} مغایرت یا نقص در دفتر بچ شناسایی شد.`
         : 'مانده بچ‌ها با گردش‌های ثبت‌شده ورود، خروج، برگشت و اصلاح تطبیق دارد.',
     details: lotIssues ?? [],
     targetModule: 'inventory',
