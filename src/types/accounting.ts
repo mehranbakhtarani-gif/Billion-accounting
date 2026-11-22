@@ -400,6 +400,7 @@ export interface SalesOrderItem {
   sku: string;
   productName: string;
   lotNumber?: string;
+  lotAllocations?: InvoiceLotAllocation[];
   orderedWeightKg: number;
   orderedCartons: number;
   actualWeighedKg: number; // وزن واقعی باسکول هنگام تحویل
