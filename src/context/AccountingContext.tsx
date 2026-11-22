@@ -34,7 +34,7 @@ import {
 import { createHolooSeedData } from '../data/holooSeed';
 import { getOrCreateLocalDeviceIdentity, loadLocalAccountingSnapshot, LocalDeviceIdentity, saveLocalAccountingSnapshot } from '../lib/localAccountingStore';
 import { FxRevaluationRow } from '../lib/enterpriseAccounting';
-import { assertSufficientStock, getChequeStatusTransitionError, validateJournalEntryPayload, validateTreasuryOperationPayload, validateTreasuryAccountSelection, validateTreasuryTransferAccounts, validateChequeDateRange, validatePartyTreasuryAccount, validateJalaliDate, validateImportLandedCostPayload, aggregateStockReservations, collectActiveStockReservations, validateSalesOrderDispatchQuantities, validateInvoicePaymentAllocations, buildInvoiceAllocationReversal } from '../lib/enterpriseControls';
+import { assertSufficientStock, getChequeStatusTransitionError, validateJournalEntryPayload, validateTreasuryOperationPayload, validateTreasuryAccountSelection, validateTreasuryTransferAccounts, validateChequeDateRange, validatePartyTreasuryAccount, validateJalaliDate, validateImportLandedCostPayload, aggregateStockReservations, collectActiveStockReservations, validateSalesOrderDispatchQuantities, validateInvoicePaymentAllocations, buildInvoiceAllocationReversal, getInvoiceStockDirection } from '../lib/enterpriseControls';
 import {
   AuditReport,
   buildInvoiceVoucherLines,
@@ -2221,7 +2221,8 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       let invoicePersistenceAttempted = false;
       const appliedStock: Array<{ productId: string; previousStock: number }> = [];
 
-      const isStockOut = ['sale', 'purchase_return', 'waste'].includes(payload.invoiceType);
+      const stockDirection = getInvoiceStockDirection(payload.invoiceType);
+      const isStockOut = stockDirection === -1;
       if (isStockOut) {
         const stockReservations = [
           ...subcontractJobs.filter((job) => job.status === 'sent')
@@ -2249,7 +2250,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             throw new Error(`مقدار کالا در فاکتور معتبر نیست: ${item.productName || item.productId}`);
           }
           cogsTotal += Math.round(product.buyPrice * item.quantity);
-          const outgoing = ['sale', 'purchase_return', 'waste'].includes(payload.invoiceType);
+          const outgoing = stockDirection === -1;
           stockDeltas.set(product.id, (stockDeltas.get(product.id) ?? 0) + (outgoing ? -item.quantity : item.quantity));
         }
       }
@@ -2435,7 +2436,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       let reversalVoucher: Voucher | undefined;
       try {
         if (inv.invoiceType !== 'proforma') {
-          const wasOut = ['sale', 'purchase_return', 'waste'].includes(inv.invoiceType);
+          const wasOut = getInvoiceStockDirection(inv.invoiceType) === -1;
           const stockDeltas = new Map<string, number>();
           for (const item of inv.items) {
             if (!Number.isFinite(item.quantity) || item.quantity <= 0) throw new Error(`مقدار کالای فاکتور ${inv.invoiceNumber} معتبر نیست.`);
