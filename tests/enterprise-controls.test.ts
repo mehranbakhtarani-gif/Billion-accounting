@@ -9,6 +9,7 @@ import {
   validateTreasuryAccountSelection,
   validateTreasuryTransferAccounts,
   validateChequeDateRange,
+  validateJalaliDate,
   validatePartyTreasuryAccount,
   getChequeStatusTransitionError,
   classifySyncOperation,
@@ -470,6 +471,12 @@ test('treasury operation validation rejects invalid date, amount and description
   assert.throws(() => validateTreasuryOperationPayload({ ...valid, amount: 0 }), /مبلغ/);
   assert.throws(() => validateTreasuryOperationPayload({ ...valid, amount: Number.NaN }), /مبلغ/);
   assert.throws(() => validateTreasuryOperationPayload({ ...valid, description: '  ' }), /شرح/);
+});
+
+test('Jalali date validation accepts leap Esfand and rejects invalid month days', () => {
+  assert.doesNotThrow(() => validateJalaliDate('1403/12/30', 'تاریخ خرید'));
+  assert.throws(() => validateJalaliDate('1405/12/30', 'تاریخ خرید'), /تاریخ خرید شمسی معتبر نیست/);
+  assert.throws(() => validateJalaliDate('1405/13/01', 'تاریخ خرید'), /تاریخ خرید شمسی معتبر نیست/);
 });
 
 test('cheque dates validate Jalali leap days and issue-before-due ordering', () => {
