@@ -82,6 +82,18 @@ test('sale and purchase returns create balanced reversal-side accounting entries
     ['10101', 110, 0], ['10501', 0, 100], ['30302', 0, 10],
   ]);
   assert.equal(purchaseReturn.reduce((sum, line) => sum + line.debit, 0), purchaseReturn.reduce((sum, line) => sum + line.credit, 0));
+
+  const fifoPurchaseReturn = buildInvoiceVoucherLines({ ...base, invoiceType: 'purchase_return' } as any, 60);
+  assert.deepEqual(fifoPurchaseReturn.map((line) => [line.accountCode, line.debit, line.credit]), [
+    ['10101', 110, 0], ['10501', 0, 60], ['60301', 0, 40], ['30302', 0, 10],
+  ]);
+  assert.equal(fifoPurchaseReturn.reduce((sum, line) => sum + line.debit, 0), fifoPurchaseReturn.reduce((sum, line) => sum + line.credit, 0));
+
+  const adversePurchaseReturn = buildInvoiceVoucherLines({ ...base, invoiceType: 'purchase_return' } as any, 120);
+  assert.deepEqual(adversePurchaseReturn.map((line) => [line.accountCode, line.debit, line.credit]), [
+    ['10101', 110, 0], ['10501', 0, 120], ['80401', 20, 0], ['30302', 0, 10],
+  ]);
+  assert.equal(adversePurchaseReturn.reduce((sum, line) => sum + line.debit, 0), adversePurchaseReturn.reduce((sum, line) => sum + line.credit, 0));
 });
 
 test('inventory valuation uses moving weighted average and reconciles current stock', () => {
