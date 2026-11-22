@@ -3019,6 +3019,35 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   // ---------------- IMPORT DOSSIERS & LANDED COST ----------------
   const addImportDossier = useCallback(
     async (dossier: Omit<ImportDossier, 'id' | 'ownerId'>) => {
+      if (!dossier.dossierNumber.trim() || !dossier.proformaNumber.trim() || !dossier.supplierId ||
+          !parties.some((party) => party.id === dossier.supplierId) || !dossier.originCountry.trim() ||
+          !dossier.warehouse.trim() || !/^14\d{2}\/\d{2}\/\d{2}$/.test(dossier.date) ||
+          !dossier.currencyCode.trim() || !Number.isFinite(dossier.exchangeRate) || dossier.exchangeRate <= 0) {
+        throw new Error('اطلاعات اصلی پرونده واردات ناقص یا نامعتبر است.');
+      }
+      if (importDossiers.some((item) => item.dossierNumber.trim() === dossier.dossierNumber.trim())) {
+        throw new Error('شماره پرونده واردات تکراری است.');
+      }
+      if (!dossier.items.length || dossier.items.some((item) =>
+        !products.some((product) => product.id === item.productId) ||
+        !item.lotNumber.trim() || !Number.isFinite(item.weightKg) || item.weightKg <= 0 ||
+        !Number.isFinite(item.foreignUnitPrice) || item.foreignUnitPrice < 0 ||
+        !Number.isFinite(item.finalUnitCostIrr) || item.finalUnitCostIrr < 0
+      )) {
+        throw new Error('اقلام یا شماره لات پرونده واردات معتبر نیستند.');
+      }
+      if (dossier.costs.some((cost) => !Number.isFinite(cost.amountIrr) || cost.amountIrr < 0 ||
+          !accounts.some((account) => account.code === cost.accountCode))) {
+        throw new Error('حساب یا مبلغ هزینه‌های جانبی پرونده واردات معتبر نیست.');
+      }
+      const costsTotal = dossier.costs.reduce((sum, cost) => sum + Math.round(cost.amountIrr), 0);
+      if (!Number.isFinite(dossier.totalForeignAmount) || dossier.totalForeignAmount <= 0 ||
+          !Number.isFinite(dossier.totalFobIrr) || dossier.totalFobIrr <= 0 ||
+          !Number.isFinite(dossier.totalLandedCostsIrr) || dossier.totalLandedCostsIrr !== costsTotal ||
+          !Number.isFinite(dossier.grandTotalLandedIrr) ||
+          dossier.grandTotalLandedIrr !== dossier.totalFobIrr + dossier.totalLandedCostsIrr) {
+        throw new Error('جمع بهای تمام‌شده پرونده با ارزش ارزی و هزینه‌های جانبی سازگار نیست.');
+      }
       const full: ImportDossier = {
         ...dossier,
         id: generateSafeId('imp'),
@@ -3032,7 +3061,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       );
       showToast(`پرونده واردات ${full.dossierNumber} ثبت شد.`);
     },
-    [ownerId, logActivity, showToast]
+    [ownerId, parties, products, accounts, importDossiers, logActivity, showToast]
   );
 
   const clearImportDossier = useCallback(
