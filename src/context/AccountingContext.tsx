@@ -1648,23 +1648,50 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       const prod = products.find((p) => p.id === productId);
       if (!prod || !targetWarehouse.trim()) return;
       const cleanWh = targetWarehouse.trim().slice(0, 80);
-      if (user) {
-        try {
-          await updateDoc(doc(db, 'products', productId), {
-            warehouse: cleanWh,
-            updatedAt: serverTimestamp(),
-          });
-        } catch (err) {
-          handleSupabaseError(err, OperationType.UPDATE, `products/${productId}`);
-        }
-      } else {
-        setProducts((prev) =>
-          prev.map((p) => (p.id === productId ? { ...p, warehouse: cleanWh } : p))
-        );
+      if (cleanWh === prod.warehouse) throw new Error('انبار مقصد با انبار فعلی یکسان است.');
+      const sourceLots = inventoryLots.filter((lot) => lot.productId === productId && lot.warehouse === prod.warehouse);
+      if (prod.stock > 0.0001 && sourceLots.length === 0) {
+        throw new Error('برای انتقال این کالا ابتدا باید موجودی فعلی را با بهای برآوردی یا بچ‌های خرید در دفتر بچ ثبت کنید.');
       }
-      showToast(`حواله انتقال کالای «${prod.name}» به «${cleanWh}» ثبت شد.`);
+      const ledgerIssues = reconcileInventoryLotLedger(inventoryLots as any, inventoryLotMovements);
+      if (ledgerIssues.length) throw new Error('دفتر بچ با گردش‌های ثبت‌شده مغایرت دارد؛ انتقال انبار متوقف شد.');
+      const lotQty = sourceLots.reduce((sum, lot) => sum + lot.quantityRemaining, 0);
+      if (Math.abs(lotQty - prod.stock) > 0.01) {
+        throw new Error('جمع مانده بچ‌های انبار با موجودی کالا برابر نیست؛ ابتدا مغایرت را رفع کنید.');
+      }
+      const transferId = generateSafeId('lot-transfer');
+      const transferDate = new Date().toISOString().slice(0, 10);
+      const movedLots = sourceLots.map((lot) => ({ ...lot, warehouse: cleanWh }));
+      const movements: InventoryLotMovement[] = sourceLots.flatMap((lot) => [
+        {
+          id: generateSafeId('lotmove'), ownerId, lotId: lot.id, productId,
+          warehouse: prod.warehouse, movementType: 'transfer-out' as const,
+          quantity: -lot.quantityRemaining, unitCost: lot.unitCost,
+          referenceId: transferId, referenceNumber: transferId, date: transferDate,
+        },
+        {
+          id: generateSafeId('lotmove'), ownerId, lotId: lot.id, productId,
+          warehouse: cleanWh, movementType: 'transfer-in' as const,
+          quantity: lot.quantityRemaining, unitCost: lot.unitCost,
+          referenceId: transferId, referenceNumber: transferId, date: transferDate,
+        },
+      ]);
+      if (user) {
+        const batch = writeBatch(db);
+        batch.update(doc(db, 'products', productId), { warehouse: cleanWh, updatedAt: serverTimestamp() });
+        movedLots.forEach((lot) => batch.update(doc(db, 'inventoryLots', lot.id), {
+          warehouse: cleanWh, updatedAt: serverTimestamp(),
+        }));
+        movements.forEach((movement) => batch.set(doc(db, 'inventoryLotMovements', movement.id), movement));
+        await batch.commit();
+      }
+      setProducts((prev) => prev.map((product) => product.id === productId ? { ...product, warehouse: cleanWh } : product));
+      setInventoryLots((prev) => prev.map((lot) => lot.productId === productId && lot.warehouse === prod.warehouse
+        ? { ...lot, warehouse: cleanWh } : lot));
+      setInventoryLotMovements((prev) => [...prev, ...movements]);
+      showToast(`حواله انتقال ${prod.name} از «${prod.warehouse}» به «${cleanWh}» ثبت شد؛ بچ‌ها و بهای تاریخی حفظ شدند.`);
     },
-    [products, user, showToast]
+    [products, inventoryLots, inventoryLotMovements, ownerId, user, showToast]
   );
 
   // ---------------- CHEQUES & TREASURY ----------------
