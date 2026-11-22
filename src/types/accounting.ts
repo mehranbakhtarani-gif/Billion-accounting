@@ -181,6 +181,7 @@ export interface InventoryLot {
   sourceInvoiceId?: string;
   sourceLotId?: string;
   returnedQuantity?: number;
+  reservedQuantity?: number;
   createdAt?: string;
 }
 
