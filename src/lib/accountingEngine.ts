@@ -1133,13 +1133,15 @@ export function buildInvoiceVoucherLines(
       });
     }
     const inventoryReturnCost = Math.max(0, cogsTotal);
-    lines.push({
-      accountCode: '10501',
-      accountTitle: 'موجودی انبار مرکزی',
-      description: `خروج کالای برگشتی از انبار بر مبنای بهای بچ — ${invoice.invoiceNumber}`,
-      debit: 0,
-      credit: inventoryReturnCost,
-    });
+    if (inventoryReturnCost > 0) {
+      lines.push({
+        accountCode: '10501',
+        accountTitle: 'موجودی انبار مرکزی',
+        description: `خروج کالای برگشتی از انبار بر مبنای بهای بچ — ${invoice.invoiceNumber}`,
+        debit: 0,
+        credit: inventoryReturnCost,
+      });
+    }
     if (netRet > inventoryReturnCost) {
       lines.push({
         accountCode: '60301',
