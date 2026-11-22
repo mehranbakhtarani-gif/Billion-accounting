@@ -428,6 +428,21 @@ export function reconcileBankLines(
   dateToleranceDays: number,
   daysBetween: (from: string, to: string) => number,
 ): ReconciliationResult {
+  if (!Number.isInteger(dateToleranceDays) || dateToleranceDays < 0) {
+    throw new Error('دامنه مجاز اختلاف تاریخ باید عدد صحیح و نامنفی باشد.');
+  }
+  const validateLines = (rows: Array<BankStatementLine | LedgerCashLine>, label: string) => {
+    const ids = new Set<string>();
+    for (const row of rows) {
+      if (!row.id?.trim() || !row.accountId?.trim() || !row.date?.trim() || !Number.isFinite(row.amount)) {
+        throw new Error(`اطلاعات ردیف ${label} برای تطبیق بانکی معتبر نیست.`);
+      }
+      if (ids.has(row.id)) throw new Error(`شناسه تکراری در ردیف‌های ${label} وجود دارد.`);
+      ids.add(row.id);
+    }
+  };
+  validateLines(statement, 'صورت‌حساب');
+  validateLines(ledger, 'دفتر');
   const usedLedger = new Set<string>();
   const matches: ReconciliationMatch[] = [];
   const unmatchedStatementIds: string[] = [];
