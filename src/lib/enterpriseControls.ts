@@ -235,17 +235,18 @@ export function calculateLotReturnableQuantity(
     id: string;
     lotId: string;
     movementType: string;
+    referenceId?: string;
     quantity: number;
     sourceLotId?: string;
     reversalOfMovementId?: string;
   }>,
 ): number {
   const issueMovements = movements.filter((movement) =>
-    movement.lotId === sourceLotId && movement.movementType === 'issue');
+    movement.lotId === sourceLotId && movement.movementType === 'issue' && movement.referenceId?.startsWith('inv_'));
   const issueIds = new Set(issueMovements.map((movement) => movement.id));
   const netIssued = movements
     .filter((movement) =>
-      (movement.lotId === sourceLotId && movement.movementType === 'issue') ||
+      (movement.lotId === sourceLotId && movement.movementType === 'issue' && movement.referenceId?.startsWith('inv_')) ||
       (movement.movementType === 'reversal' && movement.reversalOfMovementId && issueIds.has(movement.reversalOfMovementId)))
     .reduce((sum, movement) => sum + movement.quantity, 0);
   const netReturned = movements
