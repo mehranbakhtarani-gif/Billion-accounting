@@ -516,6 +516,9 @@ export const InvoicesView: React.FC<{ initialIntent?: string; clearIntent?: () =
         return {
           ...row,
           productId: newProdId,
+          lotNumber: prod?.lotNumber || '',
+          receivedDate: new Date().toISOString().slice(0, 10),
+          expiryDate: '',
           cartonCount: cartons,
           quantity: Math.round(cartons * kgPerCtn * 100) / 100,
           bobbinCount: Math.round(cartons * bobbinsPerCtn),
@@ -1251,6 +1254,11 @@ export const InvoicesView: React.FC<{ initialIntent?: string; clearIntent?: () =
                           <label className="text-[10px] text-slate-500">شماره بچ
                             <input value={row.lotNumber || ''} onChange={(e) => setDraftItems((prev) => prev.map((item, i) => i === idx ? { ...item, lotNumber: e.target.value } : item))} className="w-full mt-0.5 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-2 py-1.5" placeholder="شماره بچ خرید / بچ مرجوعی" />
                           </label>
+                          {invoiceType === 'purchase' && (
+                            <label className="text-[10px] text-slate-500">تاریخ ورود
+                              <input type="date" value={row.receivedDate || ''} onChange={(e) => setDraftItems((prev) => prev.map((item, i) => i === idx ? { ...item, receivedDate: e.target.value } : item))} className="w-full mt-0.5 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-2 py-1.5" />
+                            </label>
+                          )}
                           {invoiceType === 'purchase' && (
                             <label className="text-[10px] text-slate-500">تاریخ انقضا
                               <input type="date" value={row.expiryDate || ''} onChange={(e) => setDraftItems((prev) => prev.map((item, i) => i === idx ? { ...item, expiryDate: e.target.value } : item))} className="w-full mt-0.5 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-2 py-1.5" />
