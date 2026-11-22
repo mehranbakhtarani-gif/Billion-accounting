@@ -93,6 +93,7 @@ export interface Product {
   id: string;
   ownerId: string;
   sku: string;
+  barcode?: string;
   name: string;
   category: string;
   warehouse: string;
