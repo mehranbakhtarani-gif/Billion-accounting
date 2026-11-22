@@ -45,6 +45,7 @@ export const TreasuryView: React.FC<TreasuryViewProps> = ({ initialIntent, clear
   const {
     cheques,
     parties,
+    invoices,
     accounts,
     vouchers,
     currencies,
@@ -185,6 +186,15 @@ export const TreasuryView: React.FC<TreasuryViewProps> = ({ initialIntent, clear
   const [txAmount, setTxAmount] = useState(1_000_000_000);
   const [txDate, setTxDate] = useState(getTodayShamsi());
   const [txDesc, setTxDesc] = useState('');
+  const [txAllocationInvoiceId, setTxAllocationInvoiceId] = useState('');
+  const [txAllocationAmount, setTxAllocationAmount] = useState(0);
+  const [txAllocations, setTxAllocations] = useState<{ invoiceId: string; amount: number }[]>([]);
+
+  const allocatableInvoices = useMemo(() => invoices.filter((invoice) =>
+    invoice.partyId === txPartyId && invoice.invoiceType === (txDir === 'receipt' ? 'sale' : 'purchase') &&
+    invoice.status !== 'cancelled' && invoice.creditAmount > 0 &&
+    !txAllocations.some((allocation) => allocation.invoiceId === invoice.id)
+  ), [invoices, txPartyId, txDir, txAllocations]);
 
   // Bank/Cash Transfer state
   const [fromAccountCode, setFromAccountCode] = useState(treasuryAccounts[0]?.code ?? '10101');
@@ -520,6 +530,21 @@ export const TreasuryView: React.FC<TreasuryViewProps> = ({ initialIntent, clear
     setPendingTransition(null);
   };
 
+  const addQuickInvoiceAllocation = () => {
+    const invoice = invoices.find((candidate) => candidate.id === txAllocationInvoiceId);
+    if (!invoice) { showToast('فاکتور موردنظر برای تخصیص انتخاب نشده است.'); return; }
+    if (!Number.isFinite(txAllocationAmount) || txAllocationAmount <= 0 || txAllocationAmount > invoice.creditAmount) {
+      showToast('مبلغ تخصیص باید مثبت و حداکثر برابر مانده باز فاکتور باشد.'); return;
+    }
+    const allocated = txAllocations.reduce((sum, item) => sum + item.amount, 0);
+    if (allocated + txAllocationAmount > txAmount) {
+      showToast('جمع تخصیص‌ها نمی‌تواند از مبلغ دریافت/پرداخت بیشتر شود.'); return;
+    }
+    setTxAllocations((previous) => [...previous, { invoiceId: invoice.id, amount: txAllocationAmount }]);
+    setTxAllocationInvoiceId('');
+    setTxAllocationAmount(0);
+  };
+
   const handleQuickTx = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
@@ -527,8 +552,11 @@ export const TreasuryView: React.FC<TreasuryViewProps> = ({ initialIntent, clear
       const selected = accounts.find((account) => account.code === txAccountCode);
       validateTreasuryAccountSelection(selected ? { code: selected.code, level: selected.level } : undefined);
       if (!parties.some((party) => party.id === txPartyId)) throw new Error('طرف‌حساب انتخاب‌شده معتبر نیست.');
-      await recordQuickTreasury({ direction: txDir, accountCode: txAccountCode, partyId: txPartyId, amount: txAmount, date: txDate, description: txDesc.trim() });
+      await recordQuickTreasury({ direction: txDir, accountCode: txAccountCode, partyId: txPartyId, amount: txAmount, date: txDate, description: txDesc.trim(), allocations: txAllocations });
       setTxDesc('');
+      setTxAllocations([]);
+      setTxAllocationAmount(0);
+      setTxAllocationInvoiceId('');
     } catch (error) {
       showToast(error instanceof Error ? error.message : 'ثبت دریافت/پرداخت ناموفق بود.');
     }
@@ -1099,6 +1127,36 @@ export const TreasuryView: React.FC<TreasuryViewProps> = ({ initialIntent, clear
                 className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950"
               />
             </div>
+          </div>
+          <div className="rounded-lg border border-slate-200 dark:border-slate-700 p-3 space-y-3">
+            <div>
+              <div className="font-semibold text-slate-800 dark:text-slate-200">تخصیص اختیاری به فاکتور(ها)</div>
+              <p className="text-[11px] text-slate-500 mt-1">اگر این دریافت یا پرداخت بابت فاکتور مشخص است، فاکتورهای مربوط را انتخاب کنید. مبلغ تخصیص‌نیافته به‌عنوان پیش‌پرداخت/علی‌الحساب باقی می‌ماند.</p>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_180px_auto] gap-2 items-end">
+              <div>
+                <label className="block text-slate-500 mb-1">فاکتور باز طرف‌حساب</label>
+                <select value={txAllocationInvoiceId} onChange={(e) => setTxAllocationInvoiceId(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950">
+                  <option value="">انتخاب فاکتور</option>
+                  {allocatableInvoices.map((invoice) => <option key={invoice.id} value={invoice.id}>{invoice.invoiceNumber} — مانده {formatMoney(invoice.creditAmount, unit, false)}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-slate-500 mb-1">مبلغ تخصیص (ریال)</label>
+                <input type="number" min={1} value={txAllocationAmount || ''} onChange={(e) => setTxAllocationAmount(Number(e.target.value))} className="w-full px-3 py-2 font-code rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950" />
+              </div>
+              <button type="button" onClick={addQuickInvoiceAllocation} disabled={!txAllocationInvoiceId || txAllocationAmount <= 0} className="px-3 py-2 rounded-lg bg-slate-700 text-white disabled:opacity-40">افزودن فاکتور</button>
+            </div>
+            {txAllocations.length > 0 && <div className="space-y-1">
+              {txAllocations.map((allocation) => {
+                const invoice = invoices.find((candidate) => candidate.id === allocation.invoiceId);
+                return <div key={allocation.invoiceId} className="flex items-center justify-between gap-3 text-[11px] bg-slate-50 dark:bg-slate-950 rounded px-2 py-1.5">
+                  <span>{invoice?.invoiceNumber ?? allocation.invoiceId} · {formatMoney(allocation.amount, unit, false)}</span>
+                  <button type="button" onClick={() => setTxAllocations((previous) => previous.filter((item) => item.invoiceId !== allocation.invoiceId))} className="text-rose-600">حذف</button>
+                </div>;
+              })}
+              <div className="text-left text-[11px] font-semibold">جمع تخصیص: {formatMoney(txAllocations.reduce((sum, item) => sum + item.amount, 0), unit, false)} از {formatMoney(txAmount, unit, false)}</div>
+            </div>}
           </div>
           <div className="flex justify-end pt-2">
             <button

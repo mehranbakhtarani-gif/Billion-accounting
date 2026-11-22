@@ -625,6 +625,7 @@ test('invoice payment allocations reject duplicates, wrong party/type and over-s
     { id: 's1', partyId: 'p1', invoiceType: 'sale', status: 'issued', creditAmount: 100 },
     { id: 'p1-inv', partyId: 'p1', invoiceType: 'purchase', status: 'issued', creditAmount: 100 },
     { id: 's2', partyId: 'p2', invoiceType: 'sale', status: 'issued', creditAmount: 100 },
+    { id: 's3', partyId: 'p1', invoiceType: 'sale', status: 'issued', creditAmount: 100 },
     { id: 'cancelled', partyId: 'p1', invoiceType: 'sale', status: 'cancelled', creditAmount: 100 },
   ];
   const base = { direction: 'receipt' as const, partyId: 'p1', amount: 100, invoices };
@@ -633,7 +634,7 @@ test('invoice payment allocations reject duplicates, wrong party/type and over-s
   assert.throws(() => validateInvoicePaymentAllocations({ ...base, allocations: [{ invoiceId: 'p1-inv', amount: 50 }] }), /فاکتور فروش/);
   assert.throws(() => validateInvoicePaymentAllocations({ ...base, allocations: [{ invoiceId: 'cancelled', amount: 50 }] }), /فاکتور فروش/);
   assert.throws(() => validateInvoicePaymentAllocations({ ...base, allocations: [{ invoiceId: 's1', amount: 101 }] }), /مانده باز/);
-  assert.throws(() => validateInvoicePaymentAllocations({ ...base, allocations: [{ invoiceId: 's1', amount: 80 }, { invoiceId: 's2', amount: 30 }] }), /جمع تخصیص‌ها/);
+  assert.throws(() => validateInvoicePaymentAllocations({ ...base, allocations: [{ invoiceId: 's1', amount: 80 }, { invoiceId: 's3', amount: 30 }] }), /جمع تخصیص‌ها/);
   assert.throws(() => validateInvoicePaymentAllocations({ ...base, allocations: [{ invoiceId: 's1', amount: Number.NaN }] }), /مثبت و معتبر/);
   assert.throws(() => validateInvoicePaymentAllocations({ ...base, allocations: [{ invoiceId: 's1', amount: -1 }] }), /مثبت و معتبر/);
   assert.throws(() => validateInvoicePaymentAllocations({ ...base, direction: 'payment', allocations: [{ invoiceId: 's1', amount: 50 }] }), /فاکتور خرید/);

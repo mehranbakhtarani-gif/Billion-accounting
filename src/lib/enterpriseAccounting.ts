@@ -320,65 +320,34 @@ export function computeReceivablesAging(
   todayShamsi: string = getTodayShamsi()
 ): AgingBucketRow[] {
   const rows: AgingBucketRow[] = [];
-
-  for (const p of parties) {
-    const balance = partyBalances.get(p.id) ?? 0;
-    if (balance <= 0) continue; // Only positive debtors (مطالبات)
-
-    // Apply open receivable balance to the oldest open sales invoices first (FIFO approximation).
-    const salesInvs = invoices
-      .filter((inv) => inv.partyId === p.id && inv.invoiceType === 'sale' && inv.status !== 'cancelled')
-      .sort((a, b) => a.date.localeCompare(b.date));
-
-    let remaining = balance;
-    let b0 = 0;
-    let b31 = 0;
-    let b61 = 0;
-    let b90 = 0;
-    let maxDays = 0;
-    let oldestDate: string | undefined;
-
-    for (const inv of salesInvs) {
-      if (remaining <= 0) break;
-      // Use the actual outstanding balance, not the original invoice gross amount.
-      const portion = Math.min(remaining, Math.max(0, inv.creditAmount));
-      if (portion <= 0) continue;
-      const age = Math.max(0, diffShamsiDays(todayShamsi, inv.dueDate || inv.date) ?? 0);
-      if (age > maxDays) {
-        maxDays = age;
-        oldestDate = inv.dueDate || inv.date;
-      }
-      if (age <= 30) b0 += portion;
-      else if (age <= 60) b31 += portion;
-      else if (age <= 90) b61 += portion;
-      else b90 += portion;
-      remaining -= portion;
+  for (const party of parties) {
+    const ledgerBalance = Math.max(0, partyBalances.get(party.id) ?? 0);
+    const salesInvoices = invoices.filter((invoice) =>
+      invoice.partyId === party.id && invoice.invoiceType === 'sale' &&
+      invoice.status !== 'cancelled' && Number.isFinite(invoice.creditAmount) && invoice.creditAmount > 0
+    );
+    const totalReceivable = salesInvoices.reduce((sum, invoice) => sum + invoice.creditAmount, 0);
+    if (totalReceivable <= 0 && ledgerBalance <= 0) continue;
+    let bucket0to30 = 0, bucket31to60 = 0, bucket61to90 = 0, bucketOver90 = 0;
+    let maxOverdueDays = 0;
+    let oldestInvoiceDate: string | undefined;
+    for (const invoice of salesInvoices) {
+      const dueDate = invoice.dueDate || invoice.date;
+      const age = Math.max(0, diffShamsiDays(todayShamsi, dueDate) ?? 0);
+      if (age > maxOverdueDays) { maxOverdueDays = age; oldestInvoiceDate = dueDate; }
+      if (age <= 30) bucket0to30 += invoice.creditAmount;
+      else if (age <= 60) bucket31to60 += invoice.creditAmount;
+      else if (age <= 90) bucket61to90 += invoice.creditAmount;
+      else bucketOver90 += invoice.creditAmount;
     }
-
-    // Any residual opening balance older than listed invoices goes to >90 days
-    if (remaining > 0) {
-      b90 += remaining;
-      maxDays = Math.max(maxDays, 95);
-    }
-
     rows.push({
-      partyId: p.id,
-      partyCode: p.code,
-      partyName: p.name,
-      phone: p.phone,
-      totalReceivable: balance,
-      bucket0to30: b0,
-      bucket31to60: b31,
-      bucket61to90: b61,
-      bucketOver90: b90,
-      oldestInvoiceDate: oldestDate,
-      maxOverdueDays: maxDays,
+      partyId: party.id, partyCode: party.code, partyName: party.name, phone: party.phone,
+      totalReceivable, bucket0to30, bucket31to60, bucket61to90, bucketOver90,
+      oldestInvoiceDate, maxOverdueDays,
     });
   }
-
   return rows.sort((a, b) => b.totalReceivable - a.totalReceivable);
 }
-
 
 export interface PayablesAgingRow {
   partyId: string; partyCode: string; partyName: string; phone?: string;
@@ -392,29 +361,30 @@ export function computePayablesAging(
 ): PayablesAgingRow[] {
   const rows: PayablesAgingRow[] = [];
   for (const party of parties) {
-    const totalPayable = Math.abs(Math.min(0, partyBalances.get(party.id) ?? 0));
-    if (totalPayable <= 0) continue;
-    const purchases = invoices
-      .filter((invoice) => invoice.partyId === party.id && invoice.invoiceType === 'purchase' && invoice.status !== 'cancelled')
-      .sort((a, b) => a.date.localeCompare(b.date));
-    let remaining = totalPayable, bucket0to30 = 0, bucket31to60 = 0, bucket61to90 = 0, bucketOver90 = 0;
-    let maxOverdueDays = 0; let oldestInvoiceDate: string | undefined;
+    const purchases = invoices.filter((invoice) =>
+      invoice.partyId === party.id && invoice.invoiceType === 'purchase' &&
+      invoice.status !== 'cancelled' && Number.isFinite(invoice.creditAmount) && invoice.creditAmount > 0
+    );
+    const totalPayable = purchases.reduce((sum, invoice) => sum + invoice.creditAmount, 0);
+    const ledgerBalance = Math.abs(Math.min(0, partyBalances.get(party.id) ?? 0));
+    if (totalPayable <= 0 && ledgerBalance <= 0) continue;
+    let bucket0to30 = 0, bucket31to60 = 0, bucket61to90 = 0, bucketOver90 = 0;
+    let maxOverdueDays = 0;
+    let oldestInvoiceDate: string | undefined;
     for (const invoice of purchases) {
-      if (remaining <= 0) break;
-      const portion = Math.min(remaining, Math.max(0, invoice.creditAmount));
-      if (portion <= 0) continue;
       const dueDate = invoice.dueDate || invoice.date;
       const age = Math.max(0, diffShamsiDays(todayShamsi, dueDate) ?? 0);
       if (age > maxOverdueDays) { maxOverdueDays = age; oldestInvoiceDate = dueDate; }
-      if (age <= 30) bucket0to30 += portion;
-      else if (age <= 60) bucket31to60 += portion;
-      else if (age <= 90) bucket61to90 += portion;
-      else bucketOver90 += portion;
-      remaining -= portion;
+      if (age <= 30) bucket0to30 += invoice.creditAmount;
+      else if (age <= 60) bucket31to60 += invoice.creditAmount;
+      else if (age <= 90) bucket61to90 += invoice.creditAmount;
+      else bucketOver90 += invoice.creditAmount;
     }
-    if (remaining > 0) { bucketOver90 += remaining; maxOverdueDays = Math.max(maxOverdueDays, 95); }
-    rows.push({ partyId: party.id, partyCode: party.code, partyName: party.name, phone: party.phone, totalPayable,
-      bucket0to30, bucket31to60, bucket61to90, bucketOver90, oldestInvoiceDate, maxOverdueDays });
+    rows.push({
+      partyId: party.id, partyCode: party.code, partyName: party.name, phone: party.phone,
+      totalPayable, bucket0to30, bucket31to60, bucket61to90, bucketOver90,
+      oldestInvoiceDate, maxOverdueDays,
+    });
   }
   return rows.sort((a, b) => b.totalPayable - a.totalPayable);
 }
