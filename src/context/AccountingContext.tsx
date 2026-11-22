@@ -4679,9 +4679,30 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             reservedLots.set(allocation.lotId, (reservedLots.get(allocation.lotId) || 0) + allocation.quantity);
           });
         }
+        for (const order of salesOrders.filter((item) => item.status === 'dispatched')) {
+          for (const orderItem of order.items) {
+            let orderAllocations = orderItem.lotAllocations || [];
+            if (!orderAllocations.length) {
+              const orderProduct = products.find((product) => product.id === orderItem.productId);
+              if (!orderProduct) throw new Error('کالای یک حواله خروج باز یافت نشد.');
+              const orderQty = orderItem.actualWeighedKg > 0 ? orderItem.actualWeighedKg : orderItem.orderedWeightKg;
+              const orderAvailableLots = inventoryLots.map((lot) => ({
+                ...lot,
+                quantityRemaining: Math.max(0, lot.quantityRemaining - Math.max(lot.reservedQuantity || 0, reservedLots.get(lot.id) || 0)),
+              }));
+              orderAllocations = allocateStockFIFO(orderAvailableLots as any, orderQty, {
+                productId: orderProduct.id, warehouse: order.warehouse,
+                asOfDate: shamsiToGregorianIso(order.dispatchDate || order.date),
+              }).allocations;
+            }
+            orderAllocations.forEach((allocation) => reservedLots.set(
+              allocation.lotId, (reservedLots.get(allocation.lotId) || 0) + allocation.quantity,
+            ));
+          }
+        }
         const availableLots = inventoryLots.map((lot) => ({
           ...lot,
-          quantityRemaining: Math.max(0, lot.quantityRemaining - (reservedLots.get(lot.id) || 0)),
+          quantityRemaining: Math.max(0, lot.quantityRemaining - Math.max(lot.reservedQuantity || 0, reservedLots.get(lot.id) || 0)),
         }));
         rawLotAllocations = allocateStockFIFO(availableLots as any, job.sentWeightKg, {
           productId: rawProduct.id, warehouse: rawProduct.warehouse, asOfDate: rawIssueDate,
