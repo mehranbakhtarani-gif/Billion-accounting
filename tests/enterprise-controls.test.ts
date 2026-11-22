@@ -665,7 +665,7 @@ test('audit excludes drafts from posted voucher balance and numbering checks', (
   });
   assert.equal(report.checks.find((check) => check.id === 'voucher-balance')?.status, 'pass');
   assert.equal(report.checks.find((check) => check.id === 'voucher-sequence')?.status, 'pass');
-  assert.ok(report.checks.find((check) => check.id === 'operational-controls')?.details.some((detail) => detail.includes('پیش‌نویس')));
+  assert.ok(report.checks.find((check) => check.id === 'operational-controls')?.details.some((detail) => detail.includes('سند موقت #1')));
   assert.equal(report.checks.find((check) => check.id === 'inventory-lot-ledger')?.status, 'pass');
 });
 
