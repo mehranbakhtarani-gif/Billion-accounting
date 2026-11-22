@@ -700,6 +700,21 @@ export interface PayrollCalculation {
 }
 
 export function calculateEmployeePayroll(emp: Employee): PayrollCalculation {
+  const numericInputs: Array<[string, number]> = [
+    ['حقوق پایه', emp.baseSalary],
+    ['حق مسکن', emp.housingAllowance],
+    ['بن خواربار', emp.foodAllowance],
+    ['تعداد فرزند', emp.childrenCount],
+    ['ساعات اضافه‌کاری', emp.overtimeHours],
+  ];
+  for (const [label, value] of numericInputs) {
+    if (!Number.isFinite(value) || value < 0) {
+      throw new Error(`${label} باید عددی معتبر و غیرمنفی باشد.`);
+    }
+  }
+  if (!Number.isInteger(emp.childrenCount)) {
+    throw new Error('تعداد فرزند باید عدد صحیح باشد.');
+  }
   const hourlyRate = emp.baseSalary / 220;
   const overtimePay = Math.round(emp.overtimeHours * hourlyRate * 1.4);
   const childAllowance = emp.childrenCount * 14_000_000;
