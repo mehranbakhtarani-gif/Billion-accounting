@@ -493,6 +493,62 @@ export function reconcileBankLines(
   };
 }
 
+export interface InvoiceAllocationCandidate {
+  id: string;
+  partyId: string;
+  invoiceType: string;
+  status: string;
+  creditAmount: number;
+}
+
+export interface InvoicePaymentAllocationInput {
+  invoiceId: string;
+  amount: number;
+}
+
+/** Validates explicit invoice settlement allocations without applying FIFO guesses. */
+export function validateInvoicePaymentAllocations(payload: {
+  direction: 'receipt' | 'payment';
+  partyId: string;
+  amount: number;
+  allocations: InvoicePaymentAllocationInput[];
+  invoices: InvoiceAllocationCandidate[];
+}): Array<{ invoiceId: string; amount: number }> {
+  if (!Number.isFinite(payload.amount) || payload.amount <= 0) {
+    throw new Error('مبلغ عملیات خزانه برای تخصیص معتبر نیست.');
+  }
+  if (!payload.partyId?.trim() || !Array.isArray(payload.allocations) || payload.allocations.length === 0) {
+    throw new Error('برای تخصیص به فاکتور، حداقل یک فاکتور باید انتخاب شود.');
+  }
+  const seen = new Set<string>();
+  let allocatedTotal = 0;
+  const expectedType = payload.direction === 'receipt' ? 'sale' : 'purchase';
+  const normalized = payload.allocations.map((allocation) => {
+    const invoiceId = String(allocation.invoiceId ?? '').trim();
+    const amount = Number(allocation.amount);
+    if (!invoiceId || seen.has(invoiceId)) throw new Error('فاکتور خالی یا تکراری در تخصیص پرداخت وجود دارد.');
+    seen.add(invoiceId);
+    if (!Number.isFinite(amount) || amount <= 0) throw new Error('مبلغ تخصیص هر فاکتور باید عددی مثبت و معتبر باشد.');
+    const invoice = payload.invoices.find((candidate) => candidate.id === invoiceId);
+    if (!invoice || invoice.partyId !== payload.partyId) throw new Error('فاکتور انتخاب‌شده متعلق به این طرف‌حساب نیست یا وجود ندارد.');
+    if (invoice.status === 'cancelled' || invoice.invoiceType !== expectedType) {
+      throw new Error(payload.direction === 'receipt'
+        ? 'دریافت فقط به فاکتور فروش باز قابل تخصیص است.'
+        : 'پرداخت فقط به فاکتور خرید باز قابل تخصیص است.');
+    }
+    const outstanding = Number(invoice.creditAmount);
+    if (!Number.isFinite(outstanding) || outstanding <= 0 || amount > outstanding + 0.000001) {
+      throw new Error(`مبلغ تخصیص از مانده باز فاکتور ${invoiceId} بیشتر است.`);
+    }
+    allocatedTotal += amount;
+    return { invoiceId, amount };
+  });
+  if (allocatedTotal > payload.amount + 0.000001) {
+    throw new Error('جمع تخصیص‌ها نمی‌تواند از مبلغ دریافت/پرداخت بیشتر باشد.');
+  }
+  return normalized;
+}
+
 export function validateTreasuryOperationPayload(payload: { date: string; amount: number; description: string }): void {
   const dateParts = typeof payload.date === 'string' ? payload.date.split('/').map(Number) : [];
   const maxDay = dateParts.length === 3
