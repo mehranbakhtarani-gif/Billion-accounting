@@ -4384,15 +4384,17 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         .forEach((item) => (item.rawLotAllocations || []).forEach((allocation) => {
           reservedLots.set(allocation.lotId, (reservedLots.get(allocation.lotId) || 0) + allocation.quantity);
         }));
-      for (const [lotId, reservedQty] of reservedLots) {
-        const lot = inventoryLots.find((candidate) => candidate.id === lotId);
-        if (!lot || lot.quantityRemaining + 0.0001 < reservedQty) {
+      const effectiveReservedLots = new Map<string, number>();
+      for (const lot of inventoryLots) {
+        const reservedQty = Math.max(lot.reservedQuantity || 0, reservedLots.get(lot.id) || 0);
+        if (reservedQty > lot.quantityRemaining + 0.0001) {
           throw new Error('رزرو بچ‌های پیمانکاری با مانده واقعی دفتر بچ سازگار نیست؛ حواله جدید مجاز نیست.');
         }
+        if (reservedQty > 0) effectiveReservedLots.set(lot.id, reservedQty);
       }
       const availableLots = inventoryLots.map((lot) => ({
         ...lot,
-        quantityRemaining: Math.max(0, lot.quantityRemaining - (reservedLots.get(lot.id) || 0)),
+        quantityRemaining: Math.max(0, lot.quantityRemaining - (effectiveReservedLots.get(lot.id) || 0)),
       }));
       const asOfDate = shamsiToGregorianIso(job.date);
       const fifoReservation = allocateStockFIFO(availableLots as any, job.sentWeightKg, {
@@ -4405,11 +4407,28 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         rawUnitCostIrr: fifoReservation.weightedUnitCost,
         rawLotAllocations: fifoReservation.allocations,
       };
+      const reservedLotUpdates = new Map<string, InventoryLot>();
+      for (const allocation of fifoReservation.allocations) {
+        const lot = reservedLotUpdates.get(allocation.lotId) ?? inventoryLots.find((candidate) => candidate.id === allocation.lotId);
+        if (!lot) throw new Error(`بچ ${allocation.lotNumber} برای رزرو پیمانکاری یافت نشد.`);
+        const currentReserved = Math.max(lot.reservedQuantity || 0, effectiveReservedLots.get(lot.id) || 0);
+        reservedLotUpdates.set(lot.id, { ...lot, reservedQuantity: Number((currentReserved + allocation.quantity).toFixed(4)) });
+      }
       if (user) {
-         try { await setDoc(doc(db, 'subcontractJobs', full.id), { ...full, createdAt: serverTimestamp(), updatedAt: serverTimestamp() }); }
-         catch (error) { handleSupabaseError(error, OperationType.CREATE, `subcontractJobs/${full.id}`); throw error; }
-       }
-       setSubcontractJobs((prev) => [full, ...prev]);
+        try {
+          const batch = writeBatch(db);
+          batch.set(doc(db, 'subcontractJobs', full.id), { ...full, createdAt: serverTimestamp(), updatedAt: serverTimestamp() });
+          reservedLotUpdates.forEach((lot) => batch.update(doc(db, 'inventoryLots', lot.id), {
+            reservedQuantity: lot.reservedQuantity, updatedAt: serverTimestamp(),
+          }));
+          await batch.commit();
+        } catch (error) {
+          handleSupabaseError(error, OperationType.CREATE, `subcontractJobs/${full.id}`);
+          throw error;
+        }
+      }
+      if (reservedLotUpdates.size) setInventoryLots((prev) => prev.map((lot) => reservedLotUpdates.get(lot.id) ?? lot));
+      setSubcontractJobs((prev) => [full, ...prev]);
       logActivity(
         'پیمانکاری رنگرزی/بافندگی',
         `ارسال نخ خام (${full.jobNumber})`,
