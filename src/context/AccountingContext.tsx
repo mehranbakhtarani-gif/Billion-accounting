@@ -2420,6 +2420,12 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         (job.rawLotAllocations || []).forEach((allocation) => {
           reservedLotQuantities.set(allocation.lotId, (reservedLotQuantities.get(allocation.lotId) || 0) + allocation.quantity);
         }));
+      for (const [lotId, reservedQty] of reservedLotQuantities) {
+        const lot = workingLots.find((candidate) => candidate.id === lotId);
+        if (!lot || lot.quantityRemaining + 0.0001 < reservedQty) {
+          throw new Error('رزرو بچ‌های پیمانکاری با مانده واقعی دفتر بچ سازگار نیست؛ فروش متوقف شد.');
+        }
+      }
       const lotUpdates = new Map<string, InventoryLot>();
       const lotReceipts: InventoryLot[] = [];
       const lotMovementsToSave: InventoryLotMovement[] = [];
@@ -4327,6 +4333,12 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         .forEach((item) => (item.rawLotAllocations || []).forEach((allocation) => {
           reservedLots.set(allocation.lotId, (reservedLots.get(allocation.lotId) || 0) + allocation.quantity);
         }));
+      for (const [lotId, reservedQty] of reservedLots) {
+        const lot = inventoryLots.find((candidate) => candidate.id === lotId);
+        if (!lot || lot.quantityRemaining + 0.0001 < reservedQty) {
+          throw new Error('رزرو بچ‌های پیمانکاری با مانده واقعی دفتر بچ سازگار نیست؛ حواله جدید مجاز نیست.');
+        }
+      }
       const availableLots = inventoryLots.map((lot) => ({
         ...lot,
         quantityRemaining: Math.max(0, lot.quantityRemaining - (reservedLots.get(lot.id) || 0)),
