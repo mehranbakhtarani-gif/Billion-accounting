@@ -24,6 +24,7 @@ import {
 } from '../lib/format';
 import { fuzzyFilterAndRank } from '../lib/fuzzySearch';
 import { FuzzyTableOption, FuzzyTableSearch } from './FuzzyTableSearch';
+import { code39Svg, normalizeCode39 } from '../lib/barcode';
 
 const YARN_CATEGORIES = [
   'نخ پلی‌استر DTY',
@@ -105,6 +106,7 @@ export const InventoryView: React.FC<{ initialIntent?: string; clearIntent?: () 
 
   // Product form (Textile Yarn Multi-Unit)
   const [sku, setSku] = useState('');
+  const [barcode, setBarcode] = useState('');
   const [name, setName] = useState('');
   const [category, setCategory] = useState(YARN_CATEGORIES[0]);
   const [warehouse, setWarehouse] = useState(YARN_WAREHOUSES[0]);
@@ -125,6 +127,7 @@ export const InventoryView: React.FC<{ initialIntent?: string; clearIntent?: () 
   const openCreate = () => {
     setEditingProduct(null);
     setSku('');
+    setBarcode('');
     setName('');
     setCategory(YARN_CATEGORIES[0]);
     setWarehouse(YARN_WAREHOUSES[0]);
@@ -147,6 +150,7 @@ export const InventoryView: React.FC<{ initialIntent?: string; clearIntent?: () 
   const openEdit = (p: Product) => {
     setEditingProduct(p);
     setSku(p.sku);
+    setBarcode(p.barcode || p.sku);
     setName(p.name);
     setCategory(p.category);
     setWarehouse(p.warehouse);
@@ -405,7 +409,22 @@ export const InventoryView: React.FC<{ initialIntent?: string; clearIntent?: () 
       return;
     }
 
+    let normalizedBarcode: string | undefined;
+    if (barcode.trim()) {
+      try {
+        normalizedBarcode = normalizeCode39(barcode);
+      } catch (error) {
+        showToast(error instanceof Error ? error.message : 'بارکد معتبر نیست.');
+        return;
+      }
+      if (products.some((product) => product.id !== editingProduct?.id && (product.barcode || product.sku).toUpperCase() === normalizedBarcode)) {
+        showToast('این بارکد قبلاً برای کالای دیگری ثبت شده است.');
+        return;
+      }
+    }
+
     const payload = {
+      barcode: normalizedBarcode,
       name: name.trim(),
       category: category.trim() || YARN_CATEGORIES[0],
       warehouse: warehouse.trim() || YARN_WAREHOUSES[0],
@@ -440,6 +459,30 @@ export const InventoryView: React.FC<{ initialIntent?: string; clearIntent?: () 
       ...payload,
     });
     setShowForm(false);
+  };
+
+  const printProductLabel = (product: Product) => {
+    const value = product.barcode || product.sku;
+    let svg: string;
+    try {
+      svg = code39Svg(value, 58);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'بارکد کالا معتبر نیست.');
+      return;
+    }
+    const popup = window.open('', '_blank', 'width=520,height=420');
+    if (!popup) {
+      showToast('پنجره چاپ مسدود شد؛ اجازه بازشدن پنجره را برای این سایت فعال کنید.');
+      return;
+    }
+    const safe = (text: string) => text.replace(/[&<>"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[char] || char));
+    popup.document.write(`<!doctype html><html lang="fa" dir="rtl"><head><meta charset="utf-8"><title>برچسب کالا</title><style>
+      @page{size:70mm 40mm;margin:2mm}*{box-sizing:border-box}body{font-family:Arial,sans-serif;margin:0;color:#000}
+      .label{width:66mm;height:36mm;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2mm;overflow:hidden}
+      .name{font-size:11pt;font-weight:700;text-align:center;max-width:64mm;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+      svg{width:62mm;height:16mm;fill:#000}.code{font:9pt monospace;letter-spacing:1px}
+      </style></head><body><main class="label"><div class="name">${safe(product.name)}</div>${svg}<div class="code">${safe(value)}</div><div style="font-size:8pt">${safe(product.sku)} · ${safe(product.warehouse)}</div></main><script>window.onload=()=>{window.print();window.onafterprint=()=>window.close()}</script></body></html>`);
+    popup.document.close();
   };
 
   // Stocktake calculation supporting direct kg OR carton entry
@@ -678,6 +721,17 @@ export const InventoryView: React.FC<{ initialIntent?: string; clearIntent?: () 
                 placeholder="YRN-DTY-300"
                 className="w-full px-3 py-2 font-code rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 disabled:opacity-60"
               />
+            </div>
+            <div>
+              <label className="block text-slate-500 mb-1">بارکد کالا (Code 39)</label>
+              <input
+                value={barcode}
+                onChange={(e) => setBarcode(e.target.value.toUpperCase())}
+                placeholder="خالی = استفاده از SKU"
+                maxLength={64}
+                className="w-full px-3 py-2 font-code rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950"
+              />
+              <p className="text-[10px] text-slate-500 mt-1">حروف انگلیسی، عدد و علائم مجاز؛ در صورت خالی بودن، SKU استفاده می‌شود.</p>
             </div>
             <div className="md:col-span-2">
               <label className="block text-slate-500 mb-1">نام کامل نخ نساجی</label>
@@ -1031,6 +1085,14 @@ export const InventoryView: React.FC<{ initialIntent?: string; clearIntent?: () 
                         onClick={(e) => e.stopPropagation()}
                       >
                         <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => printProductLabel(p)}
+                            title="چاپ برچسب بارکد کالا"
+                            className="px-2 py-1 rounded text-[10px] text-slate-600 hover:text-teal-700 border border-slate-200 dark:border-slate-700"
+                          >
+                            چاپ برچسب
+                          </button>
                           <button
                             onClick={() => openEdit(p)}
                             title="ویرایش مشخصات، واحدها و قیمت نخ"
