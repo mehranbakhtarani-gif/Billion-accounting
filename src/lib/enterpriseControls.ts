@@ -203,6 +203,8 @@ export interface StockLot {
   expiryDate?: string;
   quantityReceived: number;
   quantityRemaining: number;
+  reservedQuantity?: number;
+  returnedQuantity?: number;
   unitCost: number;
 }
 
@@ -282,7 +284,7 @@ export function reconcileInventoryLotLedger(
   const lotById = new Map<string, StockLot>();
   for (const lot of lots) {
     if (!lot.id.trim() || lotById.has(lot.id)) throw new Error('شناسه بچ در تطبیق دفتر تکراری یا خالی است.');
-    if (!Number.isFinite(lot.quantityReceived) || lot.quantityReceived < 0 || !Number.isFinite(lot.quantityRemaining) || lot.quantityRemaining < 0 || lot.quantityRemaining - lot.quantityReceived > 0.0001) throw new Error('مقدار دریافتی یا مانده بچ برای تطبیق معتبر نیست.');
+    if (!Number.isFinite(lot.quantityReceived) || lot.quantityReceived < 0 || !Number.isFinite(lot.quantityRemaining) || lot.quantityRemaining < 0 || lot.quantityRemaining - lot.quantityReceived > 0.0001 || !Number.isFinite(lot.reservedQuantity ?? 0) || (lot.reservedQuantity ?? 0) < 0 || (lot.reservedQuantity ?? 0) - lot.quantityRemaining > 0.0001) throw new Error('مقدار دریافتی، مانده یا رزرو بچ برای تطبیق معتبر نیست.');
     lotById.set(lot.id, lot);
   }
   const movementIds = new Set<string>();
