@@ -2335,14 +2335,14 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
               productId: product.id, warehouse: payload.warehouse, asOfDate,
             });
             item.lotAllocations = fifo.allocations;
-            workingLots = fifo.remainingLots as InventoryLot[];
+            workingLots = fifo.remainingLots as unknown as InventoryLot[];
             fifo.allocations.forEach((allocation) => {
               const lot = workingLots.find((candidate) => candidate.id === allocation.lotId);
               if (!lot) throw new Error('بچ تخصیص‌یافته برای ثبت خروج یافت نشد.');
               lotUpdates.set(lot.id, lot);
               lotMovementsToSave.push({
                 id: generateSafeId('lotmove'), ownerId, lotId: lot.id, productId: product.id,
-                warehouse: lot.warehouse, movementType: payload.invoiceType === 'waste' ? 'waste' : 'issue',
+                warehouse: lot.warehouse, movementType: payload.invoiceType === 'waste' ? 'waste' : payload.invoiceType === 'purchase_return' ? 'purchase-return' : 'issue',
                 quantity: -allocation.quantity, unitCost: allocation.unitCost,
                 referenceId: id, referenceNumber: payload.invoiceNumber, date: asOfDate,
               });
@@ -2351,12 +2351,19 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           } else {
             const lotId = generateSafeId('lot');
             const lotNumber = (item.lotNumber || product.lotNumber || `${payload.invoiceNumber}-${lotId.slice(-6)}`).trim();
+            const returnedSourceLot = payload.invoiceType === 'sale_return'
+              ? inventoryLots.find((candidate) => candidate.productId === product.id &&
+                  candidate.warehouse === payload.warehouse && candidate.lotNumber === item.lotNumber)
+              : undefined;
+            if (item.receivedDate && !/^\\d{4}-\\d{2}-\\d{2}$/.test(item.receivedDate)) throw new Error('تاریخ ورود بچ در ردیف فاکتور معتبر نیست.');
+            if (item.expiryDate && !/^\\d{4}-\\d{2}-\\d{2}$/.test(item.expiryDate)) throw new Error('تاریخ انقضای بچ در ردیف فاکتور معتبر نیست.');
             const lot: InventoryLot = {
               id: lotId, ownerId, productId: product.id, warehouse: payload.warehouse,
-              lotNumber: lotNumber.slice(0, 80), receivedDate: asOfDate,
+              lotNumber: lotNumber.slice(0, 80), receivedDate: item.receivedDate || asOfDate,
+              ...(item.expiryDate ? { expiryDate: item.expiryDate } : {}),
               quantityReceived: item.quantity, quantityRemaining: item.quantity,
-              unitCost: payload.invoiceType === 'sale_return' ? product.buyPrice : item.unitPrice,
-              costBasis: payload.invoiceType === 'sale_return' ? 'estimated-return' : 'documented',
+              unitCost: returnedSourceLot?.unitCost ?? (payload.invoiceType === 'sale_return' ? product.buyPrice : item.unitPrice),
+              costBasis: returnedSourceLot?.costBasis ?? (payload.invoiceType === 'sale_return' ? 'estimated-return' : 'documented'),
               sourceInvoiceId: id, createdAt: serverTimestamp(),
             };
             item.receivedLotId = lotId;
