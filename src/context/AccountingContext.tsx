@@ -3127,9 +3127,17 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       )) {
         throw new Error('اقلام یا شماره لات پرونده واردات معتبر نیستند.');
       }
+      const lotByProduct = new Map<string, string>();
+      for (const item of dossier.items) {
+        const existingLot = lotByProduct.get(item.productId);
+        if (existingLot !== undefined && existingLot !== item.lotNumber.trim()) {
+          throw new Error('برای یک کالا چند شماره لات متفاوت ثبت شده است؛ برای حفظ ردیابی لات‌ها، هر لات را به‌عنوان کالای انبار جداگانه تعریف کنید.');
+        }
+        lotByProduct.set(item.productId, item.lotNumber.trim());
+      }
       if (dossier.costs.some((cost) => !Number.isFinite(cost.amountIrr) || cost.amountIrr < 0 ||
-          !accounts.some((account) => account.code === cost.accountCode))) {
-        throw new Error('حساب یا مبلغ هزینه‌های جانبی پرونده واردات معتبر نیست.');
+          !accounts.some((account) => account.code === cost.accountCode && (account.category === 'asset' || account.category === 'liability')))) {
+        throw new Error('حساب تسویه هزینه‌های جانبی باید حساب دارایی (بانک/صندوق) یا بدهی (بستانکاران) باشد و مبلغ آن معتبر باشد.');
       }
       const costsTotal = dossier.costs.reduce((sum, cost) => sum + Math.round(cost.amountIrr), 0);
       if (!Number.isFinite(dossier.totalForeignAmount) || dossier.totalForeignAmount <= 0 ||
@@ -3189,7 +3197,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         return { item, product };
       });
       const costTotal = dossier.costs.reduce((sum, cost) => {
-        if (!Number.isFinite(cost.amountIrr) || cost.amountIrr < 0 || !cost.accountCode.trim() || !accounts.some((account) => account.code === cost.accountCode)) throw new Error('مبلغ یا حساب هزینه جانبی پرونده واردات نامعتبر است.');
+        if (!Number.isFinite(cost.amountIrr) || cost.amountIrr < 0 || !cost.accountCode.trim() || !accounts.some((account) => account.code === cost.accountCode && (account.category === 'asset' || account.category === 'liability'))) throw new Error('حساب تسویه هزینه جانبی باید دارایی یا بدهی باشد و مبلغ آن معتبر باشد.');
         return sum + Math.round(cost.amountIrr);
       }, 0);
       const fobTotal = Math.round(dossier.totalFobIrr);
