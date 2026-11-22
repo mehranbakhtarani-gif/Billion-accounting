@@ -34,7 +34,7 @@ import {
 import { createHolooSeedData } from '../data/holooSeed';
 import { getOrCreateLocalDeviceIdentity, loadLocalAccountingSnapshot, LocalDeviceIdentity, saveLocalAccountingSnapshot } from '../lib/localAccountingStore';
 import { FxRevaluationRow } from '../lib/enterpriseAccounting';
-import { assertSufficientStock, getChequeStatusTransitionError, validateJournalEntryPayload, validateTreasuryOperationPayload, validateTreasuryAccountSelection, validateTreasuryTransferAccounts, validateChequeDateRange, validatePartyTreasuryAccount } from '../lib/enterpriseControls';
+import { assertSufficientStock, getChequeStatusTransitionError, validateJournalEntryPayload, validateTreasuryOperationPayload, validateTreasuryAccountSelection, validateTreasuryTransferAccounts, validateChequeDateRange, validatePartyTreasuryAccount, validateJalaliDate } from '../lib/enterpriseControls';
 import {
   AuditReport,
   buildInvoiceVoucherLines,
@@ -2764,80 +2764,122 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
   const addFixedAsset = useCallback(
     async (asset: Omit<FixedAsset, 'id' | 'ownerId'>) => {
-      if (!asset.title.trim() || !Number.isFinite(asset.purchaseCost) || asset.purchaseCost <= 0 || !Number.isFinite(asset.salvageValue) || asset.salvageValue < 0 || asset.salvageValue > asset.purchaseCost || !Number.isFinite(asset.usefulLifeYears) || asset.usefulLifeYears <= 0 || !Number.isFinite(asset.accumulatedDepreciation) || asset.accumulatedDepreciation < 0 || asset.accumulatedDepreciation > asset.purchaseCost - asset.salvageValue) throw new Error('مشخصات مالی دارایی ثابت معتبر نیست.');
+      const assetCode = asset.assetCode.trim();
+      const title = asset.title.trim();
+      if (!assetCode || !title) throw new Error('کد اموال و شرح دارایی الزامی هستند.');
+      if (assets.some((existing) => existing.assetCode.trim().toLowerCase() === assetCode.toLowerCase())) {
+        throw new Error('کد اموال واردشده قبلاً ثبت شده است.');
+      }
+      validateJalaliDate(asset.purchaseDate, 'تاریخ خرید دارایی');
+      if (!Number.isFinite(asset.purchaseCost) || asset.purchaseCost <= 0 ||
+          !Number.isFinite(asset.salvageValue) || asset.salvageValue < 0 || asset.salvageValue > asset.purchaseCost ||
+          !Number.isFinite(asset.usefulLifeYears) || asset.usefulLifeYears <= 0 || asset.usefulLifeYears > 100 ||
+          !Number.isFinite(asset.accumulatedDepreciation) || asset.accumulatedDepreciation < 0 ||
+          asset.accumulatedDepreciation > asset.purchaseCost - asset.salvageValue) {
+        throw new Error('مشخصات مالی دارایی ثابت معتبر نیست.');
+      }
+      if (asset.costCenterId && !costCenters.some((center) => center.id === asset.costCenterId)) {
+        throw new Error('مرکز هزینه انتخاب‌شده برای دارایی معتبر نیست.');
+      }
+      const normalizedAsset = { ...asset, assetCode, title };
       const id = generateSafeId('ast');
-      const full: FixedAsset = { ...asset, id, ownerId };
+      const full: FixedAsset = { ...normalizedAsset, id, ownerId };
       if (user) {
         try {
           await setDoc(doc(db, 'assets', id), {
             ownerId,
-            assetCode: asset.assetCode.slice(0, 40),
-            title: asset.title.trim().slice(0, 160),
-            purchaseDate: asset.purchaseDate.slice(0, 20),
-            purchaseCost: Math.max(1, Number(asset.purchaseCost) || 1),
-            salvageValue: Math.max(0, Number(asset.salvageValue) || 0),
-            usefulLifeYears: Math.min(100, Math.max(1, Number(asset.usefulLifeYears) || 5)),
-            accumulatedDepreciation: Math.max(0, Number(asset.accumulatedDepreciation) || 0),
+            assetCode,
+            title,
+            purchaseDate: asset.purchaseDate,
+            purchaseCost: asset.purchaseCost,
+            salvageValue: asset.salvageValue,
+            usefulLifeYears: asset.usefulLifeYears,
+            accumulatedDepreciation: asset.accumulatedDepreciation,
             ...(asset.costCenterId ? { costCenterId: asset.costCenterId.slice(0, 128) } : {}),
             createdAt: serverTimestamp(),
             updatedAt: serverTimestamp(),
           });
         } catch (err) {
           handleSupabaseError(err, OperationType.CREATE, `assets/${id}`);
+          throw err;
         }
       } else {
         setAssets((prev) => [...prev, full]);
       }
-      showToast(`دارایی ثابت «${asset.title}» ثبت شد.`);
+      showToast(`دارایی ثابت «${title}» ثبت شد.`);
     },
-    [ownerId, user, showToast]
+    [ownerId, user, assets, costCenters, showToast]
   );
 
   const updateFixedAsset = useCallback(
     async (assetId: string, patch: Partial<Omit<FixedAsset, 'id' | 'ownerId' | 'assetCode'>>) => {
       const existing = assets.find((asset) => asset.id === assetId);
-      if (!existing) return;
+      if (!existing) throw new Error('دارایی موردنظر برای ویرایش یافت نشد.');
+      if (patch.title !== undefined && !patch.title.trim()) throw new Error('شرح دارایی نمی‌تواند خالی باشد.');
+      if (patch.purchaseDate !== undefined) validateJalaliDate(patch.purchaseDate, 'تاریخ خرید دارایی');
+      const financialFieldsChanged =
+        patch.purchaseDate !== undefined || patch.purchaseCost !== undefined ||
+        patch.salvageValue !== undefined || patch.usefulLifeYears !== undefined ||
+        patch.accumulatedDepreciation !== undefined;
+      if (existing.accumulatedDepreciation > 0 && financialFieldsChanged) {
+        throw new Error('دارایی دارای سابقه استهلاک است؛ تغییر مبانی مالی آن نیازمند سند اصلاحی و رسیدگی حسابداری است.');
+      }
       const nextCost = patch.purchaseCost ?? existing.purchaseCost;
       const nextSalvage = patch.salvageValue ?? existing.salvageValue;
       const nextAccumulated = patch.accumulatedDepreciation ?? existing.accumulatedDepreciation;
       const nextLife = patch.usefulLifeYears ?? existing.usefulLifeYears;
-      if (!Number.isFinite(nextCost) || nextCost <= 0 || !Number.isFinite(nextSalvage) || nextSalvage < 0 || nextSalvage > nextCost || !Number.isFinite(nextAccumulated) || nextAccumulated < 0 || nextAccumulated > nextCost - nextSalvage || !Number.isFinite(nextLife) || nextLife <= 0) throw new Error('ویرایش بهای خرید، ارزش اسقاط، عمر مفید یا استهلاک انباشته دارایی معتبر نیست.');
+      if (!Number.isFinite(nextCost) || nextCost <= 0 ||
+          !Number.isFinite(nextSalvage) || nextSalvage < 0 || nextSalvage > nextCost ||
+          !Number.isFinite(nextAccumulated) || nextAccumulated < 0 || nextAccumulated > nextCost - nextSalvage ||
+          !Number.isFinite(nextLife) || nextLife <= 0 || nextLife > 100) {
+        throw new Error('ویرایش بهای خرید، ارزش اسقاط، عمر مفید یا استهلاک انباشته دارایی معتبر نیست.');
+      }
+      if (patch.costCenterId && !costCenters.some((center) => center.id === patch.costCenterId)) {
+        throw new Error('مرکز هزینه انتخاب‌شده برای دارایی معتبر نیست.');
+      }
       if (user) {
         try {
           const payload: Record<string, unknown> = { updatedAt: serverTimestamp() };
           if (patch.title !== undefined) payload.title = patch.title.trim().slice(0, 160);
           if (patch.purchaseDate !== undefined) payload.purchaseDate = patch.purchaseDate.slice(0, 20);
-          if (patch.purchaseCost !== undefined) payload.purchaseCost = Math.max(1, Number(patch.purchaseCost) || 1);
-          if (patch.salvageValue !== undefined) payload.salvageValue = Math.max(0, Number(patch.salvageValue) || 0);
-          if (patch.usefulLifeYears !== undefined) payload.usefulLifeYears = Math.min(100, Math.max(1, Number(patch.usefulLifeYears) || 5));
-          if (patch.accumulatedDepreciation !== undefined) payload.accumulatedDepreciation = Math.max(0, Number(patch.accumulatedDepreciation) || 0);
+          if (patch.purchaseCost !== undefined) payload.purchaseCost = patch.purchaseCost;
+          if (patch.salvageValue !== undefined) payload.salvageValue = patch.salvageValue;
+          if (patch.usefulLifeYears !== undefined) payload.usefulLifeYears = patch.usefulLifeYears;
+          if (patch.accumulatedDepreciation !== undefined) payload.accumulatedDepreciation = patch.accumulatedDepreciation;
           if (patch.costCenterId !== undefined) payload.costCenterId = patch.costCenterId.slice(0, 128);
           await updateDoc(doc(db, 'assets', assetId), payload);
         } catch (err) {
           handleSupabaseError(err, OperationType.UPDATE, `assets/${assetId}`);
+          throw err;
         }
       } else {
-        setAssets((prev) => prev.map((a) => (a.id === assetId ? { ...a, ...patch } : a)));
+        setAssets((prev) => prev.map((asset) => (asset.id === assetId ? { ...asset, ...patch } : asset)));
       }
       showToast('مشخصات دارایی ثابت ویرایش شد.');
     },
-    [assets, user, showToast]
+    [assets, costCenters, user, showToast]
   );
 
   const deleteFixedAsset = useCallback(
     async (assetId: string) => {
+      const existing = assets.find((asset) => asset.id === assetId);
+      if (!existing) throw new Error('دارایی موردنظر برای حذف یافت نشد.');
+      if (existing.accumulatedDepreciation > 0) {
+        throw new Error('دارایی دارای سابقه استهلاک است و حذف مستقیم آن مجاز نیست؛ ابتدا سند اصلاحی/واگذاری ثبت کنید.');
+      }
       if (user) {
         try {
           await deleteDoc(doc(db, 'assets', assetId));
         } catch (err) {
           handleSupabaseError(err, OperationType.DELETE, `assets/${assetId}`);
+          throw err;
         }
       } else {
-        setAssets((prev) => prev.filter((a) => a.id !== assetId));
+        setAssets((prev) => prev.filter((asset) => asset.id !== assetId));
       }
       showToast('دارایی ثابت حذف شد.');
     },
-    [user, showToast]
+    [assets, user, showToast]
   );
 
   const postDepreciationVoucher = useCallback(
@@ -2849,7 +2891,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         throw new Error(`برای دوره «${normalizedPeriod}» قبلاً سند استهلاک ثبت شده است.`);
       }
       const allocations = assets.map((asset) => {
-        if (!Number.isFinite(asset.purchaseCost) || asset.purchaseCost <= 0 || !Number.isFinite(asset.salvageValue) || asset.salvageValue < 0 || asset.salvageValue > asset.purchaseCost || !Number.isFinite(asset.usefulLifeYears) || asset.usefulLifeYears <= 0 || !Number.isFinite(asset.accumulatedDepreciation) || asset.accumulatedDepreciation < 0) {
+        if (!Number.isFinite(asset.purchaseCost) || asset.purchaseCost <= 0 || !Number.isFinite(asset.salvageValue) || asset.salvageValue < 0 || asset.salvageValue > asset.purchaseCost || !Number.isFinite(asset.usefulLifeYears) || asset.usefulLifeYears <= 0 || !Number.isFinite(asset.accumulatedDepreciation) || asset.accumulatedDepreciation < 0 || asset.accumulatedDepreciation > asset.purchaseCost - asset.salvageValue) {
           throw new Error(`اطلاعات بهای تمام‌شده، ارزش اسقاط، عمر مفید یا استهلاک انباشته دارایی «${asset.title}» معتبر نیست.`);
         }
         const amount = calculateMonthlyDepreciation(asset);
