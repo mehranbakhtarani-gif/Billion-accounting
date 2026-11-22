@@ -34,7 +34,7 @@ import {
 import { createHolooSeedData } from '../data/holooSeed';
 import { getOrCreateLocalDeviceIdentity, loadLocalAccountingSnapshot, LocalDeviceIdentity, saveLocalAccountingSnapshot } from '../lib/localAccountingStore';
 import { FxRevaluationRow } from '../lib/enterpriseAccounting';
-import { assertSufficientStock } from '../lib/enterpriseControls';
+import { assertSufficientStock, validateJournalEntryPayload } from '../lib/enterpriseControls';
 import {
   AuditReport,
   buildInvoiceVoucherLines,
@@ -235,32 +235,6 @@ interface AccountingContextValue {
   // Backup & Restore
   exportBackupJson: () => string;
   importBackupJson: (jsonText: string) => boolean;
-}
-
-function assertValidVoucherPayload(payload: {
-  date: string;
-  description: string;
-  lines: VoucherLine[];
-}): void {
-  const dateParts = payload.date.split('/').map(Number);
-  if (!/^14\d{2}\/\d{2}\/\d{2}$/.test(payload.date) ||
-      dateParts.length !== 3 || dateParts[1] < 1 || dateParts[1] > 12 ||
-      dateParts[2] < 1 || dateParts[2] > 31) {
-    throw new Error('تاریخ سند حسابداری معتبر نیست.');
-  }
-  if (!payload.description?.trim()) throw new Error('شرح سند حسابداری الزامی است.');
-  if (!Array.isArray(payload.lines) || payload.lines.length < 2 || payload.lines.length > 100) {
-    throw new Error('سند باید بین ۲ تا ۱۰۰ ردیف حسابداری داشته باشد.');
-  }
-  for (const line of payload.lines) {
-    const debit = Number(line.debit);
-    const credit = Number(line.credit);
-    if (!line.accountCode?.trim() || !Number.isFinite(debit) || !Number.isFinite(credit) ||
-        debit < 0 || credit < 0 || (debit > 0 && credit > 0) ||
-        (debit === 0 && credit === 0)) {
-      throw new Error('کد حساب یا مبلغ بدهکار/بستانکار یکی از ردیف‌های سند معتبر نیست.');
-    }
-  }
 }
 
 const AccountingContext = createContext<AccountingContextValue | null>(null);
@@ -866,7 +840,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       currencyCode?: string;
       exchangeRate?: number;
     }): Promise<Voucher> => {
-      assertValidVoucherPayload(payload);
+      validateJournalEntryPayload(payload);
       if (payload.voucherType !== 'closing' && vouchers.some((voucher) => voucher.voucherType === 'closing' && voucher.date.slice(0, 4) === payload.date.slice(0, 4))) { const message = `دوره مالی ${payload.date.slice(0, 4)} بسته شده است؛ ثبت سند جدید مجاز نیست.`; showToast(message); throw new Error(message); }
       const totalDebit = payload.lines.reduce((s, l) => s + (Number(l.debit) || 0), 0);
       const totalCredit = payload.lines.reduce((s, l) => s + (Number(l.credit) || 0), 0);
@@ -970,7 +944,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         exchangeRate?: number;
       }
     ) => {
-      assertValidVoucherPayload(payload);
+      validateJournalEntryPayload(payload);
       const existing = vouchers.find((v) => v.id === voucherId);
       if (!existing) return;
       if (vouchers.some((voucher) => voucher.voucherType === 'closing' && (voucher.date.slice(0, 4) === existing.date.slice(0, 4) || voucher.date.slice(0, 4) === payload.date.slice(0, 4)))) { const message = `دوره مالی ${existing.date.slice(0, 4)} بسته شده است؛ ویرایش سند مجاز نیست.`; showToast(message); throw new Error(message); }
