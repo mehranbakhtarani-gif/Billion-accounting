@@ -50,7 +50,7 @@ export function parseCsvRow(input: string): string[] {
 
 /** Parse RFC-4180-style CSV records, including quoted commas, escaped quotes and embedded newlines. */
 export function parseCsvRecords(input: string): string[][] {
-  const source = input.replace(/^\\uFEFF/, '');
+  const source = input.replace(/^\uFEFF/, '');
   const records: string[][] = [];
   let fields: string[] = [];
   let value = '';
@@ -71,8 +71,8 @@ export function parseCsvRecords(input: string): string[][] {
       afterQuote = false;
       continue;
     }
-    if (char === '\\r' || char === '\\n') {
-      if (char === '\\r' && source[index + 1] === '\\n') index += 1;
+    if (char === '\r' || char === '\n') {
+      if (char === '\r' && source[index + 1] === '\n') index += 1;
       fields.push(value.trim());
       value = '';
       afterQuote = false;
@@ -80,7 +80,7 @@ export function parseCsvRecords(input: string): string[][] {
       fields = [];
       continue;
     }
-    if (afterQuote && !/\\s/.test(char)) throw new Error('ساختار CSV پس از بسته‌شدن نقل‌قول معتبر نیست.');
+    if (afterQuote && !/\s/.test(char)) throw new Error('ساختار CSV پس از بسته‌شدن نقل‌قول معتبر نیست.');
     if (!afterQuote) value += char;
   }
   if (quoted) throw new Error('نقل‌قول در فایل CSV بسته نشده است.');
