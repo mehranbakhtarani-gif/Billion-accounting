@@ -72,7 +72,7 @@ export const AuditView: React.FC<{
           </button>
           <button
             onClick={() => exportToCsv(
-              \`billion-audit-report-\${profile.fiscalYear}.csv\`,
+              `billion-audit-report-${profile.fiscalYear}.csv`,
               ['شناسه کنترل', 'حوزه', 'عنوان کنترل', 'وضعیت', 'خلاصه', 'جزئیات'],
               auditReport.checks.map((check) => [
                 check.id,
