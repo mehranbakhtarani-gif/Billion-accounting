@@ -428,33 +428,33 @@ export const TreasuryView: React.FC<TreasuryViewProps> = ({ initialIntent, clear
 
   const handleCreateCheque = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (sayadiId.trim().length < 6 || !serial.trim() || amount <= 0) {
-      showToast('شناسه صیادی، شماره سریال و مبلغ معتبر چک را وارد کنید.');
-      return;
+    try {
+      if (sayadiId.trim().length < 6 || !serial.trim() || !Number.isFinite(amount) || amount <= 0) {
+        throw new Error('شناسه صیادی، شماره سریال و مبلغ معتبر چک را وارد کنید.');
+      }
+      const p = parties.find((x) => x.id === partyId);
+      if (!p) throw new Error('لطفاً طرف‌حساب را انتخاب کنید.');
+      await addCheque({
+        sayadiId: sayadiId.trim(),
+        serial: serial.trim(),
+        direction,
+        partyId: p.id,
+        partyName: p.name,
+        bankName,
+        branch,
+        amount,
+        issueDate,
+        dueDate,
+        status: 'in_box',
+        notes: notes.trim() || undefined,
+      });
+      setSayadiId('');
+      setSerial('');
+      setNotes('');
+      setShowAddCheque(false);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'ثبت چک صیادی ناموفق بود.');
     }
-    const p = parties.find((x) => x.id === partyId);
-    if (!p) {
-      showToast('لطفاً طرف‌حساب را انتخاب کنید.');
-      return;
-    }
-    await addCheque({
-      sayadiId: sayadiId.trim(),
-      serial: serial.trim(),
-      direction,
-      partyId: p.id,
-      partyName: p.name,
-      bankName,
-      branch,
-      amount,
-      issueDate,
-      dueDate,
-      status: 'in_box',
-      notes: notes.trim() || undefined,
-    });
-    setSayadiId('');
-    setSerial('');
-    setNotes('');
-    setShowAddCheque(false);
   };
 
   const openEditCheque = (ch: Cheque) => {
@@ -468,13 +468,17 @@ export const TreasuryView: React.FC<TreasuryViewProps> = ({ initialIntent, clear
   const handleSaveChequeEdit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingCheque) return;
-    await updateCheque(editingCheque.id, {
-      bankName: editBankName.trim() || editingCheque.bankName,
-      branch: editBranch.trim() || undefined,
-      dueDate: editDueDate.trim() || editingCheque.dueDate,
-      notes: editNotes.trim() || undefined,
-    });
-    setEditingCheque(null);
+    try {
+      await updateCheque(editingCheque.id, {
+        bankName: editBankName.trim() || editingCheque.bankName,
+        branch: editBranch.trim() || undefined,
+        dueDate: editDueDate.trim() || editingCheque.dueDate,
+        notes: editNotes.trim() || undefined,
+      });
+      setEditingCheque(null);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'ویرایش چک صیادی ناموفق بود.');
+    }
   };
 
   const handleStatusSelectChange = async (ch: Cheque, nextStatus: ChequeStatus) => {
