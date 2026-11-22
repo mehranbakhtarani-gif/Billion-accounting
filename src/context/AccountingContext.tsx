@@ -4548,6 +4548,27 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         .forEach((item) => (item.rawLotAllocations || []).forEach((allocation) => {
           reservedLots.set(allocation.lotId, (reservedLots.get(allocation.lotId) || 0) + allocation.quantity);
         }));
+      for (const order of salesOrders.filter((item) => item.status === 'dispatched')) {
+        for (const item of order.items) {
+          let allocations = item.lotAllocations || [];
+          if (!allocations.length) {
+            const product = products.find((candidate) => candidate.id === item.productId);
+            if (!product) throw new Error('کالای یک حواله خروج باز یافت نشد؛ حواله پیمانکاری متوقف شد.');
+            const quantity = item.actualWeighedKg > 0 ? item.actualWeighedKg : item.orderedWeightKg;
+            const availableForLegacyOrder = inventoryLots.map((lot) => ({
+              ...lot,
+              quantityRemaining: Math.max(0, lot.quantityRemaining - Math.max(lot.reservedQuantity || 0, reservedLots.get(lot.id) || 0)),
+            }));
+            allocations = allocateStockFIFO(availableForLegacyOrder as any, quantity, {
+              productId: product.id, warehouse: order.warehouse,
+              asOfDate: shamsiToGregorianIso(order.dispatchDate || order.date),
+            }).allocations;
+          }
+          allocations.forEach((allocation) => reservedLots.set(
+            allocation.lotId, (reservedLots.get(allocation.lotId) || 0) + allocation.quantity,
+          ));
+        }
+      }
       const effectiveReservedLots = new Map<string, number>();
       for (const lot of inventoryLots) {
         const reservedQty = Math.max(lot.reservedQuantity || 0, reservedLots.get(lot.id) || 0);
