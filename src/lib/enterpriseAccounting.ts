@@ -305,6 +305,8 @@ export interface AgingBucketRow {
   partyName: string;
   phone?: string;
   totalReceivable: number;
+  ledgerBalance: number;
+  ledgerDifference: number;
   bucket0to30: number;
   bucket31to60: number;
   bucket61to90: number;
@@ -342,7 +344,8 @@ export function computeReceivablesAging(
     }
     rows.push({
       partyId: party.id, partyCode: party.code, partyName: party.name, phone: party.phone,
-      totalReceivable, bucket0to30, bucket31to60, bucket61to90, bucketOver90,
+      totalReceivable, ledgerBalance, ledgerDifference: ledgerBalance - totalReceivable,
+      bucket0to30, bucket31to60, bucket61to90, bucketOver90,
       oldestInvoiceDate, maxOverdueDays,
     });
   }
@@ -351,7 +354,7 @@ export function computeReceivablesAging(
 
 export interface PayablesAgingRow {
   partyId: string; partyCode: string; partyName: string; phone?: string;
-  totalPayable: number; bucket0to30: number; bucket31to60: number; bucket61to90: number; bucketOver90: number;
+  totalPayable: number; ledgerBalance: number; ledgerDifference: number; bucket0to30: number; bucket31to60: number; bucket61to90: number; bucketOver90: number;
   oldestInvoiceDate?: string; maxOverdueDays: number;
 }
 

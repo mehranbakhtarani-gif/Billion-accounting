@@ -129,6 +129,7 @@ test('receivables aging uses due dates and actual outstanding invoice balances',
     '1405/09/01',
   );
   assert.equal(rows[0].totalReceivable, 300);
+  assert.equal(rows[0].ledgerDifference, 0);
   assert.equal(rows[0].bucket0to30, 100);
   assert.equal(rows[0].bucket31to60, 200);
   assert.equal(rows[0].bucketOver90, 0);
@@ -162,6 +163,7 @@ test('payables aging uses supplier balances, purchase invoices and due dates', (
     paidCash: 700, paidBank: 0, paidCheque: 0, creditAmount: 200, status: 'issued', items: [] };
   const rows = computePayablesAging([supplier] as any, [purchase] as any, new Map([['s1', -200]]), '1405/09/01');
   assert.equal(rows[0].totalPayable, 200);
+  assert.equal(rows[0].ledgerDifference, 0);
   assert.equal(rows[0].bucket31to60, 200);
   assert.equal(rows[0].bucketOver90, 0);
 });
@@ -638,4 +640,17 @@ test('invoice payment allocations reject duplicates, wrong party/type and over-s
   assert.throws(() => validateInvoicePaymentAllocations({ ...base, allocations: [{ invoiceId: 's1', amount: Number.NaN }] }), /مثبت و معتبر/);
   assert.throws(() => validateInvoicePaymentAllocations({ ...base, allocations: [{ invoiceId: 's1', amount: -1 }] }), /مثبت و معتبر/);
   assert.throws(() => validateInvoicePaymentAllocations({ ...base, direction: 'payment', allocations: [{ invoiceId: 's1', amount: 50 }] }), /فاکتور خرید/);
+});
+
+
+test('aging report exposes ledger-to-invoice differences instead of forcing FIFO attribution', () => {
+  const party = { id: 'p1', ownerId: 'o1', code: 'C1', name: 'مشتری', partyType: 'customer', creditLimit: 0, openingBalance: 0, accountCode: '10401' };
+  const invoice = { id: 'i1', ownerId: 'o1', invoiceNumber: 'S-1', invoiceType: 'sale', date: '1405/08/01', dueDate: '1405/08/01',
+    partyId: 'p1', partyName: 'مشتری', warehouse: 'انبار', subtotal: 250, discount: 0, vatAmount: 0, grandTotal: 250,
+    paidCash: 0, paidBank: 0, paidCheque: 0, creditAmount: 250, status: 'issued', items: [] };
+  const rows = computeReceivablesAging([party] as any, [invoice] as any, new Map([['p1', 300]]), '1405/09/01');
+  assert.equal(rows[0].totalReceivable, 250);
+  assert.equal(rows[0].ledgerBalance, 300);
+  assert.equal(rows[0].ledgerDifference, 50);
+  assert.equal(rows[0].bucket0to30 + rows[0].bucket31to60 + rows[0].bucket61to90 + rows[0].bucketOver90, 250);
 });

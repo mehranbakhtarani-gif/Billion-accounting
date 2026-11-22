@@ -1646,7 +1646,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ initialIntent, clearIn
               گزارش سنی مطالبات مشتریان و بدهی تأمین‌کنندگان (Aging Report) — مبنای تاریخ {toPersianDigits(getTodayShamsi())}
             </h2>
             <p className="text-xs text-slate-500 mt-0.5">
-              تفکیک مانده باز مشتریان و تأمین‌کنندگان به بازه‌های ۰ تا ۳۰ روز، ۳۱ تا ۶۰ روز، ۶۱ تا ۹۰ روز و معوقات بالای ۹۰ روز همراه با یادآوری مستقیم واتس‌اپ و تلگرام
+              سن بر اساس مانده واقعی فاکتورهای باز محاسبه می‌شود؛ اختلاف با دفتر کل جداگانه نمایش داده می‌شود و به‌صورت فرضی به فاکتور خاصی تخصیص نمی‌یابد.
             </p>
           </div>
           <div className="overflow-x-auto">
@@ -1683,7 +1683,8 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ initialIntent, clearIn
                         <td className="py-2.5 px-4">
                           <div className="font-semibold text-slate-900 dark:text-white">{r.partyName}</div>
                           <div className="text-[11px] text-slate-500 font-code">
-                            کد {toPersianDigits(r.partyCode)} · قدیمی‌ترین فاکتور: {r.oldestInvoiceDate ? toPersianDigits(r.oldestInvoiceDate) : 'مانده اول دوره'}
+                            کد {toPersianDigits(r.partyCode)} · قدیمی‌ترین فاکتور: {r.oldestInvoiceDate ? toPersianDigits(r.oldestInvoiceDate) : 'بدون فاکتور باز'}
+                            <div>مانده دفتر کل: {formatMoney(r.ledgerBalance, unit, false)} · اختلاف دفتر کل با فاکتورها: {formatMoney(r.ledgerDifference, unit, false)}</div>
                           </div>
                         </td>
                         <td className="py-2.5 px-3 text-left font-code tabular-nums">
@@ -1757,7 +1758,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ initialIntent, clearIn
           <div className="mt-5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden print-container">
             <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-800">
               <h2 className="text-sm font-bold text-slate-900 dark:text-white">گزارش سنی بدهی به تأمین‌کنندگان</h2>
-              <p className="text-xs text-slate-500 mt-0.5">مانده باز فاکتورهای خرید بر اساس سررسید؛ مبالغ بدون فاکتور متناظر به‌صورت محافظه‌کارانه در بازه بیش از ۹۰ روز نمایش داده می‌شوند.</p>
+              <p className="text-xs text-slate-500 mt-0.5">سن بدهی فقط از مانده فاکتورهای خرید باز محاسبه می‌شود؛ اختلاف مانده دفتر کل با فاکتورها جداگانه نمایش داده می‌شود.</p>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-right text-xs border-collapse">
@@ -1770,7 +1771,8 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ initialIntent, clearIn
                   {payablesAgingRows.length === 0 ? <tr><td colSpan={6} className="py-8 text-center text-slate-500">بدهی باز ثبت‌شده‌ای برای تأمین‌کنندگان وجود ندارد.</td></tr> :
                     payablesAgingRows.map((r) => <tr key={r.partyId} className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
                       <td className="py-2.5 px-4"><div className="font-semibold text-slate-900 dark:text-white">{r.partyName}</div>
-                        <div className="text-[11px] text-slate-500 font-code">کد {toPersianDigits(r.partyCode)} · قدیمی‌ترین سررسید: {r.oldestInvoiceDate ? toPersianDigits(r.oldestInvoiceDate) : 'مانده اول دوره'}</div></td>
+                        <div className="text-[11px] text-slate-500 font-code">کد {toPersianDigits(r.partyCode)} · قدیمی‌ترین سررسید: {r.oldestInvoiceDate ? toPersianDigits(r.oldestInvoiceDate) : 'بدون فاکتور باز'}
+                        <div>مانده دفتر کل: {formatMoney(r.ledgerBalance, unit, false)} · اختلاف دفتر کل با فاکتورها: {formatMoney(r.ledgerDifference, unit, false)}</div></div></td>
                       <td className="py-2.5 px-3 text-left font-code">{r.bucket0to30 > 0 ? formatMoney(r.bucket0to30, unit, false) : '—'}</td>
                       <td className="py-2.5 px-3 text-left font-code text-amber-700">{r.bucket31to60 > 0 ? formatMoney(r.bucket31to60, unit, false) : '—'}</td>
                       <td className="py-2.5 px-3 text-left font-code text-orange-700">{r.bucket61to90 > 0 ? formatMoney(r.bucket61to90, unit, false) : '—'}</td>
