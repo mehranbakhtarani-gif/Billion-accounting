@@ -90,6 +90,7 @@ export const InvoicesView: React.FC<{ initialIntent?: string; clearIntent?: () =
     invoices,
     parties,
     products,
+    inventoryLots,
     costCenters,
     currencies,
     exchangeRates,
@@ -1253,7 +1254,8 @@ export const InvoicesView: React.FC<{ initialIntent?: string; clearIntent?: () =
                       {(invoiceType === 'purchase' || invoiceType === 'sale_return') && (
                         <div className="grid grid-cols-2 gap-1.5 mt-2">
                           <label className="text-[10px] text-slate-500">شماره بچ
-                            <input value={row.lotNumber || ''} onChange={(e) => setDraftItems((prev) => prev.map((item, i) => i === idx ? { ...item, lotNumber: e.target.value } : item))} className="w-full mt-0.5 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-2 py-1.5" placeholder="شماره بچ خرید / بچ مرجوعی" />
+                            <input list={invoiceType === 'sale_return' ? `return-lots-${idx}` : undefined} value={row.lotNumber || ''} onChange={(e) => setDraftItems((prev) => prev.map((item, i) => i === idx ? { ...item, lotNumber: e.target.value } : item))} className="w-full mt-0.5 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-2 py-1.5" placeholder="شماره بچ خرید / بچ مرجوعی" />
+                            {invoiceType === 'sale_return' && <datalist id={`return-lots-${idx}`}>{inventoryLots.filter((lot) => lot.productId === prod?.id && lot.warehouse === prod?.warehouse).map((lot) => <option key={lot.id} value={lot.lotNumber}>{`مانده ${lot.quantityRemaining} — بهای ${lot.unitCost}`}</option>)}</datalist>}
                           </label>
                           {invoiceType === 'purchase' && (
                             <label className="text-[10px] text-slate-500">تاریخ ورود
