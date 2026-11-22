@@ -1,6 +1,7 @@
 import type { User } from '@supabase/supabase-js';
 import { supabase } from './supabaseClient';
 import { ensurePasswordlessSession } from './supabaseEnrollment';
+import { resolveExpectedRecordRevision } from './enterpriseControls';
 import {
   acknowledgeLocalSyncOperation,
   cacheLocalRecordRevisions,
@@ -276,44 +277,15 @@ async function applyChanges(
 
   let expectedRevisions = options.expectedRevisions;
   if (!expectedRevisions) {
-    try {
-      const recordTypes = [...new Set(changes.map((change) => String(change.record_type)))];
-      const recordIds = [...new Set(changes.map((change) => String(change.legacy_record_id)))];
-      const { data: currentRows, error: readError } = await supabase
-        .from('billion_records')
-        .select('record_type,legacy_record_id,revision')
-        .eq('company_id', companyId)
-        .in('record_type', recordTypes)
-        .in('legacy_record_id', recordIds);
-      if (readError) throw readError;
-      const revisions = new Map((currentRows ?? []).map((row: any) => [
-        revisionKey(row.record_type, row.legacy_record_id), Number(row.revision),
-      ]));
-      expectedRevisions = Object.fromEntries(changes.map((change) => {
-        const key = revisionKey(String(change.record_type), String(change.legacy_record_id));
-        return [key, revisions.get(key) ?? 0];
-      }));
-      await cacheLocalRecordRevisions((currentRows ?? []).map((row: any) => ({
-        key: revisionKey(row.record_type, row.legacy_record_id),
-        recordType: row.record_type,
-        recordId: row.legacy_record_id,
-        revision: Number(row.revision),
-      })));
-    } catch (error) {
-      if (options.allowQueue === false || !isSupabaseOfflineError(error)) throw error;
-      const keys = changes.map((change) => revisionKey(String(change.record_type), String(change.legacy_record_id)));
-      const cached = await getLocalRecordRevisions(keys);
-      expectedRevisions = Object.fromEntries(changes.map((change) => {
-        const key = revisionKey(String(change.record_type), String(change.legacy_record_id));
-        const revision = cached.get(key);
-        if (revision === undefined && change.action !== 'set') {
-          throw new Error('برای تغییر آفلاین این رکورد، نسخهٔ قبلی از سرور در حافظه نیست. ابتدا یک‌بار با اینترنت همگام‌سازی کنید؛ هیچ تغییری ثبت نشد.');
-        }
-        return [key, revision ?? 0];
-      }));
-      await queueOfflineChanges(companyId, changes, expectedRevisions);
-      return;
-    }
+    const keys = changes.map((change) =>
+      revisionKey(String(change.record_type), String(change.legacy_record_id))
+    );
+    const cached = await getLocalRecordRevisions(keys);
+    expectedRevisions = Object.fromEntries(changes.map((change) => {
+      const key = revisionKey(String(change.record_type), String(change.legacy_record_id));
+      const action = String(change.action) as 'set' | 'patch' | 'delete';
+      return [key, resolveExpectedRecordRevision(action, cached.get(key))];
+    }));
   }
 
   const versionedChanges = changes.map((change) => {
