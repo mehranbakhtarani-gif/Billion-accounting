@@ -532,6 +532,45 @@ export function validateChequeDateRange(issueDate: string, dueDate: string): voi
   }
 }
 
+export interface SalesOrderDispatchQuantity {
+  productId: string;
+  orderedWeightKg: number;
+  actualWeighedKg: number;
+}
+
+export function validateSalesOrderDispatchQuantities(
+  orderItems: readonly SalesOrderDispatchQuantity[],
+  dispatchedItems: readonly SalesOrderDispatchQuantity[],
+): StockIssueLine[] {
+  if (!orderItems.length || !dispatchedItems.length) {
+    throw new Error('سفارش و حواله خروج باید حداقل یک ردیف کالا داشته باشند.');
+  }
+  const orderedByProduct = new Map<string, number>();
+  for (const item of orderItems) {
+    if (!item.productId.trim() || !Number.isFinite(item.orderedWeightKg) || item.orderedWeightKg <= 0) {
+      throw new Error('مقدار کالای سفارش اصلی معتبر نیست.');
+    }
+    orderedByProduct.set(item.productId, (orderedByProduct.get(item.productId) ?? 0) + item.orderedWeightKg);
+  }
+  const dispatchedByProduct = new Map<string, number>();
+  for (const item of dispatchedItems) {
+    if (!item.productId.trim() || !orderedByProduct.has(item.productId) ||
+        !Number.isFinite(item.actualWeighedKg) || item.actualWeighedKg < 0 ||
+        !Number.isFinite(item.orderedWeightKg) || item.orderedWeightKg <= 0) {
+      throw new Error('ردیف حواله خروج با سفارش اصلی تطابق ندارد یا وزن آن نامعتبر است.');
+    }
+    const quantity = item.actualWeighedKg > 0 ? item.actualWeighedKg : item.orderedWeightKg;
+    dispatchedByProduct.set(item.productId, (dispatchedByProduct.get(item.productId) ?? 0) + quantity);
+  }
+  for (const [productId, quantity] of dispatchedByProduct) {
+    const ordered = orderedByProduct.get(productId) ?? 0;
+    if (quantity - ordered > 1e-9) {
+      throw new Error(`وزن حواله کالا از وزن سفارش بیشتر است. کالا: ${productId}، سفارش: ${ordered}، حواله: ${quantity}`);
+    }
+  }
+  return [...dispatchedByProduct].map(([productId, quantity]) => ({ productId, quantity }));
+}
+
 export interface StockReservation {
   productId: string;
   quantity: number;
