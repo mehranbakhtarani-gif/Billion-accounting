@@ -6,17 +6,41 @@ import {
   Download,
   ListOrdered,
   Printer,
+  RefreshCw,
   ShieldCheck,
   XCircle,
 } from 'lucide-react';
 import { useAccounting } from '../context/AccountingContext';
 import { ActiveModule } from '../types/accounting';
 import { exportToCsv, formatMoney, toPersianDigits } from '../lib/format';
+import { getBillionDeviceSyncStatus, BillionDeviceSyncStatus } from '../lib/supabaseStore';
 
 export const AuditView: React.FC<{
   onNavigate: (mod: ActiveModule, intent?: string) => void;
 }> = ({ onNavigate }) => {
-  const { auditReport, profile, vouchers, renumberVouchersChronologically } = useAccounting();
+  const { auditReport, profile, vouchers, renumberVouchersChronologically, isCloudMode } = useAccounting();
+  const [deviceSyncStatus, setDeviceSyncStatus] = React.useState<BillionDeviceSyncStatus | null>(null);
+  const [deviceSyncError, setDeviceSyncError] = React.useState<string | null>(null);
+  const [deviceSyncLoading, setDeviceSyncLoading] = React.useState(false);
+  const refreshDeviceSyncStatus = React.useCallback(async () => {
+    if (!isCloudMode) {
+      setDeviceSyncStatus(null);
+      setDeviceSyncError(null);
+      return;
+    }
+    setDeviceSyncLoading(true);
+    try {
+      setDeviceSyncStatus(await getBillionDeviceSyncStatus());
+      setDeviceSyncError(null);
+    } catch (error) {
+      setDeviceSyncError(error instanceof Error ? error.message : 'دریافت وضعیت دستگاه‌ها ناموفق بود.');
+    } finally {
+      setDeviceSyncLoading(false);
+    }
+  }, [isCloudMode]);
+  React.useEffect(() => {
+    void refreshDeviceSyncStatus();
+  }, [refreshDeviceSyncStatus]);
   const unit = profile.currencyUnit;
   const rec = auditReport.reconciliation;
 
@@ -148,6 +172,106 @@ export const AuditView: React.FC<{
           </div>
         </div>
       </div>
+
+      <section className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden print-container">
+        <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div>
+            <h2 className="text-sm font-bold text-slate-900 dark:text-white">وضعیت همگام‌سازی و دستگاه‌های ثبت‌شده</h2>
+            <p className="mt-1 text-xs text-slate-500">آخرین فعالیت هر دستگاه و ترتیب قطعی عملیات ثبت‌شده در Supabase</p>
+          </div>
+          <div className="flex items-center gap-2 no-print">
+            {deviceSyncStatus && (
+              <button
+                onClick={() => exportToCsv(
+                  `billion-device-activity-${profile.fiscalYear}.csv`,
+                  ['دستگاه', 'شماره عملیات دستگاه', 'نوع عملیات', 'شرح', 'زمان دستگاه', 'زمان ثبت سرور'],
+                  deviceSyncStatus.operations.map((operation) => [
+                    deviceSyncStatus.devices.find((device) => device.device_id === operation.device_id)?.device_label ?? 'دستگاه ناشناس',
+                    operation.device_sequence,
+                    operation.operation_type,
+                    operation.summary,
+                    operation.client_created_at,
+                    operation.server_applied_at,
+                  ])
+                )}
+                className="inline-flex items-center gap-2 px-3 py-2 text-xs font-medium rounded-lg border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-200"
+              >
+                <Download className="w-4 h-4" />
+                خروجی گردش دستگاه‌ها
+              </button>
+            )}
+            <button
+              onClick={() => void refreshDeviceSyncStatus()}
+              disabled={!isCloudMode || deviceSyncLoading}
+              className="inline-flex items-center gap-2 px-3 py-2 text-xs font-medium rounded-lg border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-200 disabled:opacity-50"
+            >
+              <RefreshCw className={`w-4 h-4 ${deviceSyncLoading ? 'animate-spin' : ''}`} />
+              تازه‌سازی
+            </button>
+          </div>
+        </div>
+        {!isCloudMode ? (
+          <div className="px-5 py-8 text-center text-xs text-slate-500">برای مشاهده دستگاه‌های ثبت‌شده و گردش همگام‌سازی، ابتدا شرکت را به Supabase متصل کنید.</div>
+        ) : deviceSyncError ? (
+          <div className="px-5 py-8 text-center text-xs text-rose-600">{deviceSyncError}</div>
+        ) : deviceSyncLoading && !deviceSyncStatus ? (
+          <div className="px-5 py-8 text-center text-xs text-slate-500">در حال دریافت وضعیت دستگاه‌ها...</div>
+        ) : (
+          <div className="p-5 space-y-5">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+              {(deviceSyncStatus?.devices ?? []).map((device) => (
+                <div key={device.device_id} className="rounded-lg border border-slate-200 dark:border-slate-800 p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-sm font-semibold text-slate-900 dark:text-white">{device.device_label}</span>
+                    <span className={device.status === 'active' ? 'text-[10px] rounded-full px-2 py-1 bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400' : 'text-[10px] rounded-full px-2 py-1 bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-400'}>
+                      {device.status === 'active' ? 'فعال' : 'لغوشده'}
+                    </span>
+                  </div>
+                  <div className="mt-2 text-xs text-slate-500">{device.platform === 'android' ? 'اندروید' : device.platform === 'ios' ? 'iOS' : 'مرورگر'}</div>
+                  <div className="mt-2 flex items-center justify-between text-xs">
+                    <span className="text-slate-500">آخرین مشاهده</span>
+                    <span className="tabular-nums text-slate-700 dark:text-slate-300">{device.last_seen_at ? new Date(device.last_seen_at).toLocaleString('fa-IR') : 'نامشخص'}</span>
+                  </div>
+                  <div className="mt-1 flex items-center justify-between text-xs">
+                    <span className="text-slate-500">آخرین شماره عملیات</span>
+                    <span className="font-semibold tabular-nums">{toPersianDigits(device.last_sequence)}</span>
+                  </div>
+                </div>
+              ))}
+              {deviceSyncStatus?.devices.length === 0 && <div className="text-xs text-slate-500">هیچ دستگاهی ثبت نشده است.</div>}
+            </div>
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="text-xs font-bold text-slate-800 dark:text-slate-200">آخرین عملیات ثبت‌شده</h3>
+                <span className="text-[10px] text-slate-500">{toPersianDigits(deviceSyncStatus?.operations.length ?? 0)} عملیات</span>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-right text-xs border-collapse">
+                  <thead>
+                    <tr className="bg-slate-50 dark:bg-slate-950 text-slate-500">
+                      <th className="py-2.5 px-3">دستگاه</th>
+                      <th className="py-2.5 px-3 text-left">ترتیب</th>
+                      <th className="py-2.5 px-3">شرح عملیات</th>
+                      <th className="py-2.5 px-3">زمان ثبت سرور</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                    {(deviceSyncStatus?.operations ?? []).map((operation) => (
+                      <tr key={operation.operation_id}>
+                        <td className="py-2.5 px-3">{deviceSyncStatus?.devices.find((device) => device.device_id === operation.device_id)?.device_label ?? 'دستگاه ناشناس'}</td>
+                        <td className="py-2.5 px-3 text-left tabular-nums">{toPersianDigits(operation.device_sequence)}</td>
+                        <td className="py-2.5 px-3">{operation.summary}</td>
+                        <td className="py-2.5 px-3 tabular-nums">{new Date(operation.server_applied_at).toLocaleString('fa-IR')}</td>
+                      </tr>
+                    ))}
+                    {deviceSyncStatus?.operations.length === 0 && <tr><td colSpan={4} className="py-7 text-center text-slate-500">هنوز عملیات ابری ثبت نشده است.</td></tr>}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
+      </section>
 
       {/* GL-to-Subsidiary & Tax Reconciliation Matrix */}
       <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden print-container">
