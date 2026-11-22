@@ -177,6 +177,25 @@ export type SyncConflict =
   | { kind: 'safe'; reason: 'same-base-version' | 'already-applied' }
   | { kind: 'conflict'; reason: 'stale-base-version' | 'different-operation-same-entity' };
 
+/**
+ * Resolve the revision a client is allowed to write against.
+ * Never replace a missing/stale client revision with the server's latest value:
+ * doing so would turn an outdated screen into an unconditional overwrite.
+ */
+export function resolveExpectedRecordRevision(
+  action: 'set' | 'patch' | 'delete',
+  cachedRevision: number | undefined,
+): number {
+  if (cachedRevision === undefined) {
+    if (action === 'set') return 0;
+    throw new Error('نسخه مبنای این رکورد روی دستگاه موجود نیست؛ ابتدا اطلاعات تازه را از سرور دریافت کنید. هیچ تغییری ثبت نشد.');
+  }
+  if (!Number.isSafeInteger(cachedRevision) || cachedRevision < 0) {
+    throw new Error('نسخه ذخیره‌شده رکورد روی دستگاه معتبر نیست؛ عملیات متوقف شد.');
+  }
+  return cachedRevision;
+}
+
 export function classifySyncOperation(
   incoming: SyncOperationEnvelope,
   currentVersion: number,
