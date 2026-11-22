@@ -254,7 +254,7 @@ export const TreasuryView: React.FC<TreasuryViewProps> = ({ initialIntent, clear
       if (l.accountCode === reconBankCode) ledgerTx.push({
         id: `${v.id}:${index}`, voucherNumber: v.voucherNumber, date: v.date,
         desc: l.description || v.description, debit: l.debit || 0, credit: l.credit || 0,
-        amount: (l.debit || 0) - (l.credit || 0), reference: v.referenceId || v.id,
+        amount: (l.debit || 0) - (l.credit || 0),
       });
     }));
     const rowOccurrences = new Map<string, number>();
