@@ -1132,7 +1132,7 @@ export function buildInvoiceVoucherLines(
         credit: 0,
       });
     }
-    const inventoryReturnCost = cogsTotal > 0 ? cogsTotal : netRet;
+    const inventoryReturnCost = Math.max(0, cogsTotal);
     lines.push({
       accountCode: '10501',
       accountTitle: 'موجودی انبار مرکزی',
@@ -1167,7 +1167,7 @@ export function buildInvoiceVoucherLines(
       });
     }
   } else if (invoice.invoiceType === 'waste') {
-    const wasteCost = cogsTotal > 0 ? cogsTotal : Math.max(0, invoice.subtotal - invoice.discount);
+    const wasteCost = Math.max(0, cogsTotal);
     if (wasteCost > 0) {
       lines.push({
         accountCode: '80401',
