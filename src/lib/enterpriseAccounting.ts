@@ -385,6 +385,10 @@ export function computePartyControlAccountBalances(
   const accountByCode = new Map(accounts.map((account) => [account.code, account]));
   const balances = new Map<string, number>();
   for (const party of parties) {
+    const eligible = direction === 'receivable'
+      ? party.partyType === 'customer' || party.partyType === 'both'
+      : party.partyType === 'vendor' || party.partyType === 'both';
+    if (!eligible) continue;
     const account = accountByCode.get(party.accountCode);
     if (!account) throw new Error('حساب تفصیلی طرف‌حساب ' + party.name + ' در سرفصل‌ها یافت نشد.');
     let control = account;
@@ -400,12 +404,9 @@ export function computePartyControlAccountBalances(
     }
     const expectedCategory = direction === 'receivable' ? 'asset' : 'liability';
     if (control.category !== expectedCategory) {
+      if (party.partyType === 'both') continue;
       throw new Error('ماهیت حساب کنترل طرف‌حساب ' + party.name + ' با گزارش انتخابی سازگار نیست.');
     }
-    const eligible = direction === 'receivable'
-      ? party.partyType === 'customer' || party.partyType === 'both'
-      : party.partyType === 'vendor' || party.partyType === 'both';
-    if (!eligible) continue;
     let balance = 0;
     for (const voucher of vouchers) {
       if (voucher.status !== 'permanent') continue;
