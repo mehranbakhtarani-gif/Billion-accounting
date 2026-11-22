@@ -159,7 +159,7 @@ interface AccountingContextValue {
   cancelInvoice: (invoiceId: string) => Promise<void>;
   convertProformaToSale: (invoiceId: string) => Promise<void>;
   // Treasury & Cheques
-  addCheque: (payload: Omit<Cheque, 'id' | 'ownerId'>, skipVoucher?: boolean) => Promise<void>;
+  addCheque: (payload: Omit<Cheque, 'id' | 'ownerId'>, skipVoucher?: boolean) => Promise<Cheque>;
   updateCheque: (
     chequeId: string,
     patch: Partial<Pick<Cheque, 'bankName' | 'branch' | 'dueDate' | 'notes'>>
