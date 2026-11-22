@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   allocateStockFIFO,
+  reconcileInventoryLotLedger,
   assertSufficientStock,
   assertFiscalPeriodOpen,
   auditTreasuryVoucherLinks,
@@ -159,6 +160,26 @@ test('FIFO allocates oldest eligible lots and excludes expired lots', () => {
   assert.throws(() => allocateStockFIFO([{ ...lots[0], unitCost: Number.NaN }], 1, {
     productId: 'p1', warehouse: 'w1', asOfDate: '2026-11-22',
   }), /بهای واحد/);
+});
+
+test('inventory lot balances reconcile to append-only receipts, issues and reversals', () => {
+  const lots = [
+    { id: 'lot-a', productId: 'p1', warehouse: 'w1', lotNumber: 'A', receivedDate: '2026-01-01', quantityReceived: 10, quantityRemaining: 8, unitCost: 100 },
+    { id: 'lot-b', productId: 'p1', warehouse: 'w1', lotNumber: 'B', receivedDate: '2026-02-01', quantityReceived: 4, quantityRemaining: 4, unitCost: 120 },
+  ];
+  const movements = [
+    { id: 'm1', lotId: 'lot-a', movementType: 'receipt' as const, quantity: 10 },
+    { id: 'm2', lotId: 'lot-a', movementType: 'issue' as const, quantity: -3 },
+    { id: 'm3', lotId: 'lot-a', movementType: 'reversal' as const, quantity: 1 },
+    { id: 'm4', lotId: 'lot-b', movementType: 'receipt' as const, quantity: 4 },
+  ];
+  assert.deepEqual(reconcileInventoryLotLedger(lots, movements), []);
+  assert.deepEqual(reconcileInventoryLotLedger([{ ...lots[0], quantityRemaining: 7 }, lots[1]], movements), [
+    { lotId: 'lot-a', expectedRemaining: 8, actualRemaining: 7, difference: -1 },
+  ]);
+  assert.throws(() => reconcileInventoryLotLedger(lots, [...movements, { id: 'm1', lotId: 'lot-a', movementType: 'issue', quantity: -1 }]), /تکراری/);
+  assert.throws(() => reconcileInventoryLotLedger(lots, [{ id: 'bad', lotId: 'lot-a', movementType: 'issue', quantity: 1 }]), /منفی/);
+  assert.throws(() => reconcileInventoryLotLedger(lots, [{ id: 'orphan', lotId: 'missing', movementType: 'receipt', quantity: 1 }]), /ناشناخته/);
 });
 
 test('stock issue preflight aggregates repeated product lines and rejects overselling', () => {
