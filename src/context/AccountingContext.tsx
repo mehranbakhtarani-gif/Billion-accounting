@@ -1661,8 +1661,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       }
       const transferId = generateSafeId('lot-transfer');
       const transferDate = new Date().toISOString().slice(0, 10);
-      const movedLots = sourceLots.map((lot) => ({ ...lot, warehouse: cleanWh }));
-      const movements: InventoryLotMovement[] = sourceLots.flatMap((lot) => [
+      const movements: InventoryLotMovement[] = sourceLots.filter((lot) => lot.quantityRemaining > 0).flatMap((lot) => [
         {
           id: generateSafeId('lotmove'), ownerId, lotId: lot.id, productId,
           warehouse: prod.warehouse, movementType: 'transfer-out' as const,
