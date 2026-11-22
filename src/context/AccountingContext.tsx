@@ -1516,6 +1516,16 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   // ---------------- CHEQUES & TREASURY ----------------
   const addCheque = useCallback(
     async (payload: Omit<Cheque, 'id' | 'ownerId'>, skipVoucher = false) => {
+      const normalizedSayadiId = payload.sayadiId.trim();
+      if (normalizedSayadiId.length < 6 || !payload.serial.trim() || !payload.partyId ||
+          !Number.isFinite(payload.amount) || payload.amount <= 0 ||
+          !/^14\d{2}\/\d{2}\/\d{2}$/.test(payload.issueDate) ||
+          !/^14\d{2}\/\d{2}\/\d{2}$/.test(payload.dueDate)) {
+        throw new Error('شناسه صیادی، سریال، طرف‌حساب، مبلغ یا تاریخ چک معتبر نیست.');
+      }
+      if (cheques.some((cheque) => cheque.sayadiId.trim() === normalizedSayadiId)) {
+        throw new Error('شناسه صیادی این چک قبلاً در سیستم ثبت شده است.');
+      }
       const id = generateSafeId('chq');
       const full: Cheque = { ...payload, id, ownerId };
 
@@ -1540,6 +1550,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           });
         } catch (err) {
           handleSupabaseError(err, OperationType.CREATE, `cheques/${id}`);
+          throw err;
         }
       } else {
         setCheques((prev) => [full, ...prev]);
@@ -1589,17 +1600,27 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
                 },
               ];
 
-        await createVoucher({
-          date: payload.issueDate,
-          description: `ثبت چک صیادی ${payload.sayadiId} — ${payload.partyName}`,
-          voucherType: 'treasury',
-          status: 'permanent',
-          lines,
-          referenceId: id,
-        });
+        try {
+          await createVoucher({
+            date: payload.issueDate,
+            description: `ثبت چک صیادی ${payload.sayadiId} — ${payload.partyName}`,
+            voucherType: 'treasury',
+            status: 'permanent',
+            lines,
+            referenceId: id,
+          });
+        } catch (error) {
+          if (user) {
+            try { await deleteDoc(doc(db, 'cheques', id)); }
+            catch (rollbackError) { console.error('Cheque creation rollback failed', id, rollbackError); }
+          } else {
+            setCheques((prev) => prev.filter((cheque) => cheque.id !== id));
+          }
+          throw error;
+        }
       }
     },
-    [ownerId, user, createVoucher]
+    [ownerId, user, cheques, createVoucher]
   );
 
   const updateCheque = useCallback(
@@ -1617,6 +1638,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           await updateDoc(doc(db, 'cheques', chequeId), payload);
         } catch (err) {
           handleSupabaseError(err, OperationType.UPDATE, `cheques/${chequeId}`);
+          throw err;
         }
       } else {
         setCheques((prev) => prev.map((c) => (c.id === chequeId ? { ...c, ...patch } : c)));
