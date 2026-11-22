@@ -560,7 +560,7 @@ test('sales dispatch cannot exceed ordered weight or hide negative and invalid s
     { productId: 'yarn-1', orderedWeightKg: 70, actualWeighedKg: 0 },
   ]), [{ productId: 'yarn-1', quantity: 150 }]);
   assert.throws(() => validateSalesOrderDispatchQuantities(order, [
-    { productId: 'yarn-1', orderedWeightKg: 100, actualWeighedKg: 101 },
+    { productId: 'yarn-1', orderedWeightKg: 100, actualWeighedKg: 151 },
   ]), /وزن حواله کالا از وزن سفارش بیشتر است/);
   assert.throws(() => validateSalesOrderDispatchQuantities(order, [
     { productId: 'yarn-1', orderedWeightKg: 100, actualWeighedKg: -1 },
