@@ -4248,14 +4248,99 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       const available = new Map(products.map((product) => [product.id, Math.max(0, product.stock - (reservedByOtherOrders.get(product.id) || 0))]));
       assertSufficientStock(available, requestedLines);
       validateJalaliDate(payload.dispatchDate, 'تاریخ حواله خروج');
+      const dispatchDateIso = shamsiToGregorianIso(payload.dispatchDate);
+      const ledgerIssues = reconcileInventoryLotLedger(inventoryLots as any, inventoryLotMovements);
+      if (ledgerIssues.length) throw new Error('دفتر بچ با گردش‌های ثبت‌شده مغایرت دارد؛ صدور حواله متوقف شد.');
+      const reservedLotQuantities = new Map<string, number>();
+      const reserveVirtualLots = (productId: string, quantity: number, warehouse: string, date: string) => {
+        if (quantity <= 0) return;
+        const availableLots = inventoryLots.map((lot) => ({
+          ...lot,
+          quantityRemaining: Math.max(0, lot.quantityRemaining - Math.max(lot.reservedQuantity || 0, reservedLotQuantities.get(lot.id) || 0)),
+        }));
+        const allocations = allocateStockFIFO(availableLots as any, quantity, {
+          productId, warehouse, asOfDate: date,
+        }).allocations;
+        allocations.forEach((allocation) => {
+          reservedLotQuantities.set(allocation.lotId, (reservedLotQuantities.get(allocation.lotId) || 0) + allocation.quantity);
+        });
+      };
+      for (const job of subcontractJobs.filter((item) => item.status === 'sent')) {
+        if (job.rawLotAllocations?.length) {
+          job.rawLotAllocations.forEach((allocation) => reservedLotQuantities.set(
+            allocation.lotId, (reservedLotQuantities.get(allocation.lotId) || 0) + allocation.quantity,
+          ));
+        } else {
+          const product = products.find((item) => item.id === job.rawProductId);
+          if (!product) throw new Error('کالای خام یک حواله باز پیمانکاری یافت نشد.');
+          reserveVirtualLots(product.id, job.sentWeightKg, product.warehouse, shamsiToGregorianIso(job.date));
+        }
+      }
+      for (const other of salesOrders.filter((item) => item.id !== orderId && item.status === 'dispatched')) {
+        for (const item of other.items) {
+          if (item.lotAllocations?.length) {
+            item.lotAllocations.forEach((allocation) => reservedLotQuantities.set(
+              allocation.lotId, (reservedLotQuantities.get(allocation.lotId) || 0) + allocation.quantity,
+            ));
+          } else {
+            const product = products.find((candidate) => candidate.id === item.productId);
+            if (!product) throw new Error('کالای یک حواله خروج باز یافت نشد.');
+            const quantity = item.actualWeighedKg > 0 ? item.actualWeighedKg : item.orderedWeightKg;
+            reserveVirtualLots(product.id, quantity, other.warehouse, shamsiToGregorianIso(other.dispatchDate || other.date));
+          }
+        }
+      }
+      for (const lot of inventoryLots) {
+        const reservedQty = Math.max(lot.reservedQuantity || 0, reservedLotQuantities.get(lot.id) || 0);
+        if (reservedQty > lot.quantityRemaining + 0.0001) throw new Error('رزروهای قبلی بچ‌ها با مانده واقعی سازگار نیست؛ حواله جدید مجاز نیست.');
+        if (reservedQty > 0) reservedLotQuantities.set(lot.id, reservedQty);
+      }
+      const dispatchedItems: SalesOrder['items'] = [];
+      const currentOrderAllocations = new Map<string, number>();
+      for (const item of payload.items) {
+        const product = products.find((candidate) => candidate.id === item.productId);
+        if (!product) throw new Error(`کالای حواله خروج یافت نشد: ${item.productName}`);
+        if (product.warehouse !== order.warehouse) throw new Error(`انبار سفارش با انبار تعریف‌شده برای کالای ${product.name} یکسان نیست.`);
+        const quantity = item.actualWeighedKg > 0 ? item.actualWeighedKg : item.orderedWeightKg;
+        const lotBalance = inventoryLots.filter((lot) => lot.productId === product.id && lot.warehouse === order.warehouse)
+          .reduce((sum, lot) => sum + lot.quantityRemaining, 0);
+        if (Math.abs(lotBalance - product.stock) > 0.01) throw new Error(`مانده بچ‌های ${product.name} با موجودی کالا برابر نیست؛ ابتدا دفتر بچ را تطبیق دهید.`);
+        const availableLots = inventoryLots.map((lot) => ({
+          ...lot,
+          quantityRemaining: Math.max(0, lot.quantityRemaining - Math.max(lot.reservedQuantity || 0, reservedLotQuantities.get(lot.id) || 0)),
+        }));
+        const fifo = allocateStockFIFO(availableLots as any, quantity, {
+          productId: product.id, warehouse: order.warehouse, asOfDate: dispatchDateIso,
+        });
+        fifo.allocations.forEach((allocation) => {
+          currentOrderAllocations.set(allocation.lotId, (currentOrderAllocations.get(allocation.lotId) || 0) + allocation.quantity);
+          reservedLotQuantities.set(allocation.lotId, (reservedLotQuantities.get(allocation.lotId) || 0) + allocation.quantity);
+        });
+        dispatchedItems.push({ ...item, lotAllocations: fifo.allocations });
+      }
       const dispatchNumber = order.dispatchNumber || `DSP-${profile.fiscalYear}-${String(salesOrders.filter((item) => item.dispatchNumber).length + 1).padStart(4, '0')}`;
-      const dispatchPatch = { dispatchNumber, dispatchDate: payload.dispatchDate, driverName: payload.driverName.trim(), plateNumber: payload.plateNumber.trim(), items: payload.items, status: 'dispatched' as const, updatedAt: serverTimestamp() };
-      if (user) await updateDoc(doc(db, 'salesOrders', orderId), dispatchPatch);
+      const dispatchPatch = { dispatchNumber, dispatchDate: payload.dispatchDate, driverName: payload.driverName.trim(), plateNumber: payload.plateNumber.trim(), items: dispatchedItems, status: 'dispatched' as const, updatedAt: serverTimestamp() };
+      const reservedLotUpdates = new Map<string, InventoryLot>();
+      for (const [lotId, quantity] of currentOrderAllocations) {
+        const lot = reservedLotUpdates.get(lotId) ?? inventoryLots.find((candidate) => candidate.id === lotId);
+        if (!lot) throw new Error('بچ تخصیص‌یافته برای حواله خروج یافت نشد.');
+        const baseReserved = Math.max(lot.reservedQuantity || 0, reservedLotQuantities.get(lotId)! - quantity);
+        reservedLotUpdates.set(lotId, { ...lot, reservedQuantity: Number((baseReserved + quantity).toFixed(4)) });
+      }
+      if (user) {
+        const batch = writeBatch(db);
+        batch.update(doc(db, 'salesOrders', orderId), dispatchPatch);
+        reservedLotUpdates.forEach((lot) => batch.update(doc(db, 'inventoryLots', lot.id), {
+          reservedQuantity: lot.reservedQuantity, updatedAt: serverTimestamp(),
+        }));
+        await batch.commit();
+      }
+      if (reservedLotUpdates.size) setInventoryLots((prev) => prev.map((lot) => reservedLotUpdates.get(lot.id) ?? lot));
       setSalesOrders((prev) => prev.map((item) => item.id === orderId ? { ...item, ...dispatchPatch } : item));
-      logActivity('انبار و باسکول', `صدور حواله خروج ${dispatchNumber}`, `توزین نهایی سفارش ${order.orderNumber} (${order.partyName})`);
-      showToast(`حواله خروج باسکول ${dispatchNumber} ثبت شد.`);
+      logActivity('انبار و باسکول', `صدور حواله خروج ${dispatchNumber}`, `توزین نهایی سفارش ${order.orderNumber} (${order.partyName}) و رزرو بچ‌ها بر اساس FIFO`);
+      showToast(`حواله خروج باسکول ${dispatchNumber} با رزرو بچ‌های FIFO ثبت شد.`);
     },
-    [salesOrders, products, subcontractJobs, profile.fiscalYear, logActivity, showToast, user]
+    [salesOrders, products, subcontractJobs, inventoryLots, inventoryLotMovements, profile.fiscalYear, logActivity, showToast, user]
   );
 
   const invoiceSalesOrder = useCallback(
