@@ -36,7 +36,7 @@ import {
 import { createHolooSeedData } from '../data/holooSeed';
 import { getOrCreateLocalDeviceIdentity, loadLocalAccountingSnapshot, LocalDeviceIdentity, saveLocalAccountingSnapshot } from '../lib/localAccountingStore';
 import { FxRevaluationRow } from '../lib/enterpriseAccounting';
-import { assertSufficientStock, getChequeStatusTransitionError, validateJournalEntryPayload, validateTreasuryOperationPayload, validateTreasuryAccountSelection, validateTreasuryTransferAccounts, validateChequeDateRange, validatePartyTreasuryAccount, validateJalaliDate, validateImportLandedCostPayload, aggregateStockReservations, collectActiveStockReservations, validateSalesOrderDispatchQuantities, validateInvoicePaymentAllocations, buildInvoiceAllocationReversal, getInvoiceStockDirection, getInvoiceCancellationBlockReason, allocateStockFIFO } from '../lib/enterpriseControls';
+import { assertSufficientStock, getChequeStatusTransitionError, validateJournalEntryPayload, validateTreasuryOperationPayload, validateTreasuryAccountSelection, validateTreasuryTransferAccounts, validateChequeDateRange, validatePartyTreasuryAccount, validateJalaliDate, validateImportLandedCostPayload, aggregateStockReservations, collectActiveStockReservations, validateSalesOrderDispatchQuantities, validateInvoicePaymentAllocations, buildInvoiceAllocationReversal, getInvoiceStockDirection, getInvoiceCancellationBlockReason, allocateStockFIFO, reconcileInventoryLotLedger } from '../lib/enterpriseControls';
 import {
   AuditReport,
   buildInvoiceVoucherLines,
@@ -2331,6 +2331,8 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           }
           const outgoing = stockDirection === -1;
           if (outgoing) {
+            const ledgerIssues = reconcileInventoryLotLedger(workingLots as any, inventoryLotMovements);
+            if (ledgerIssues.length) throw new Error('دفتر بچ با گردش‌های ثبت‌شده مغایرت دارد؛ تا رفع مغایرت، خروج کالا مجاز نیست.');
             const fifo = allocateStockFIFO(workingLots as any, item.quantity, {
               productId: product.id, warehouse: payload.warehouse, asOfDate,
             });
@@ -2572,7 +2574,7 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         throw new Error(`ثبت فاکتور ${payload.invoiceNumber} کامل نشد. علت: ${reason}.${compensation}`);
       }
     },
-    [products, inventoryLots, subcontractJobs, salesOrders, currencies, adjustProductStock, createVoucher, addCheque, ownerId, user, showToast]
+    [products, inventoryLots, inventoryLotMovements, subcontractJobs, salesOrders, currencies, adjustProductStock, createVoucher, addCheque, ownerId, user, showToast]
   );
 
   const cancelInvoice = useCallback(
