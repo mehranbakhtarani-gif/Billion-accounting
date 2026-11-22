@@ -2416,10 +2416,23 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       const stockDeltas = new Map<string, number>();
       let workingLots = inventoryLots.map((lot) => ({ ...lot }));
       const reservedLotQuantities = new Map<string, number>();
-      subcontractJobs.filter((job) => job.status === 'sent').forEach((job) =>
-        (job.rawLotAllocations || []).forEach((allocation) => {
+      for (const job of subcontractJobs.filter((candidate) => candidate.status === 'sent')) {
+        let reservations = job.rawLotAllocations || [];
+        if (!reservations.length) {
+          const rawProduct = products.find((candidate) => candidate.id === job.rawProductId);
+          if (!rawProduct) throw new Error('کالای خام یک حواله باز پیمانکاری یافت نشد؛ فروش متوقف شد.');
+          const availableForLegacyJob = workingLots.map((lot) => ({
+            ...lot,
+            quantityRemaining: Math.max(0, lot.quantityRemaining - (reservedLotQuantities.get(lot.id) || 0)),
+          }));
+          reservations = allocateStockFIFO(availableForLegacyJob as any, job.sentWeightKg, {
+            productId: rawProduct.id, warehouse: rawProduct.warehouse, asOfDate: shamsiToGregorianIso(job.date),
+          }).allocations;
+        }
+        reservations.forEach((allocation) => {
           reservedLotQuantities.set(allocation.lotId, (reservedLotQuantities.get(allocation.lotId) || 0) + allocation.quantity);
-        }));
+        });
+      }
       for (const [lotId, reservedQty] of reservedLotQuantities) {
         const lot = workingLots.find((candidate) => candidate.id === lotId);
         if (!lot || lot.quantityRemaining + 0.0001 < reservedQty) {
