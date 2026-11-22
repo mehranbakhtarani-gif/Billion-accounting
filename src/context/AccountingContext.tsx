@@ -665,7 +665,11 @@ export const AccountingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     const platform = typeof navigator !== 'undefined' && /android/i.test(navigator.userAgent)
       ? 'android'
       : typeof navigator !== 'undefined' && /iphone|ipad/i.test(navigator.userAgent) ? 'ios' : 'web';
-    const deviceLabel = platform === 'android' ? 'دستگاه Android' : platform === 'ios' ? 'دستگاه iOS' : 'دستگاه مرورگر';
+    const defaultDeviceLabel = platform === 'android' ? 'دستگاه Android' : platform === 'ios' ? 'دستگاه iOS' : 'دستگاه مرورگر';
+    const enteredDeviceLabel = typeof window !== 'undefined'
+      ? window.prompt('برای شناسایی این دستگاه در فهرست همگام‌سازی، یک نام وارد کنید:', defaultDeviceLabel)
+      : defaultDeviceLabel;
+    const deviceLabel = String(enteredDeviceLabel ?? defaultDeviceLabel).trim().slice(0, 80) || defaultDeviceLabel;
     if (mode === 'bootstrap') {
       await bootstrapBillionCompany({
         bootstrapToken: token,
