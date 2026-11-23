@@ -76,6 +76,8 @@ export const LocalAIView: React.FC = () => {
   const [modelProgress, setModelProgress] = useState('');
   const [error, setError] = useState('');
   const [voiceState, setVoiceState] = useState<'idle' | 'listening'>('idle');
+  const [deviceCheck, setDeviceCheck] = useState<'not_checked' | 'checking' | 'ready' | 'unsupported'>('not_checked');
+  const [deviceInfo, setDeviceInfo] = useState('');
   const engineRef = useRef<MLCEngine | null>(null);
 
   const localContext = useMemo(() => buildLocalAccountingContext({
@@ -87,13 +89,36 @@ export const LocalAIView: React.FC = () => {
 
   const startModel = async () => {
     setError('');
-    if (!('gpu' in navigator)) {
-      setError('این مرورگر یا دستگاه از WebGPU پشتیبانی نمی‌کند. اجرای مدل ابری غیرفعال است؛ برای حفظ حالت کاملاً محلی باید از دستگاه یا مرورگر دارای WebGPU استفاده شود.');
+    setDeviceCheck('checking');
+    setDeviceInfo('');
+    if (!window.isSecureContext) {
+      setDeviceCheck('unsupported');
+      setError('برای دسترسی امن به WebGPU، برنامه باید از HTTPS یا محیط امن اجرا شود.');
+      return;
+    }
+    const gpu = (navigator as Navigator & { gpu?: { requestAdapter: () => Promise<{ features?: Set<string>; limits?: { maxBufferSize?: number } } | null> } }).gpu;
+    if (!gpu) {
+      setDeviceCheck('unsupported');
+      setError('این مرورگر WebGPU را ارائه نمی‌کند. در این دستگاه، موتور هوش مصنوعی محلی اجرا نشد و هیچ سرویس ابری جایگزین نمی‌شود.');
       return;
     }
     try {
       setLoading(true);
-      setModelProgress('در حال آماده‌سازی موتور محلی…');
+      setModelProgress('در حال بررسی توان گرافیکی دستگاه…');
+      const adapter = await gpu.requestAdapter();
+      if (!adapter) {
+        setDeviceCheck('unsupported');
+        throw new Error('مرورگر WebGPU را دارد، اما آداپتور گرافیکی قابل استفاده پیدا نشد. ممکن است دستگاه، درایور یا تنظیمات مرورگر محدودیت داشته باشد.');
+      }
+      const maxBuffer = Number(adapter.limits?.maxBufferSize || 0);
+      const memory = (navigator as Navigator & { deviceMemory?: number }).deviceMemory;
+      setDeviceInfo([
+        'WebGPU فعال',
+        memory ? `حافظه تقریبی دستگاه: ${memory} GB` : '',
+        maxBuffer ? `حداکثر بافر GPU: ${Math.round(maxBuffer / 1024 / 1024)} MB` : '',
+      ].filter(Boolean).join(' • '));
+      setDeviceCheck('ready');
+      setModelProgress('سخت‌افزار سازگار شناسایی شد؛ در حال آماده‌سازی موتور محلی…');
       const { CreateMLCEngine } = await import('@mlc-ai/web-llm');
       const engine = await CreateMLCEngine(MODEL_ID, {
         initProgressCallback: (report) => setModelProgress(report.text || 'در حال بارگیری مدل…'),
@@ -103,6 +128,7 @@ export const LocalAIView: React.FC = () => {
       setModelProgress('مدل روی این دستگاه آماده است.');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'بارگیری مدل محلی ناموفق بود.');
+      if (deviceCheck !== 'ready') setDeviceCheck('unsupported');
     } finally {
       setLoading(false);
     }
@@ -187,9 +213,12 @@ export const LocalAIView: React.FC = () => {
           <div className="min-w-0 flex-1">
             <div className="text-sm font-bold text-slate-900 dark:text-white">مدل روی دستگاه: Qwen 2.5 — 0.5B</div>
             <p className="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400">بارگیری اولیه مدل به اینترنت و فضای ذخیره‌سازی نیاز دارد. پس از ذخیره شدن مدل، استنتاج محلی انجام می‌شود. پشتیبانی WebGPU و حافظه کافی دستگاه الزامی است.</p>
+            {deviceInfo && <p className="mt-2 text-[11px] text-emerald-700 dark:text-emerald-300">{deviceInfo}</p>}
             <div className="mt-3 flex flex-wrap items-center gap-3">
               <button onClick={startModel} disabled={loading || modelReady} className="rounded-lg bg-teal-700 px-4 py-2 text-xs font-semibold text-white disabled:opacity-50">{modelReady ? 'مدل آماده است' : loading ? 'در حال آماده‌سازی…' : 'بارگیری و راه‌اندازی مدل محلی'}</button>
               {modelReady && <span className="text-xs font-semibold text-emerald-600">آماده پردازش محلی</span>}
+              {deviceCheck === 'checking' && <span className="text-xs text-slate-500">در حال بررسی WebGPU…</span>}
+              {deviceCheck === 'unsupported' && <span className="text-xs text-rose-600">این دستگاه فعلاً سازگار تشخیص داده نشد</span>}
             </div>
             {modelProgress && <p className="mt-2 break-words text-xs text-slate-500">{modelProgress}</p>}
           </div>
