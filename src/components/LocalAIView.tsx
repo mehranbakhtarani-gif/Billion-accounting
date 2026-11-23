@@ -186,7 +186,7 @@ export const LocalAIView: React.FC<{ onOpenProductDraft: (draft: Partial<Product
       });
       const raw = response.choices[0]?.message?.content;
       if (typeof raw !== 'string') throw new Error('مدل پیش‌نویس ساختاریافته‌ای برنگرداند.');
-      const jsonMatch = raw.match(/\\{[\\s\\S]*\\}/);
+      const jsonMatch = raw.match(/\{[\s\S]*\}/);
       if (!jsonMatch) throw new Error('خروجی مدل JSON معتبر نداشت؛ متن را دقیق‌تر وارد کن.');
       const parsed = JSON.parse(jsonMatch[0]) as Record<string, unknown>;
       const draft: Partial<Product> = {};
