@@ -20,12 +20,13 @@ import {
   Package,
   Search,
   Settings,
+  Sparkles,
   ShieldCheck,
   Ship,
   Sun,
   X,
 } from 'lucide-react';
-import { ActiveModule } from './types/accounting';
+import { ActiveModule, Product } from './types/accounting';
 import { useAccounting } from './context/AccountingContext';
 import { DashboardView } from './components/DashboardView';
 import { InvoicesView } from './components/InvoicesView';
@@ -39,6 +40,7 @@ import { CorporateView } from './components/CorporateView';
 import { ReportsView } from './components/ReportsView';
 import { BrandStudioView } from './components/BrandStudioView';
 import { SettingsView } from './components/SettingsView';
+import { LocalAIView } from './components/LocalAIView';
 import { CurrenciesView } from './components/CurrenciesView';
 import { ImportAndSubcontractView } from './components/ImportAndSubcontractView';
 import { OfflineIndicator, PWAInstallButton } from './components/PWAInstallButton';
@@ -70,6 +72,12 @@ interface MenuGroup {
 }
 
 const BILLION_MENU_TREE: MenuGroup[] = [
+  {
+    id: 'ai',
+    label: 'هوش مصنوعی محلی',
+    icon: Sparkles,
+    directModule: 'ai',
+  },
   {
     id: 'dashboard',
     label: 'داشبورد مدیریت مالی',
@@ -211,6 +219,7 @@ const ALL_MODULES: ActiveModule[] = [
   'reports',
   'studio',
   'settings',
+  'ai',
 ];
 
 function findGroupIdForModule(mod: ActiveModule, intent?: string): string {
@@ -302,6 +311,12 @@ export default function App() {
 
   const [activeModule, setActiveModule] = useState<ActiveModule>('dashboard');
   const [moduleIntent, setModuleIntent] = useState<string | undefined>(undefined);
+  const [aiProductDraft, setAiProductDraft] = useState<Partial<Product> | null>(null);
+  const [aiInvoiceDraft, setAiInvoiceDraft] = useState<{
+    invoiceType: 'sale' | 'purchase' | 'proforma';
+    partyId?: string;
+    items: Array<{ productId: string; quantity: number; unitPrice: number; discount?: number }>;
+  } | null>(null);
   const [activeSubKey, setActiveSubKey] = useState<string | null>(null);
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({
     base: true,
@@ -374,6 +389,20 @@ export default function App() {
     }
     setMobileMenuOpen(false);
   }, []);
+
+  const openAIDraftedProduct = useCallback((draft: Partial<Product>) => {
+    setAiProductDraft(draft);
+    navigate('inventory', 'new-product');
+  }, [navigate]);
+
+  const openAIDraftedInvoice = useCallback((draft: {
+    invoiceType: 'sale' | 'purchase' | 'proforma';
+    partyId?: string;
+    items: Array<{ productId: string; quantity: number; unitPrice: number; discount?: number }>;
+  }) => {
+    setAiInvoiceDraft(draft);
+    navigate('invoices');
+  }, [navigate]);
 
   // Read PWA deep-link shortcut URL params on initial load
   useEffect(() => {
@@ -966,6 +995,8 @@ export default function App() {
             <InvoicesView
               initialIntent={moduleIntent}
               clearIntent={() => setModuleIntent(undefined)}
+              initialInvoiceDraft={aiInvoiceDraft}
+              clearInvoiceDraft={() => setAiInvoiceDraft(null)}
             />
           )}
           {activeModule === 'vouchers' && (
@@ -991,6 +1022,8 @@ export default function App() {
             <InventoryView
               initialIntent={moduleIntent}
               clearIntent={() => setModuleIntent(undefined)}
+              initialProductDraft={aiProductDraft}
+              clearProductDraft={() => setAiProductDraft(null)}
             />
           )}
           {activeModule === 'treasury' && (
@@ -1025,6 +1058,7 @@ export default function App() {
             />
           )}
           {activeModule === 'studio' && <BrandStudioView />}
+          {activeModule === 'ai' && <LocalAIView onOpenProductDraft={openAIDraftedProduct} onOpenInvoiceDraft={openAIDraftedInvoice} />}
           {activeModule === 'settings' && (
             <SettingsView
               initialIntent={moduleIntent}

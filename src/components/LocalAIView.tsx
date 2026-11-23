@@ -1,0 +1,498 @@
+import React, { useMemo, useRef, useState } from 'react';
+import { Bot, Cpu, Mic, MicOff, Send, ShieldCheck, Sparkles } from 'lucide-react';
+import type { MLCEngine } from '@mlc-ai/web-llm';
+import type { Product } from '../types/accounting';
+
+type AIDraftInvoice = {
+  invoiceType: 'sale' | 'purchase' | 'proforma';
+  partyId?: string;
+  items: Array<{ productId: string; quantity: number; unitPrice: number; discount?: number }>;
+};
+import { useAccounting } from '../context/AccountingContext';
+
+type ChatMessage = { role: 'user' | 'assistant'; content: string };
+
+const MODEL_ID = 'Qwen2.5-0.5B-Instruct-q4f16_1-MLC';
+
+function buildLocalAccountingContext(data: {
+  companyName: string;
+  fiscalYear: string;
+  accounts: any[];
+  products: any[];
+  parties: any[];
+  vouchers: any[];
+  invoices: any[];
+  cheques: any[];
+  trialBalance: any[];
+  incomeStatement: any;
+  balanceSheet: any;
+  auditReport: any;
+}) {
+  const debit = data.trialBalance.reduce((sum, row) => sum + Number(row.totalDebit || 0), 0);
+  const credit = data.trialBalance.reduce((sum, row) => sum + Number(row.totalCredit || 0), 0);
+  const lowStock = data.products
+    .filter((p) => Number(p.stock || 0) <= Number(p.reorderPoint || 0))
+    .slice(0, 30)
+    .map((p) => ({ کد: p.sku, کالا: p.name, موجودی: p.stock, حد_سفارش: p.reorderPoint, واحد: p.unit }));
+  const openInvoices = data.invoices
+    .filter((invoice) => invoice.status === 'issued')
+    .reduce((sum, invoice) => sum + Number(invoice.creditAmount || 0), 0);
+  const pendingReceivableCheques = data.cheques
+    .filter((cheque) => cheque.direction === 'receivable' && !['cleared', 'cancelled', 'bounced'].includes(cheque.status))
+    .reduce((sum, cheque) => sum + Number(cheque.amount || 0), 0);
+  const pendingPayableCheques = data.cheques
+    .filter((cheque) => cheque.direction === 'payable' && !['cleared', 'cancelled', 'bounced'].includes(cheque.status))
+    .reduce((sum, cheque) => sum + Number(cheque.amount || 0), 0);
+  const bouncedCheques = data.cheques
+    .filter((cheque) => cheque.status === 'bounced')
+    .reduce((sum, cheque) => sum + Number(cheque.amount || 0), 0);
+
+  return JSON.stringify({
+    شرکت: data.companyName,
+    سال_مالی: data.fiscalYear,
+    تعداد_حساب‌ها: data.accounts.length,
+    تعداد_کالاها: data.products.length,
+    تعداد_طرف_حساب‌ها: data.parties.length,
+    تعداد_اسناد: data.vouchers.length,
+    تعداد_فاکتورها: data.invoices.length,
+    جمع_بدهکار_گردش: debit,
+    جمع_بستانکار_گردش: credit,
+    اختلاف_تراز_گردش: debit - credit,
+    مانده_فاکتورهای_باز: openInvoices,
+    چک‌های_دریافتنی_در_جریان: pendingReceivableCheques,
+    چک‌های_پرداختنی_در_جریان: pendingPayableCheques,
+    مبلغ_چک‌های_برگشتی: bouncedCheques,
+    کالاهای_رسیده_به_حد_سفارش: lowStock,
+    صورت_سود_و_زیان: data.incomeStatement,
+    ترازنامه: data.balanceSheet,
+    خلاصه_حسابرسی: data.auditReport,
+  });
+}
+
+export const LocalAIView: React.FC<{
+  onOpenProductDraft: (draft: Partial<Product>) => void;
+  onOpenInvoiceDraft: (draft: AIDraftInvoice) => void;
+}> = ({ onOpenProductDraft, onOpenInvoiceDraft }) => {
+  const {
+    profile, accounts, products, parties, vouchers, invoices, cheques,
+    trialBalance, incomeStatement, balanceSheet, auditReport,
+  } = useAccounting();
+  const [messages, setMessages] = useState<ChatMessage[]>([
+    { role: 'assistant', content: 'دستیار محلی Billion آماده راه‌اندازی است. ابتدا مدل را روی همین دستگاه بارگیری کن؛ پس از آن پرسش‌ها بدون ارسال اطلاعات مالی به سرورهای هوش مصنوعی پردازش می‌شوند.' },
+  ]);
+  const [input, setInput] = useState('');
+  const [productDraftText, setProductDraftText] = useState('');
+  const [productDraft, setProductDraft] = useState<Partial<Product> | null>(null);
+  const [invoiceDraftText, setInvoiceDraftText] = useState('');
+  const [invoiceDraft, setInvoiceDraft] = useState<AIDraftInvoice | null>(null);
+  const [invoiceDraftLoading, setInvoiceDraftLoading] = useState(false);
+  const [draftLoading, setDraftLoading] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [modelReady, setModelReady] = useState(false);
+  const [modelProgress, setModelProgress] = useState('');
+  const [error, setError] = useState('');
+  const [voiceState, setVoiceState] = useState<'idle' | 'listening'>('idle');
+  const [deviceCheck, setDeviceCheck] = useState<'not_checked' | 'checking' | 'ready' | 'unsupported'>('not_checked');
+  const [deviceInfo, setDeviceInfo] = useState('');
+  const engineRef = useRef<MLCEngine | null>(null);
+
+  const localContext = useMemo(() => buildLocalAccountingContext({
+    companyName: profile.companyName,
+    fiscalYear: profile.fiscalYear,
+    accounts, products, parties, vouchers, invoices, cheques,
+    trialBalance, incomeStatement, balanceSheet, auditReport,
+  }), [profile.companyName, profile.fiscalYear, accounts, products, parties, vouchers, invoices, cheques, trialBalance, incomeStatement, balanceSheet, auditReport]);
+
+  const startModel = async () => {
+    setError('');
+    setDeviceCheck('checking');
+    setDeviceInfo('');
+    if (!window.isSecureContext) {
+      setDeviceCheck('unsupported');
+      setError('برای دسترسی امن به WebGPU، برنامه باید از HTTPS یا محیط امن اجرا شود.');
+      return;
+    }
+    const gpu = (navigator as Navigator & { gpu?: { requestAdapter: () => Promise<{ features?: Set<string>; limits?: { maxBufferSize?: number } } | null> } }).gpu;
+    if (!gpu) {
+      setDeviceCheck('unsupported');
+      setError('این مرورگر WebGPU را ارائه نمی‌کند. در این دستگاه، موتور هوش مصنوعی محلی اجرا نشد و هیچ سرویس ابری جایگزین نمی‌شود.');
+      return;
+    }
+    try {
+      setLoading(true);
+      setModelProgress('در حال بررسی توان گرافیکی دستگاه…');
+      const adapter = await gpu.requestAdapter();
+      if (!adapter) {
+        setDeviceCheck('unsupported');
+        throw new Error('مرورگر WebGPU را دارد، اما آداپتور گرافیکی قابل استفاده پیدا نشد. ممکن است دستگاه، درایور یا تنظیمات مرورگر محدودیت داشته باشد.');
+      }
+      const maxBuffer = Number(adapter.limits?.maxBufferSize || 0);
+      const memory = (navigator as Navigator & { deviceMemory?: number }).deviceMemory;
+      setDeviceInfo([
+        'WebGPU فعال',
+        memory ? `حافظه تقریبی دستگاه: ${memory} GB` : '',
+        maxBuffer ? `حداکثر بافر GPU: ${Math.round(maxBuffer / 1024 / 1024)} MB` : '',
+      ].filter(Boolean).join(' • '));
+      setDeviceCheck('ready');
+      setModelProgress('سخت‌افزار سازگار شناسایی شد؛ در حال آماده‌سازی موتور محلی…');
+      const { CreateMLCEngine } = await import('@mlc-ai/web-llm');
+      const engine = await CreateMLCEngine(MODEL_ID, {
+        initProgressCallback: (report) => setModelProgress(report.text || 'در حال بارگیری مدل…'),
+      });
+      engineRef.current = engine;
+      setModelReady(true);
+      setModelProgress('مدل روی این دستگاه آماده است.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'بارگیری مدل محلی ناموفق بود.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const sendMessage = async (rawText = input) => {
+    const question = rawText.trim();
+    if (!question || !engineRef.current || loading) return;
+    const nextMessages: ChatMessage[] = [...messages, { role: 'user', content: question }];
+    setMessages(nextMessages);
+    setInput('');
+    setLoading(true);
+    setError('');
+    try {
+      const response = await engineRef.current.chat.completions.create({
+        messages: [
+          {
+            role: 'system',
+            content: 'تو دستیار حسابداری محلی نرم‌افزار Billion هستی. فقط بر اساس داده‌های ارائه‌شده پاسخ بده. اگر داده کافی نیست صریح بگو. اعداد را حدس نزن. محاسبات قطعی را از داده‌های خلاصه‌شده نقل کن و برای نتیجه‌گیری حسابرسی محدودیت را بیان کن. هرگز ادعا نکن سند، فاکتور، کالا یا پرداختی ثبت کرده‌ای. هر عملیات ثبتی فقط پیش‌نویس پیشنهادی است و باید در فرم رسمی و با تأیید کاربر ثبت شود. اطلاعات مالی محرمانه است و این مدل باید فقط روی دستگاه اجرا شود.\nداده‌های محلی شرکت:\n' + localContext,
+          },
+          ...nextMessages.map((message) => ({ role: message.role, content: message.content })),
+        ],
+        temperature: 0.2,
+        max_tokens: 700,
+      });
+      const answer = response.choices[0]?.message?.content;
+      setMessages((current) => [...current, { role: 'assistant', content: typeof answer === 'string' ? answer : 'پاسخی از مدل دریافت نشد.' }]);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'پردازش محلی ناموفق بود.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const generateProductDraft = async () => {
+    const request = productDraftText.trim();
+    if (!request || !engineRef.current || draftLoading) return;
+    setDraftLoading(true);
+    setError('');
+    setProductDraft(null);
+    try {
+      const response = await engineRef.current.chat.completions.create({
+        messages: [
+          {
+            role: 'system',
+            content: 'از متن کاربر فقط پیش‌نویس اطلاعات یک کالا برای فرم انبار استخراج کن. هیچ مقدار مالی، موجودی، کد کالا یا مشخصه‌ای را حدس نزن. هر فیلد نامشخص را null بگذار. فقط یک شیء JSON معتبر و بدون markdown برگردان با کلیدهای sku, barcode, name, category, warehouse, unit, secondaryUnit, kgPerCarton, bobbinUnit, bobbinsPerCarton, yarnCount, lotNumber, originCountry, buyPrice, sellPrice, stock, reorderPoint, vatExempt. اعداد باید عدد باشند و مقادیر نامشخص null باشند. واحد پول قیمت‌ها ریال است. هیچ توضیحی بیرون JSON ننویس.',
+          },
+          { role: 'user', content: request },
+        ],
+        temperature: 0.1,
+        max_tokens: 400,
+      });
+      const raw = response.choices[0]?.message?.content;
+      if (typeof raw !== 'string') throw new Error('مدل پیش‌نویس ساختاریافته‌ای برنگرداند.');
+      const jsonMatch = raw.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) throw new Error('خروجی مدل JSON معتبر نداشت؛ متن را دقیق‌تر وارد کن.');
+      const parsed = JSON.parse(jsonMatch[0]) as Record<string, unknown>;
+      const draft: Partial<Product> = {};
+      const stringFields = ['sku', 'barcode', 'name', 'category', 'warehouse', 'unit', 'secondaryUnit', 'bobbinUnit', 'yarnCount', 'lotNumber', 'originCountry'] as const;
+      stringFields.forEach((key) => {
+        if (typeof parsed[key] === 'string' && parsed[key]) {
+          Object.assign(draft, { [key]: String(parsed[key]).slice(0, 180) });
+        }
+      });
+      const numberFields = ['kgPerCarton', 'bobbinsPerCarton', 'buyPrice', 'sellPrice', 'stock', 'reorderPoint'] as const;
+      numberFields.forEach((key) => {
+        if (parsed[key] !== null && parsed[key] !== undefined && parsed[key] !== '') {
+          const normalizedValue = String(parsed[key])
+            .replace(/[۰-۹]/g, (digit) => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(digit)))
+            .replace(/[٠-٩]/g, (digit) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(digit)))
+            .replace(/[٬,]/g, '')
+            .replace(/٫/g, '.')
+            .trim();
+          const value = Number(normalizedValue);
+          if (Number.isFinite(value) && value >= 0) Object.assign(draft, { [key]: value });
+        }
+      });
+      if (typeof parsed.vatExempt === 'boolean') draft.vatExempt = parsed.vatExempt;
+      if (!draft.name) throw new Error('نام کالا از متن استخراج نشد. نام کالا را واضح‌تر بنویس.');
+      if (draft.sku && products.some((product) => product.sku.trim().toUpperCase() === draft.sku?.trim().toUpperCase())) {
+        throw new Error('کد کالای پیشنهادی از قبل در انبار وجود دارد. کد یکتای دیگری وارد کن.');
+      }
+      const proposedBarcode = draft.barcode?.trim().toUpperCase();
+      if (proposedBarcode && products.some((product) => (product.barcode || product.sku).trim().toUpperCase() === proposedBarcode)) {
+        throw new Error('بارکد پیشنهادی قبلاً برای کالای دیگری ثبت شده است.');
+      }
+      setProductDraft(draft);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'ساخت پیش‌نویس کالا ناموفق بود.');
+    } finally {
+      setDraftLoading(false);
+    }
+  };
+
+  const generateInvoiceDraft = async () => {
+    const request = invoiceDraftText.trim();
+    if (!request || !engineRef.current || invoiceDraftLoading) return;
+    setInvoiceDraftLoading(true);
+    setError('');
+    setInvoiceDraft(null);
+    try {
+      const productCatalog = products.map((product) => ({
+        id: product.id,
+        name: product.name,
+        sku: product.sku,
+        unit: product.unit,
+      }));
+      const partyCatalog = parties.map((party) => ({
+        id: party.id,
+        name: party.name,
+        type: party.partyType,
+      }));
+      const response = await engineRef.current.chat.completions.create({
+        messages: [
+          {
+            role: 'system',
+            content:
+              'از متن کاربر فقط پیش‌نویس فاکتور استخراج کن. نوع را فقط در صورت تصریح کاربر sale یا purchase یا proforma قرار بده؛ اگر نوع روشن نیست null بگذار. طرف‌حساب و کالاها را فقط با شناسه دقیق از فهرست‌های داده‌شده تطبیق بده؛ هر مورد نامشخص null باشد و هرگز شناسه نساز. مقدار quantityKg باید وزن به کیلوگرم باشد؛ اگر وزن مشخص نشده، null بگذار و تعداد کارتن را به وزن تبدیل نکن. unitPriceIrr قیمت هر کیلوگرم به ریال است؛ اگر صریحاً معلوم نیست null بگذار. discountIrr در صورت ذکر تخفیف مبلغی به ریال است و در غیر این صورت صفر. تاریخ را استخراج نکن. فقط JSON معتبر بدون markdown با ساختار {"invoiceType":"sale|purchase|proforma","partyId":null,"items":[{"productId":null,"quantityKg":null,"unitPriceIrr":null,"discountIrr":0}]} برگردان.\nکاتالوگ کالاها: ' +
+              JSON.stringify(productCatalog) +
+              '\nفهرست طرف‌حساب‌ها: ' +
+              JSON.stringify(partyCatalog),
+          },
+          { role: 'user', content: request },
+        ],
+        temperature: 0.1,
+        max_tokens: 500,
+      });
+      const raw = response.choices[0]?.message?.content;
+      if (typeof raw !== 'string') throw new Error('مدل پیش‌نویس فاکتور ساختاریافته‌ای برنگرداند.');
+      const jsonMatch = raw.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) throw new Error('خروجی مدل JSON معتبر نداشت؛ متن فاکتور را دقیق‌تر وارد کن.');
+      const parsed = JSON.parse(jsonMatch[0]) as Record<string, unknown>;
+      const parseNumber = (value: unknown): number | null => {
+        if (value === null || value === undefined || value === '') return null;
+        const normalized = String(value)
+          .replace(/[۰-۹]/g, (digit) => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(digit)))
+          .replace(/[٠-٩]/g, (digit) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(digit)))
+          .replace(/[٬,]/g, '')
+          .replace(/٫/g, '.')
+          .trim();
+        const number = Number(normalized);
+        return Number.isFinite(number) && number >= 0 ? number : null;
+      };
+      if (parsed.invoiceType !== 'sale' && parsed.invoiceType !== 'purchase' && parsed.invoiceType !== 'proforma') {
+        throw new Error('نوع فاکتور مشخص نیست؛ در متن صریحاً خرید، فروش یا پیش‌فاکتور را ذکر کن.');
+      }
+      const invoiceType = parsed.invoiceType;
+      const partyId =
+        typeof parsed.partyId === 'string' && parties.some((party) => party.id === parsed.partyId)
+          ? parsed.partyId
+          : undefined;
+      if (!Array.isArray(parsed.items) || parsed.items.length === 0) {
+        throw new Error('هیچ قلمی برای فاکتور استخراج نشد.');
+      }
+      const items: AIDraftInvoice['items'] = [];
+      for (const rawItem of parsed.items.slice(0, 30)) {
+        if (!rawItem || typeof rawItem !== 'object') continue;
+        const item = rawItem as Record<string, unknown>;
+        const productId =
+          typeof item.productId === 'string' && products.some((product) => product.id === item.productId)
+            ? item.productId
+            : undefined;
+        const quantity = parseNumber(item.quantityKg);
+        const unitPrice = parseNumber(item.unitPriceIrr);
+        const discount = parseNumber(item.discountIrr) ?? 0;
+        if (!productId) throw new Error('یکی از کالاها با کاتالوگ انبار تطبیق داده نشد؛ نام یا کد دقیق کالا را در متن بنویس.');
+        if (quantity === null || quantity <= 0) throw new Error('وزن یک یا چند قلم مشخص نیست؛ وزن را به کیلوگرم وارد کن.');
+        if (unitPrice === null) throw new Error('قیمت واحد یک یا چند قلم مشخص نیست؛ قیمت هر کیلوگرم را به ریال وارد کن.');
+        items.push({ productId, quantity: Math.round(quantity * 100) / 100, unitPrice: Math.round(unitPrice), discount: Math.round(discount) });
+      }
+      if (items.length === 0) throw new Error('قلم معتبر برای فاکتور پیدا نشد.');
+      setInvoiceDraft({ invoiceType, partyId, items });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'ساخت پیش‌نویس فاکتور ناموفق بود.');
+    } finally {
+      setInvoiceDraftLoading(false);
+    }
+  };
+
+  const startLocalVoice = async () => {
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      setError('تشخیص گفتار در این مرورگر در دسترس نیست. برای حفظ حریم خصوصی، از سرویس گفتار ابری استفاده نمی‌کنیم.');
+      return;
+    }
+    try {
+      if (typeof SpeechRecognition.available !== 'function' || typeof SpeechRecognition.install !== 'function') {
+        setError('این مرورگر ابزار بررسی و نصب بسته گفتار کاملاً محلی را ندارد؛ فرمان صوتی برای جلوگیری از ارسال صدا به سرویس بیرونی غیرفعال ماند.');
+        return;
+      }
+      const languageOptions = { langs: ['fa-IR'], processLocally: true };
+      const availability = await SpeechRecognition.available(languageOptions);
+      if (availability === 'unavailable') {
+        setError('بسته تشخیص گفتار فارسی برای پردازش محلی در این مرورگر قابل دریافت نیست. هیچ پردازش ابری فعال نمی‌شود.');
+        return;
+      }
+      if (availability !== 'available') {
+        setError('در حال نصب بسته زبان فارسی برای تشخیص گفتار محلی…');
+        const installed = await SpeechRecognition.install(languageOptions);
+        if (!installed) {
+          setError('نصب بسته گفتار فارسی موفق نشد. می‌توانی بعداً دوباره تلاش کنی؛ صدای تو به سرویس ابری ارسال نمی‌شود.');
+          return;
+        }
+        setError('بسته زبان فارسی نصب شد. دوباره دکمه میکروفون را بزن تا گفتار به‌صورت محلی تشخیص داده شود.');
+        return;
+      }
+
+      const recognition = new SpeechRecognition();
+      if (!('processLocally' in recognition)) {
+        setError('این مرورگر امکان اجبار پردازش گفتار روی دستگاه را ندارد؛ فرمان صوتی غیرفعال ماند.');
+        return;
+      }
+      recognition.processLocally = true;
+      recognition.lang = 'fa-IR';
+      recognition.interimResults = false;
+      recognition.maxAlternatives = 1;
+      recognition.onresult = (event: any) => {
+        const transcript = event.results?.[0]?.[0]?.transcript || '';
+        setInput(transcript);
+        setVoiceState('idle');
+      };
+      recognition.onerror = (event: any) => {
+        setVoiceState('idle');
+        setError(event?.error === 'language-not-supported'
+          ? 'بسته زبان فارسی روی دستگاه در دسترس نیست.'
+          : 'تشخیص گفتار محلی انجام نشد. مجوز میکروفون و بسته زبان فارسی را بررسی کن.');
+      };
+      recognition.onend = () => setVoiceState('idle');
+      setVoiceState('listening');
+      recognition.start();
+    } catch (err) {
+      setVoiceState('idle');
+      setError(err instanceof Error ? err.message : 'شروع میکروفون محلی ناموفق بود.');
+    }
+  };
+
+  return (
+    <div className="mx-auto max-w-5xl space-y-5" dir="rtl">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-xl font-bold text-slate-900 dark:text-white flex items-center gap-2"><Sparkles className="w-5 h-5 text-teal-600" /> موتور هوش مصنوعی محلی Billion</h1>
+          <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">پردازش هوش مصنوعی روی دستگاه و بدون کلید API؛ همگام‌سازی عادی Billion با Supabase طبق تنظیمات برنامه جداگانه ادامه دارد.</p>
+        </div>
+        <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300"><ShieldCheck className="h-4 w-4" /> مدل محلی</span>
+      </div>
+
+      <div className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
+        <div className="flex items-start gap-3">
+          <Cpu className="mt-0.5 h-5 w-5 shrink-0 text-teal-700" />
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-bold text-slate-900 dark:text-white">مدل روی دستگاه: Qwen 2.5 — 0.5B</div>
+            <p className="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400">حجم حافظه گرافیکی تخمینی این مدل حدود ۹۴۵ مگابایت است. بارگیری اولیه مدل به اینترنت و فضای ذخیره‌سازی نیاز دارد؛ پس از ذخیره شدن مدل، استنتاج روی دستگاه انجام می‌شود. پشتیبانی WebGPU و حافظه کافی الزامی است.</p>
+            {deviceInfo && <p className="mt-2 text-[11px] text-emerald-700 dark:text-emerald-300">{deviceInfo}</p>}
+            <div className="mt-3 flex flex-wrap items-center gap-3">
+              <button onClick={startModel} disabled={loading || modelReady} className="rounded-lg bg-teal-700 px-4 py-2 text-xs font-semibold text-white disabled:opacity-50">{modelReady ? 'مدل آماده است' : loading ? 'در حال آماده‌سازی…' : 'بارگیری و راه‌اندازی مدل محلی'}</button>
+              {modelReady && <span className="text-xs font-semibold text-emerald-600">آماده پردازش محلی</span>}
+              {deviceCheck === 'checking' && <span className="text-xs text-slate-500">در حال بررسی WebGPU…</span>}
+              {deviceCheck === 'unsupported' && <span className="text-xs text-rose-600">این دستگاه فعلاً سازگار تشخیص داده نشد</span>}
+            </div>
+            {modelProgress && <p className="mt-2 break-words text-xs text-slate-500">{modelProgress}</p>}
+          </div>
+        </div>
+      </div>
+
+      {error && <div role="alert" className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs leading-5 text-rose-700 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-300">{error}</div>}
+
+      <div className="overflow-hidden rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+        <div className="flex items-center gap-2 border-b border-slate-200 px-4 py-3 dark:border-slate-800"><Bot className="h-4 w-4 text-teal-700" /><span className="text-sm font-bold text-slate-800 dark:text-white">گفت‌وگو و تحلیل حسابداری</span><span className="mr-auto text-[10px] text-slate-400">{modelReady ? 'پردازش روی همین دستگاه' : 'ابتدا مدل را راه‌اندازی کن'}</span></div>
+        <div className="max-h-[420px] min-h-[220px] space-y-3 overflow-y-auto p-4">
+          {messages.map((message, index) => <div key={index} className={message.role === 'user' ? 'mr-8 rounded-xl bg-teal-50 p-3 text-xs leading-6 text-slate-800 dark:bg-teal-950/40 dark:text-slate-100' : 'ml-8 rounded-xl bg-slate-100 p-3 text-xs leading-6 text-slate-800 dark:bg-slate-800 dark:text-slate-100'}><div className="mb-1 text-[10px] font-bold text-slate-500">{message.role === 'user' ? 'شما' : 'دستیار محلی'}</div><p className="whitespace-pre-wrap">{message.content}</p></div>)}
+          {loading && <div className="text-xs text-slate-500">مدل محلی در حال پردازش است…</div>}
+        </div>
+        <div className="border-t border-slate-200 p-3 dark:border-slate-800">
+          <div className="flex items-end gap-2">
+            <textarea value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void sendMessage(); } }} placeholder="مثلاً: کالاهای زیر حد سفارش را تحلیل کن…" rows={2} className="min-h-11 flex-1 resize-y rounded-lg border border-slate-200 bg-white p-3 text-xs outline-none focus:border-teal-600 dark:border-slate-700 dark:bg-slate-950" />
+            <button type="button" onClick={startLocalVoice} disabled={voiceState === 'listening'} title="ورودی گفتار فقط محلی" className="rounded-lg border border-slate-200 p-3 text-slate-600 disabled:opacity-50 dark:border-slate-700 dark:text-slate-300">{voiceState === 'listening' ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}</button>
+            <button type="button" onClick={() => void sendMessage()} disabled={!modelReady || loading || !input.trim()} className="rounded-lg bg-teal-700 p-3 text-white disabled:opacity-40"><Send className="h-4 w-4" /></button>
+          </div>
+          <p className="mt-2 text-[10px] text-slate-400">فرمان‌های ثبت کالا و فاکتور در این مرحله فقط به پیش‌نویس تبدیل می‌شوند؛ هیچ سندی بدون تأیید در دفاتر ثبت نمی‌شود.</p>
+        </div>
+      </div>
+
+      <section className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
+        <div className="mb-2 text-sm font-bold text-slate-900 dark:text-white">پیش‌نویس هوشمند کالا</div>
+        <p className="mb-3 text-xs leading-5 text-slate-500">مشخصات کالا را به زبان طبیعی بنویس. مدل فقط اطلاعاتی را که صریحاً گفته‌ای استخراج می‌کند؛ مقادیر نامشخص در فرم خالی می‌مانند.</p>
+        <textarea
+          value={productDraftText}
+          onChange={(event) => setProductDraftText(event.target.value)}
+          rows={3}
+          placeholder="مثلاً: کالای نخ پلی‌استر DTY کد Y-150، واحد کیلوگرم، قیمت خرید ۱۸۵۰۰۰۰ ریال، قیمت فروش ۲۱۸۰۰۰۰ ریال، موجودی ۳۰۰ کیلوگرم…"
+          className="w-full rounded-lg border border-slate-200 bg-white p-3 text-xs leading-6 outline-none focus:border-teal-600 dark:border-slate-700 dark:bg-slate-950"
+        />
+        <button type="button" onClick={() => void generateProductDraft()} disabled={!modelReady || draftLoading || !productDraftText.trim()} className="mt-3 rounded-lg bg-teal-700 px-4 py-2 text-xs font-semibold text-white disabled:opacity-40">
+          {draftLoading ? 'در حال استخراج…' : 'ساخت پیش‌نویس کالا'}
+        </button>
+        {productDraft && (
+          <div className="mt-4 rounded-lg border border-teal-200 bg-teal-50 p-3 dark:border-teal-900 dark:bg-teal-950/30">
+            <div className="text-xs font-bold text-teal-900 dark:text-teal-200">پیش‌نویس آماده بررسی</div>
+            <div className="mt-2 grid gap-1 text-xs text-slate-700 dark:text-slate-200 sm:grid-cols-2">
+              <div>نام: {productDraft.name || 'تکمیل نشده'}</div>
+              <div>کد کالا: {productDraft.sku || 'نیازمند تکمیل'}</div>
+              <div>واحد: {productDraft.unit || 'کیلوگرم (پیش‌فرض فرم)'}</div>
+              <div>قیمت خرید: {productDraft.buyPrice ?? 'نیازمند تکمیل'}</div>
+              <div>قیمت فروش: {productDraft.sellPrice ?? 'نیازمند تکمیل'}</div>
+              <div>موجودی: {productDraft.stock ?? 'نیازمند تکمیل'}</div>
+            </div>
+            <p className="mt-2 text-[10px] leading-5 text-slate-500">این مرحله هیچ اطلاعاتی را ثبت نمی‌کند. فرم انبار باز می‌شود تا مقادیر را بازبینی و سپس در صورت تأیید خودت ذخیره کنی.</p>
+            <button type="button" onClick={() => onOpenProductDraft(productDraft)} className="mt-3 rounded-lg bg-teal-700 px-4 py-2 text-xs font-semibold text-white">انتقال به فرم ثبت کالا</button>
+          </div>
+        )}
+      </section>
+
+      <section className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
+        <div className="mb-2 text-sm font-bold text-slate-900 dark:text-white">پیش‌نویس هوشمند فاکتور خرید و فروش</div>
+        <p className="mb-3 text-xs leading-5 text-slate-500">متن فاکتور را بنویس. مدل کالا و طرف‌حساب را فقط با فهرست محلی تطبیق می‌دهد؛ وزن و قیمت نامشخص پذیرفته نمی‌شود و هیچ فاکتوری خودکار ثبت نخواهد شد.</p>
+        <textarea
+          value={invoiceDraftText}
+          onChange={(event) => setInvoiceDraftText(event.target.value)}
+          rows={3}
+          placeholder="مثلاً: فاکتور خرید از شرکت نمونه، ۲۰۰ کیلوگرم نخ پلی‌استر DTY کد Y-150، قیمت هر کیلو ۱۸۵۰۰۰۰ ریال…"
+          className="w-full rounded-lg border border-slate-200 bg-white p-3 text-xs leading-6 outline-none focus:border-teal-600 dark:border-slate-700 dark:bg-slate-950"
+        />
+        <button type="button" onClick={() => void generateInvoiceDraft()} disabled={!modelReady || invoiceDraftLoading || !invoiceDraftText.trim()} className="mt-3 rounded-lg bg-teal-700 px-4 py-2 text-xs font-semibold text-white disabled:opacity-40">
+          {invoiceDraftLoading ? 'در حال استخراج…' : 'ساخت پیش‌نویس فاکتور'}
+        </button>
+        {invoiceDraft && (
+          <div className="mt-4 rounded-lg border border-teal-200 bg-teal-50 p-3 dark:border-teal-900 dark:bg-teal-950/30">
+            <div className="text-xs font-bold text-teal-900 dark:text-teal-200">پیش‌نویس آماده بررسی</div>
+            <div className="mt-2 space-y-2 text-xs text-slate-700 dark:text-slate-200">
+              <div>نوع: {invoiceDraft.invoiceType === 'purchase' ? 'خرید' : invoiceDraft.invoiceType === 'proforma' ? 'پیش‌فاکتور' : 'فروش'}</div>
+              <div>طرف‌حساب: {parties.find((party) => party.id === invoiceDraft.partyId)?.name || 'در فرم انتخاب شود'}</div>
+              {invoiceDraft.items.map((item, index) => {
+                const product = products.find((candidate) => candidate.id === item.productId);
+                return <div key={item.productId + index} className="rounded-md border border-teal-100 p-2 dark:border-teal-900">
+                  {product?.name || 'کالای نامشخص'} — وزن: {item.quantity.toLocaleString('fa-IR')} کیلوگرم — قیمت واحد: {item.unitPrice.toLocaleString('fa-IR')} ریال
+                </div>;
+              })}
+            </div>
+            <p className="mt-2 text-[10px] leading-5 text-slate-500">این مرحله فقط اطلاعات را به فرم اصلی فاکتور منتقل می‌کند. محاسبه مالیات، تخفیف، موجودی، مانده و ثبت سند طبق منطق فعلی Billion انجام می‌شود؛ پیش از ذخیره، فرم را بررسی کن.</p>
+            <button type="button" onClick={() => onOpenInvoiceDraft(invoiceDraft)} className="mt-3 rounded-lg bg-teal-700 px-4 py-2 text-xs font-semibold text-white">انتقال به فرم فاکتور</button>
+          </div>
+        )}
+      </section>
+
+      <div className="grid gap-3 sm:grid-cols-3">
+        <div className="rounded-lg border border-slate-200 p-3 dark:border-slate-800"><div className="text-xs font-bold">دستیار حسابداری</div><p className="mt-1 text-[11px] text-slate-500">پاسخ بر اساس داده‌های موجود شرکت</p></div>
+        <div className="rounded-lg border border-slate-200 p-3 dark:border-slate-800"><div className="text-xs font-bold">تحلیل مالی و حسابرسی</div><p className="mt-1 text-[11px] text-slate-500">خلاصه تراز، موجودی و کنترل‌های قابل دسترس</p></div>
+        <div className="rounded-lg border border-slate-200 p-3 dark:border-slate-800"><div className="text-xs font-bold">فرمان صوتی محلی</div><p className="mt-1 text-[11px] text-slate-500">فعال فقط در مرورگر دارای تشخیص گفتار روی دستگاه</p></div>
+      </div>
+    </div>
+  );
+};

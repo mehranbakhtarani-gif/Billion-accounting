@@ -30,7 +30,8 @@
     "vite-plugin-pwa": "^2.0.0",
     "@capacitor/core": "^7.4.3",
     "@capacitor/android": "^7.4.3",
-    "@supabase/supabase-js": "^2.95.3"
+    "@supabase/supabase-js": "^2.95.3",
+    "@mlc-ai/web-llm": "^0.2.89"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",

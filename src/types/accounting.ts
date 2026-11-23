@@ -17,7 +17,8 @@ export type ActiveModule =
   | 'corporate'
   | 'reports'
   | 'studio'
-  | 'settings';
+  | 'settings'
+  | 'ai';
 
 export type ExchangeRateType = 'market' | 'exchange_center' | 'nima' | 'agreed';
 
