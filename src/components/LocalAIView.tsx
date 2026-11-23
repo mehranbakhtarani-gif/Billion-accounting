@@ -234,7 +234,7 @@ export const LocalAIView: React.FC = () => {
           <Cpu className="mt-0.5 h-5 w-5 shrink-0 text-teal-700" />
           <div className="min-w-0 flex-1">
             <div className="text-sm font-bold text-slate-900 dark:text-white">مدل روی دستگاه: Qwen 2.5 — 0.5B</div>
-            <p className="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400">بارگیری اولیه مدل به اینترنت و فضای ذخیره‌سازی نیاز دارد. پس از ذخیره شدن مدل، استنتاج محلی انجام می‌شود. پشتیبانی WebGPU و حافظه کافی دستگاه الزامی است.</p>
+            <p className="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400">حجم حافظه گرافیکی تخمینی این مدل حدود ۹۴۵ مگابایت است. بارگیری اولیه مدل به اینترنت و فضای ذخیره‌سازی نیاز دارد؛ پس از ذخیره شدن مدل، استنتاج روی دستگاه انجام می‌شود. پشتیبانی WebGPU و حافظه کافی الزامی است.</p>
             {deviceInfo && <p className="mt-2 text-[11px] text-emerald-700 dark:text-emerald-300">{deviceInfo}</p>}
             <div className="mt-3 flex flex-wrap items-center gap-3">
               <button onClick={startModel} disabled={loading || modelReady} className="rounded-lg bg-teal-700 px-4 py-2 text-xs font-semibold text-white disabled:opacity-50">{modelReady ? 'مدل آماده است' : loading ? 'در حال آماده‌سازی…' : 'بارگیری و راه‌اندازی مدل محلی'}</button>
