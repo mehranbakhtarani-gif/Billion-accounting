@@ -261,7 +261,7 @@ export const LocalAIView: React.FC<{
           {
             role: 'system',
             content:
-              'از متن کاربر فقط پیش‌نویس فاکتور استخراج کن. فقط نوع sale یا purchase یا proforma مجاز است؛ اگر نوع روشن نیست sale بگذار. طرف‌حساب و کالاها را فقط با شناسه دقیق از فهرست‌های داده‌شده تطبیق بده؛ هر مورد نامشخص null باشد و هرگز شناسه نساز. مقدار quantityKg باید وزن به کیلوگرم باشد؛ اگر وزن مشخص نشده، null بگذار و تعداد کارتن را به وزن تبدیل نکن. unitPriceIrr قیمت هر کیلوگرم به ریال است؛ اگر صریحاً معلوم نیست null بگذار. discountIrr در صورت ذکر تخفیف مبلغی به ریال است و در غیر این صورت صفر. تاریخ را استخراج نکن. فقط JSON معتبر بدون markdown با ساختار {"invoiceType":"sale|purchase|proforma","partyId":null,"items":[{"productId":null,"quantityKg":null,"unitPriceIrr":null,"discountIrr":0}]} برگردان.\nکاتالوگ کالاها: ' +
+              'از متن کاربر فقط پیش‌نویس فاکتور استخراج کن. نوع را فقط در صورت تصریح کاربر sale یا purchase یا proforma قرار بده؛ اگر نوع روشن نیست null بگذار. طرف‌حساب و کالاها را فقط با شناسه دقیق از فهرست‌های داده‌شده تطبیق بده؛ هر مورد نامشخص null باشد و هرگز شناسه نساز. مقدار quantityKg باید وزن به کیلوگرم باشد؛ اگر وزن مشخص نشده، null بگذار و تعداد کارتن را به وزن تبدیل نکن. unitPriceIrr قیمت هر کیلوگرم به ریال است؛ اگر صریحاً معلوم نیست null بگذار. discountIrr در صورت ذکر تخفیف مبلغی به ریال است و در غیر این صورت صفر. تاریخ را استخراج نکن. فقط JSON معتبر بدون markdown با ساختار {"invoiceType":"sale|purchase|proforma","partyId":null,"items":[{"productId":null,"quantityKg":null,"unitPriceIrr":null,"discountIrr":0}]} برگردان.\nکاتالوگ کالاها: ' +
               JSON.stringify(productCatalog) +
               '\nفهرست طرف‌حساب‌ها: ' +
               JSON.stringify(partyCatalog),
@@ -287,10 +287,10 @@ export const LocalAIView: React.FC<{
         const number = Number(normalized);
         return Number.isFinite(number) && number >= 0 ? number : null;
       };
-      const invoiceType =
-        parsed.invoiceType === 'purchase' || parsed.invoiceType === 'proforma'
-          ? parsed.invoiceType
-          : 'sale';
+      if (parsed.invoiceType !== 'sale' && parsed.invoiceType !== 'purchase' && parsed.invoiceType !== 'proforma') {
+        throw new Error('نوع فاکتور مشخص نیست؛ در متن صریحاً خرید، فروش یا پیش‌فاکتور را ذکر کن.');
+      }
+      const invoiceType = parsed.invoiceType;
       const partyId =
         typeof parsed.partyId === 'string' && parties.some((party) => party.id === parsed.partyId)
           ? parsed.partyId
