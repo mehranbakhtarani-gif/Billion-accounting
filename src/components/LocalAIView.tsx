@@ -2,6 +2,12 @@ import React, { useMemo, useRef, useState } from 'react';
 import { Bot, Cpu, Mic, MicOff, Send, ShieldCheck, Sparkles } from 'lucide-react';
 import type { MLCEngine } from '@mlc-ai/web-llm';
 import type { Product } from '../types/accounting';
+
+type AIDraftInvoice = {
+  invoiceType: 'sale' | 'purchase' | 'proforma';
+  partyId?: string;
+  items: Array<{ productId: string; quantity: number; unitPrice: number; discount?: number }>;
+};
 import { useAccounting } from '../context/AccountingContext';
 
 type ChatMessage = { role: 'user' | 'assistant'; content: string };
@@ -63,7 +69,10 @@ function buildLocalAccountingContext(data: {
   });
 }
 
-export const LocalAIView: React.FC<{ onOpenProductDraft: (draft: Partial<Product>) => void }> = ({ onOpenProductDraft }) => {
+export const LocalAIView: React.FC<{
+  onOpenProductDraft: (draft: Partial<Product>) => void;
+  onOpenInvoiceDraft: (draft: AIDraftInvoice) => void;
+}> = ({ onOpenProductDraft, onOpenInvoiceDraft }) => {
   const {
     profile, accounts, products, parties, vouchers, invoices, cheques,
     trialBalance, incomeStatement, balanceSheet, auditReport,
@@ -74,6 +83,9 @@ export const LocalAIView: React.FC<{ onOpenProductDraft: (draft: Partial<Product
   const [input, setInput] = useState('');
   const [productDraftText, setProductDraftText] = useState('');
   const [productDraft, setProductDraft] = useState<Partial<Product> | null>(null);
+  const [invoiceDraftText, setInvoiceDraftText] = useState('');
+  const [invoiceDraft, setInvoiceDraft] = useState<AIDraftInvoice | null>(null);
+  const [invoiceDraftLoading, setInvoiceDraftLoading] = useState(false);
   const [draftLoading, setDraftLoading] = useState(false);
   const [loading, setLoading] = useState(false);
   const [modelReady, setModelReady] = useState(false);
@@ -226,6 +238,91 @@ export const LocalAIView: React.FC<{ onOpenProductDraft: (draft: Partial<Product
     }
   };
 
+  const generateInvoiceDraft = async () => {
+    const request = invoiceDraftText.trim();
+    if (!request || !engineRef.current || invoiceDraftLoading) return;
+    setInvoiceDraftLoading(true);
+    setError('');
+    setInvoiceDraft(null);
+    try {
+      const productCatalog = products.map((product) => ({
+        id: product.id,
+        name: product.name,
+        sku: product.sku,
+        unit: product.unit,
+      }));
+      const partyCatalog = parties.map((party) => ({
+        id: party.id,
+        name: party.name,
+        type: party.partyType,
+      }));
+      const response = await engineRef.current.chat.completions.create({
+        messages: [
+          {
+            role: 'system',
+            content:
+              'از متن کاربر فقط پیش‌نویس فاکتور استخراج کن. فقط نوع sale یا purchase یا proforma مجاز است؛ اگر نوع روشن نیست sale بگذار. طرف‌حساب و کالاها را فقط با شناسه دقیق از فهرست‌های داده‌شده تطبیق بده؛ هر مورد نامشخص null باشد و هرگز شناسه نساز. مقدار quantityKg باید وزن به کیلوگرم باشد؛ اگر وزن مشخص نشده، null بگذار و تعداد کارتن را به وزن تبدیل نکن. unitPriceIrr قیمت هر کیلوگرم به ریال است؛ اگر صریحاً معلوم نیست null بگذار. discountIrr در صورت ذکر تخفیف مبلغی به ریال است و در غیر این صورت صفر. تاریخ را استخراج نکن. فقط JSON معتبر بدون markdown با ساختار {"invoiceType":"sale|purchase|proforma","partyId":null,"items":[{"productId":null,"quantityKg":null,"unitPriceIrr":null,"discountIrr":0}]} برگردان.\nکاتالوگ کالاها: ' +
+              JSON.stringify(productCatalog) +
+              '\nفهرست طرف‌حساب‌ها: ' +
+              JSON.stringify(partyCatalog),
+          },
+          { role: 'user', content: request },
+        ],
+        temperature: 0.1,
+        max_tokens: 500,
+      });
+      const raw = response.choices[0]?.message?.content;
+      if (typeof raw !== 'string') throw new Error('مدل پیش‌نویس فاکتور ساختاریافته‌ای برنگرداند.');
+      const jsonMatch = raw.match(/\\{[\\s\\S]*\\}/);
+      if (!jsonMatch) throw new Error('خروجی مدل JSON معتبر نداشت؛ متن فاکتور را دقیق‌تر وارد کن.');
+      const parsed = JSON.parse(jsonMatch[0]) as Record<string, unknown>;
+      const parseNumber = (value: unknown): number | null => {
+        if (value === null || value === undefined || value === '') return null;
+        const normalized = String(value)
+          .replace(/[۰-۹]/g, (digit) => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(digit)))
+          .replace(/[٠-٩]/g, (digit) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(digit)))
+          .replace(/[٬,]/g, '')
+          .replace(/٫/g, '.')
+          .trim();
+        const number = Number(normalized);
+        return Number.isFinite(number) && number >= 0 ? number : null;
+      };
+      const invoiceType =
+        parsed.invoiceType === 'purchase' || parsed.invoiceType === 'proforma'
+          ? parsed.invoiceType
+          : 'sale';
+      const partyId =
+        typeof parsed.partyId === 'string' && parties.some((party) => party.id === parsed.partyId)
+          ? parsed.partyId
+          : undefined;
+      if (!Array.isArray(parsed.items) || parsed.items.length === 0) {
+        throw new Error('هیچ قلمی برای فاکتور استخراج نشد.');
+      }
+      const items: AIDraftInvoice['items'] = [];
+      for (const rawItem of parsed.items.slice(0, 30)) {
+        if (!rawItem || typeof rawItem !== 'object') continue;
+        const item = rawItem as Record<string, unknown>;
+        const productId =
+          typeof item.productId === 'string' && products.some((product) => product.id === item.productId)
+            ? item.productId
+            : undefined;
+        const quantity = parseNumber(item.quantityKg);
+        const unitPrice = parseNumber(item.unitPriceIrr);
+        const discount = parseNumber(item.discountIrr) ?? 0;
+        if (!productId) throw new Error('یکی از کالاها با کاتالوگ انبار تطبیق داده نشد؛ نام یا کد دقیق کالا را در متن بنویس.');
+        if (quantity === null || quantity <= 0) throw new Error('وزن یک یا چند قلم مشخص نیست؛ وزن را به کیلوگرم وارد کن.');
+        if (unitPrice === null) throw new Error('قیمت واحد یک یا چند قلم مشخص نیست؛ قیمت هر کیلوگرم را به ریال وارد کن.');
+        items.push({ productId, quantity: Math.round(quantity * 100) / 100, unitPrice: Math.round(unitPrice), discount: Math.round(discount) });
+      }
+      if (items.length === 0) throw new Error('قلم معتبر برای فاکتور پیدا نشد.');
+      setInvoiceDraft({ invoiceType, partyId, items });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'ساخت پیش‌نویس فاکتور ناموفق بود.');
+    } finally {
+      setInvoiceDraftLoading(false);
+    }
+  };
+
   const startLocalVoice = async () => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SpeechRecognition) {
@@ -355,6 +452,38 @@ export const LocalAIView: React.FC<{ onOpenProductDraft: (draft: Partial<Product
             </div>
             <p className="mt-2 text-[10px] leading-5 text-slate-500">این مرحله هیچ اطلاعاتی را ثبت نمی‌کند. فرم انبار باز می‌شود تا مقادیر را بازبینی و سپس در صورت تأیید خودت ذخیره کنی.</p>
             <button type="button" onClick={() => onOpenProductDraft(productDraft)} className="mt-3 rounded-lg bg-teal-700 px-4 py-2 text-xs font-semibold text-white">انتقال به فرم ثبت کالا</button>
+          </div>
+        )}
+      </section>
+
+      <section className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
+        <div className="mb-2 text-sm font-bold text-slate-900 dark:text-white">پیش‌نویس هوشمند فاکتور خرید و فروش</div>
+        <p className="mb-3 text-xs leading-5 text-slate-500">متن فاکتور را بنویس. مدل کالا و طرف‌حساب را فقط با فهرست محلی تطبیق می‌دهد؛ وزن و قیمت نامشخص پذیرفته نمی‌شود و هیچ فاکتوری خودکار ثبت نخواهد شد.</p>
+        <textarea
+          value={invoiceDraftText}
+          onChange={(event) => setInvoiceDraftText(event.target.value)}
+          rows={3}
+          placeholder="مثلاً: فاکتور خرید از شرکت نمونه، ۲۰۰ کیلوگرم نخ پلی‌استر DTY کد Y-150، قیمت هر کیلو ۱۸۵۰۰۰۰ ریال…"
+          className="w-full rounded-lg border border-slate-200 bg-white p-3 text-xs leading-6 outline-none focus:border-teal-600 dark:border-slate-700 dark:bg-slate-950"
+        />
+        <button type="button" onClick={() => void generateInvoiceDraft()} disabled={!modelReady || invoiceDraftLoading || !invoiceDraftText.trim()} className="mt-3 rounded-lg bg-teal-700 px-4 py-2 text-xs font-semibold text-white disabled:opacity-40">
+          {invoiceDraftLoading ? 'در حال استخراج…' : 'ساخت پیش‌نویس فاکتور'}
+        </button>
+        {invoiceDraft && (
+          <div className="mt-4 rounded-lg border border-teal-200 bg-teal-50 p-3 dark:border-teal-900 dark:bg-teal-950/30">
+            <div className="text-xs font-bold text-teal-900 dark:text-teal-200">پیش‌نویس آماده بررسی</div>
+            <div className="mt-2 space-y-2 text-xs text-slate-700 dark:text-slate-200">
+              <div>نوع: {invoiceDraft.invoiceType === 'purchase' ? 'خرید' : invoiceDraft.invoiceType === 'proforma' ? 'پیش‌فاکتور' : 'فروش'}</div>
+              <div>طرف‌حساب: {parties.find((party) => party.id === invoiceDraft.partyId)?.name || 'در فرم انتخاب شود'}</div>
+              {invoiceDraft.items.map((item, index) => {
+                const product = products.find((candidate) => candidate.id === item.productId);
+                return <div key={item.productId + index} className="rounded-md border border-teal-100 p-2 dark:border-teal-900">
+                  {product?.name || 'کالای نامشخص'} — وزن: {item.quantity.toLocaleString('fa-IR')} کیلوگرم — قیمت واحد: {item.unitPrice.toLocaleString('fa-IR')} ریال
+                </div>;
+              })}
+            </div>
+            <p className="mt-2 text-[10px] leading-5 text-slate-500">این مرحله فقط اطلاعات را به فرم اصلی فاکتور منتقل می‌کند. محاسبه مالیات، تخفیف، موجودی، مانده و ثبت سند طبق منطق فعلی Billion انجام می‌شود؛ پیش از ذخیره، فرم را بررسی کن.</p>
+            <button type="button" onClick={() => onOpenInvoiceDraft(invoiceDraft)} className="mt-3 rounded-lg bg-teal-700 px-4 py-2 text-xs font-semibold text-white">انتقال به فرم فاکتور</button>
           </div>
         )}
       </section>
