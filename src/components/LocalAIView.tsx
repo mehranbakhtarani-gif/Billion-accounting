@@ -199,7 +199,13 @@ export const LocalAIView: React.FC<{ onOpenProductDraft: (draft: Partial<Product
       const numberFields = ['kgPerCarton', 'bobbinsPerCarton', 'buyPrice', 'sellPrice', 'stock', 'reorderPoint'] as const;
       numberFields.forEach((key) => {
         if (parsed[key] !== null && parsed[key] !== undefined && parsed[key] !== '') {
-          const value = Number(parsed[key]);
+          const normalizedValue = String(parsed[key])
+            .replace(/[۰-۹]/g, (digit) => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(digit)))
+            .replace(/[٠-٩]/g, (digit) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(digit)))
+            .replace(/[٬,]/g, '')
+            .replace(/٫/g, '.')
+            .trim();
+          const value = Number(normalizedValue);
           if (Number.isFinite(value) && value >= 0) Object.assign(draft, { [key]: value });
         }
       });
