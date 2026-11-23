@@ -66,9 +66,16 @@ function computeBobbins(stockKg: number, kgPerCarton?: number, bobbinsPerCarton?
   return Math.round((stockKg / kgPerCarton) * bobbinsPerCarton);
 }
 
-export const InventoryView: React.FC<{ initialIntent?: string; clearIntent?: () => void }> = ({
+export const InventoryView: React.FC<{
+  initialIntent?: string;
+  clearIntent?: () => void;
+  initialProductDraft?: Partial<Product> | null;
+  clearProductDraft?: () => void;
+}> = ({
   initialIntent,
   clearIntent,
+  initialProductDraft,
+  clearProductDraft,
 }) => {
   const {
     products,
@@ -201,6 +208,31 @@ export const InventoryView: React.FC<{ initialIntent?: string; clearIntent?: () 
     else if (initialIntent === 'bulk-price') setShowPriceModal(true);
     clearIntent?.();
   }, [initialIntent, clearIntent]);
+
+  useEffect(() => {
+    if (!initialProductDraft) return;
+    setEditingProduct(null);
+    setSku(typeof initialProductDraft.sku === 'string' ? initialProductDraft.sku : '');
+    setBarcode(typeof initialProductDraft.barcode === 'string' ? initialProductDraft.barcode : '');
+    setName(typeof initialProductDraft.name === 'string' ? initialProductDraft.name : '');
+    setCategory(initialProductDraft.category || YARN_CATEGORIES[0]);
+    setWarehouse(initialProductDraft.warehouse || YARN_WAREHOUSES[0]);
+    setItemUnit(initialProductDraft.unit || 'کیلوگرم');
+    setSecondaryUnit(initialProductDraft.secondaryUnit || 'کارتن');
+    setKgPerCarton(Number.isFinite(initialProductDraft.kgPerCarton) ? Number(initialProductDraft.kgPerCarton) : 0);
+    setBobbinUnit(initialProductDraft.bobbinUnit || 'بوبین');
+    setBobbinsPerCarton(Number.isFinite(initialProductDraft.bobbinsPerCarton) ? Number(initialProductDraft.bobbinsPerCarton) : 0);
+    setYarnCount(initialProductDraft.yarnCount || '');
+    setLotNumber(initialProductDraft.lotNumber || '');
+    setOriginCountry(initialProductDraft.originCountry || '');
+    setBuyPrice(Number.isFinite(initialProductDraft.buyPrice) ? Number(initialProductDraft.buyPrice) : 0);
+    setSellPrice(Number.isFinite(initialProductDraft.sellPrice) ? Number(initialProductDraft.sellPrice) : 0);
+    setStock(Number.isFinite(initialProductDraft.stock) ? Number(initialProductDraft.stock) : 0);
+    setReorderPoint(Number.isFinite(initialProductDraft.reorderPoint) ? Number(initialProductDraft.reorderPoint) : 0);
+    setVatExempt(typeof initialProductDraft.vatExempt === 'boolean' ? initialProductDraft.vatExempt : false);
+    setShowForm(true);
+    clearProductDraft?.();
+  }, [initialProductDraft, clearProductDraft]);
 
   const warehouses = useMemo(
     () => Array.from(new Set(products.map((p) => p.warehouse))),
