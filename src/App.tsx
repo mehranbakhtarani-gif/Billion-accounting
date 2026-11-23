@@ -26,7 +26,7 @@ import {
   Sun,
   X,
 } from 'lucide-react';
-import { ActiveModule } from './types/accounting';
+import { ActiveModule, Product } from './types/accounting';
 import { useAccounting } from './context/AccountingContext';
 import { DashboardView } from './components/DashboardView';
 import { InvoicesView } from './components/InvoicesView';
@@ -311,6 +311,7 @@ export default function App() {
 
   const [activeModule, setActiveModule] = useState<ActiveModule>('dashboard');
   const [moduleIntent, setModuleIntent] = useState<string | undefined>(undefined);
+  const [aiProductDraft, setAiProductDraft] = useState<Partial<Product> | null>(null);
   const [activeSubKey, setActiveSubKey] = useState<string | null>(null);
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({
     base: true,
@@ -383,6 +384,11 @@ export default function App() {
     }
     setMobileMenuOpen(false);
   }, []);
+
+  const openAIDraftedProduct = useCallback((draft: Partial<Product>) => {
+    setAiProductDraft(draft);
+    navigate('inventory', 'new-product');
+  }, [navigate]);
 
   // Read PWA deep-link shortcut URL params on initial load
   useEffect(() => {
@@ -1000,6 +1006,8 @@ export default function App() {
             <InventoryView
               initialIntent={moduleIntent}
               clearIntent={() => setModuleIntent(undefined)}
+              initialProductDraft={aiProductDraft}
+              clearProductDraft={() => setAiProductDraft(null)}
             />
           )}
           {activeModule === 'treasury' && (
@@ -1034,7 +1042,7 @@ export default function App() {
             />
           )}
           {activeModule === 'studio' && <BrandStudioView />}
-          {activeModule === 'ai' && <LocalAIView />}
+          {activeModule === 'ai' && <LocalAIView onOpenProductDraft={openAIDraftedProduct} />}
           {activeModule === 'settings' && (
             <SettingsView
               initialIntent={moduleIntent}
