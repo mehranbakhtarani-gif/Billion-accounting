@@ -28,10 +28,16 @@ function buildLocalAccountingContext(data: {
     .slice(0, 30)
     .map((p) => ({ کد: p.sku, کالا: p.name, موجودی: p.stock, حد_سفارش: p.reorderPoint, واحد: p.unit }));
   const openInvoices = data.invoices
-    .filter((invoice) => invoice.status !== 'cancelled')
+    .filter((invoice) => invoice.status === 'issued')
     .reduce((sum, invoice) => sum + Number(invoice.creditAmount || 0), 0);
-  const dueCheques = data.cheques
-    .filter((cheque) => !['cleared', 'cancelled'].includes(cheque.status))
+  const pendingReceivableCheques = data.cheques
+    .filter((cheque) => cheque.direction === 'receivable' && !['cleared', 'cancelled', 'bounced'].includes(cheque.status))
+    .reduce((sum, cheque) => sum + Number(cheque.amount || 0), 0);
+  const pendingPayableCheques = data.cheques
+    .filter((cheque) => cheque.direction === 'payable' && !['cleared', 'cancelled', 'bounced'].includes(cheque.status))
+    .reduce((sum, cheque) => sum + Number(cheque.amount || 0), 0);
+  const bouncedCheques = data.cheques
+    .filter((cheque) => cheque.status === 'bounced')
     .reduce((sum, cheque) => sum + Number(cheque.amount || 0), 0);
 
   return JSON.stringify({
@@ -46,7 +52,9 @@ function buildLocalAccountingContext(data: {
     جمع_بستانکار_گردش: credit,
     اختلاف_تراز_گردش: debit - credit,
     مانده_فاکتورهای_باز: openInvoices,
-    مبلغ_چک‌های_تسویه_نشده: dueCheques,
+    چک‌های_دریافتنی_در_جریان: pendingReceivableCheques,
+    چک‌های_پرداختنی_در_جریان: pendingPayableCheques,
+    مبلغ_چک‌های_برگشتی: bouncedCheques,
     کالاهای_رسیده_به_حد_سفارش: lowStock,
     صورت_سود_و_زیان: data.incomeStatement,
     ترازنامه: data.balanceSheet,
