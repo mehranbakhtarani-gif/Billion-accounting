@@ -1,6 +1,7 @@
 import React, { useMemo, useRef, useState } from 'react';
 import { Bot, Cpu, Mic, MicOff, Send, ShieldCheck, Sparkles } from 'lucide-react';
 import type { MLCEngine } from '@mlc-ai/web-llm';
+import type { Product } from '../types/accounting';
 import { useAccounting } from '../context/AccountingContext';
 
 type ChatMessage = { role: 'user' | 'assistant'; content: string };
@@ -62,7 +63,7 @@ function buildLocalAccountingContext(data: {
   });
 }
 
-export const LocalAIView: React.FC = () => {
+export const LocalAIView: React.FC<{ onOpenProductDraft: (draft: Partial<Product>) => void }> = ({ onOpenProductDraft }) => {
   const {
     profile, accounts, products, parties, vouchers, invoices, cheques,
     trialBalance, incomeStatement, balanceSheet, auditReport,
@@ -71,6 +72,9 @@ export const LocalAIView: React.FC = () => {
     { role: 'assistant', content: 'دستیار محلی Billion آماده راه‌اندازی است. ابتدا مدل را روی همین دستگاه بارگیری کن؛ پس از آن پرسش‌ها بدون ارسال اطلاعات مالی به سرورهای هوش مصنوعی پردازش می‌شوند.' },
   ]);
   const [input, setInput] = useState('');
+  const [productDraftText, setProductDraftText] = useState('');
+  const [productDraft, setProductDraft] = useState<Partial<Product> | null>(null);
+  const [draftLoading, setDraftLoading] = useState(false);
   const [loading, setLoading] = useState(false);
   const [modelReady, setModelReady] = useState(false);
   const [modelProgress, setModelProgress] = useState('');
@@ -159,6 +163,53 @@ export const LocalAIView: React.FC = () => {
       setError(err instanceof Error ? err.message : 'پردازش محلی ناموفق بود.');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const generateProductDraft = async () => {
+    const request = productDraftText.trim();
+    if (!request || !engineRef.current || draftLoading) return;
+    setDraftLoading(true);
+    setError('');
+    setProductDraft(null);
+    try {
+      const response = await engineRef.current.chat.completions.create({
+        messages: [
+          {
+            role: 'system',
+            content: 'از متن کاربر فقط پیش‌نویس اطلاعات یک کالا برای فرم انبار استخراج کن. هیچ مقدار مالی، موجودی، کد کالا یا مشخصه‌ای را حدس نزن. هر فیلد نامشخص را null بگذار. فقط یک شیء JSON معتبر و بدون markdown برگردان با کلیدهای sku, barcode, name, category, warehouse, unit, secondaryUnit, kgPerCarton, bobbinUnit, bobbinsPerCarton, yarnCount, lotNumber, originCountry, buyPrice, sellPrice, stock, reorderPoint, vatExempt. اعداد باید عدد باشند و مقادیر نامشخص null باشند. واحد پول قیمت‌ها ریال است. هیچ توضیحی بیرون JSON ننویس.',
+          },
+          { role: 'user', content: request },
+        ],
+        temperature: 0.1,
+        max_tokens: 400,
+      });
+      const raw = response.choices[0]?.message?.content;
+      if (typeof raw !== 'string') throw new Error('مدل پیش‌نویس ساختاریافته‌ای برنگرداند.');
+      const jsonMatch = raw.match(/\\{[\\s\\S]*\\}/);
+      if (!jsonMatch) throw new Error('خروجی مدل JSON معتبر نداشت؛ متن را دقیق‌تر وارد کن.');
+      const parsed = JSON.parse(jsonMatch[0]) as Record<string, unknown>;
+      const draft: Partial<Product> = {};
+      const stringFields = ['sku', 'barcode', 'name', 'category', 'warehouse', 'unit', 'secondaryUnit', 'bobbinUnit', 'yarnCount', 'lotNumber', 'originCountry'] as const;
+      stringFields.forEach((key) => {
+        if (typeof parsed[key] === 'string' && parsed[key]) {
+          (draft as Record<string, unknown>)[key] = String(parsed[key]).slice(0, 180);
+        }
+      });
+      const numberFields = ['kgPerCarton', 'bobbinsPerCarton', 'buyPrice', 'sellPrice', 'stock', 'reorderPoint'] as const;
+      numberFields.forEach((key) => {
+        if (parsed[key] !== null && parsed[key] !== undefined && parsed[key] !== '') {
+          const value = Number(parsed[key]);
+          if (Number.isFinite(value) && value >= 0) (draft as Record<string, unknown>)[key] = value;
+        }
+      });
+      if (typeof parsed.vatExempt === 'boolean') draft.vatExempt = parsed.vatExempt;
+      if (!draft.name) throw new Error('نام کالا از متن استخراج نشد. نام کالا را واضح‌تر بنویس.');
+      setProductDraft(draft);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'ساخت پیش‌نویس کالا ناموفق بود.');
+    } finally {
+      setDraftLoading(false);
     }
   };
 
@@ -264,6 +315,36 @@ export const LocalAIView: React.FC = () => {
           <p className="mt-2 text-[10px] text-slate-400">فرمان‌های ثبت کالا و فاکتور در این مرحله فقط به پیش‌نویس تبدیل می‌شوند؛ هیچ سندی بدون تأیید در دفاتر ثبت نمی‌شود.</p>
         </div>
       </div>
+
+      <section className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
+        <div className="mb-2 text-sm font-bold text-slate-900 dark:text-white">پیش‌نویس هوشمند کالا</div>
+        <p className="mb-3 text-xs leading-5 text-slate-500">مشخصات کالا را به زبان طبیعی بنویس. مدل فقط اطلاعاتی را که صریحاً گفته‌ای استخراج می‌کند؛ مقادیر نامشخص در فرم خالی می‌مانند.</p>
+        <textarea
+          value={productDraftText}
+          onChange={(event) => setProductDraftText(event.target.value)}
+          rows={3}
+          placeholder="مثلاً: کالای نخ پلی‌استر DTY کد Y-150، واحد کیلوگرم، قیمت خرید ۱۸۵۰۰۰۰ ریال، قیمت فروش ۲۱۸۰۰۰۰ ریال، موجودی ۳۰۰ کیلوگرم…"
+          className="w-full rounded-lg border border-slate-200 bg-white p-3 text-xs leading-6 outline-none focus:border-teal-600 dark:border-slate-700 dark:bg-slate-950"
+        />
+        <button type="button" onClick={() => void generateProductDraft()} disabled={!modelReady || draftLoading || !productDraftText.trim()} className="mt-3 rounded-lg bg-teal-700 px-4 py-2 text-xs font-semibold text-white disabled:opacity-40">
+          {draftLoading ? 'در حال استخراج…' : 'ساخت پیش‌نویس کالا'}
+        </button>
+        {productDraft && (
+          <div className="mt-4 rounded-lg border border-teal-200 bg-teal-50 p-3 dark:border-teal-900 dark:bg-teal-950/30">
+            <div className="text-xs font-bold text-teal-900 dark:text-teal-200">پیش‌نویس آماده بررسی</div>
+            <div className="mt-2 grid gap-1 text-xs text-slate-700 dark:text-slate-200 sm:grid-cols-2">
+              <div>نام: {productDraft.name || 'تکمیل نشده'}</div>
+              <div>کد کالا: {productDraft.sku || 'نیازمند تکمیل'}</div>
+              <div>واحد: {productDraft.unit || 'کیلوگرم (پیش‌فرض فرم)'}</div>
+              <div>قیمت خرید: {productDraft.buyPrice ?? 'نیازمند تکمیل'}</div>
+              <div>قیمت فروش: {productDraft.sellPrice ?? 'نیازمند تکمیل'}</div>
+              <div>موجودی: {productDraft.stock ?? 'نیازمند تکمیل'}</div>
+            </div>
+            <p className="mt-2 text-[10px] leading-5 text-slate-500">این مرحله هیچ اطلاعاتی را ثبت نمی‌کند. فرم انبار باز می‌شود تا مقادیر را بازبینی و سپس در صورت تأیید خودت ذخیره کنی.</p>
+            <button type="button" onClick={() => onOpenProductDraft(productDraft)} className="mt-3 rounded-lg bg-teal-700 px-4 py-2 text-xs font-semibold text-white">انتقال به فرم ثبت کالا</button>
+          </div>
+        )}
+      </section>
 
       <div className="grid gap-3 sm:grid-cols-3">
         <div className="rounded-lg border border-slate-200 p-3 dark:border-slate-800"><div className="text-xs font-bold">دستیار حسابداری</div><p className="mt-1 text-[11px] text-slate-500">پاسخ بر اساس داده‌های موجود شرکت</p></div>
