@@ -325,7 +325,7 @@ export const InvoicesView: React.FC<{
     setPartyId(
       initialInvoiceDraft.partyId && parties.some((party) => party.id === initialInvoiceDraft.partyId)
         ? initialInvoiceDraft.partyId
-        : (parties[0]?.id ?? '')
+        : ''
     );
     setDate(getTodayShamsi());
     setDueDate(getTodayShamsi());
@@ -654,7 +654,7 @@ export const InvoicesView: React.FC<{
       showToast('جمع دریافتی نقد، بانک و چک نمی‌تواند بیشتر از مبلغ کل فاکتور باشد.');
       return;
     }
-    const party = parties.find((p) => p.id === partyId) ?? parties[0];
+    const party = parties.find((p) => p.id === partyId);
     if (!party) {
       showToast('لطفاً طرف‌حساب را انتخاب کنید.');
       return;
