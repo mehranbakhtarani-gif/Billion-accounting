@@ -288,9 +288,9 @@ export const LocalAIView: React.FC<{ onOpenProductDraft: (draft: Partial<Product
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="text-xl font-bold text-slate-900 dark:text-white flex items-center gap-2"><Sparkles className="w-5 h-5 text-teal-600" /> موتور هوش مصنوعی محلی Billion</h1>
-          <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">پردازش روی دستگاه؛ بدون کلید API و بدون ارسال اطلاعات مالی به سرویس هوش مصنوعی ابری</p>
+          <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">پردازش هوش مصنوعی روی دستگاه و بدون کلید API؛ همگام‌سازی عادی Billion با Supabase طبق تنظیمات برنامه جداگانه ادامه دارد.</p>
         </div>
-        <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300"><ShieldCheck className="h-4 w-4" /> حالت فقط محلی</span>
+        <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300"><ShieldCheck className="h-4 w-4" /> مدل محلی</span>
       </div>
 
       <div className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
