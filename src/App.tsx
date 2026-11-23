@@ -20,6 +20,7 @@ import {
   Package,
   Search,
   Settings,
+  Sparkles,
   ShieldCheck,
   Ship,
   Sun,
@@ -39,6 +40,7 @@ import { CorporateView } from './components/CorporateView';
 import { ReportsView } from './components/ReportsView';
 import { BrandStudioView } from './components/BrandStudioView';
 import { SettingsView } from './components/SettingsView';
+import { LocalAIView } from './components/LocalAIView';
 import { CurrenciesView } from './components/CurrenciesView';
 import { ImportAndSubcontractView } from './components/ImportAndSubcontractView';
 import { OfflineIndicator, PWAInstallButton } from './components/PWAInstallButton';
@@ -70,6 +72,12 @@ interface MenuGroup {
 }
 
 const BILLION_MENU_TREE: MenuGroup[] = [
+  {
+    id: 'ai',
+    label: 'هوش مصنوعی محلی',
+    icon: Sparkles,
+    directModule: 'ai',
+  },
   {
     id: 'dashboard',
     label: 'داشبورد مدیریت مالی',
@@ -211,6 +219,7 @@ const ALL_MODULES: ActiveModule[] = [
   'reports',
   'studio',
   'settings',
+  'ai',
 ];
 
 function findGroupIdForModule(mod: ActiveModule, intent?: string): string {
@@ -1025,6 +1034,7 @@ export default function App() {
             />
           )}
           {activeModule === 'studio' && <BrandStudioView />}
+          {activeModule === 'ai' && <LocalAIView />}
           {activeModule === 'settings' && (
             <SettingsView
               initialIntent={moduleIntent}
