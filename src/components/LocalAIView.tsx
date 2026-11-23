@@ -211,6 +211,13 @@ export const LocalAIView: React.FC<{ onOpenProductDraft: (draft: Partial<Product
       });
       if (typeof parsed.vatExempt === 'boolean') draft.vatExempt = parsed.vatExempt;
       if (!draft.name) throw new Error('نام کالا از متن استخراج نشد. نام کالا را واضح‌تر بنویس.');
+      if (draft.sku && products.some((product) => product.sku.trim().toUpperCase() === draft.sku?.trim().toUpperCase())) {
+        throw new Error('کد کالای پیشنهادی از قبل در انبار وجود دارد. کد یکتای دیگری وارد کن.');
+      }
+      const proposedBarcode = draft.barcode?.trim().toUpperCase();
+      if (proposedBarcode && products.some((product) => (product.barcode || product.sku).trim().toUpperCase() === proposedBarcode)) {
+        throw new Error('بارکد پیشنهادی قبلاً برای کالای دیگری ثبت شده است.');
+      }
       setProductDraft(draft);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'ساخت پیش‌نویس کالا ناموفق بود.');
