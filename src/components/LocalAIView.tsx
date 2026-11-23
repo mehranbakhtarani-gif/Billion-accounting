@@ -169,9 +169,30 @@ export const LocalAIView: React.FC = () => {
       return;
     }
     try {
+      if (typeof SpeechRecognition.available !== 'function' || typeof SpeechRecognition.install !== 'function') {
+        setError('این مرورگر ابزار بررسی و نصب بسته گفتار کاملاً محلی را ندارد؛ فرمان صوتی برای جلوگیری از ارسال صدا به سرویس بیرونی غیرفعال ماند.');
+        return;
+      }
+      const languageOptions = { langs: ['fa-IR'], processLocally: true };
+      const availability = await SpeechRecognition.available(languageOptions);
+      if (availability === 'unavailable') {
+        setError('بسته تشخیص گفتار فارسی برای پردازش محلی در این مرورگر قابل دریافت نیست. هیچ پردازش ابری فعال نمی‌شود.');
+        return;
+      }
+      if (availability !== 'available') {
+        setError('در حال نصب بسته زبان فارسی برای تشخیص گفتار محلی…');
+        const installed = await SpeechRecognition.install(languageOptions);
+        if (!installed) {
+          setError('نصب بسته گفتار فارسی موفق نشد. می‌توانی بعداً دوباره تلاش کنی؛ صدای تو به سرویس ابری ارسال نمی‌شود.');
+          return;
+        }
+        setError('بسته زبان فارسی نصب شد. دوباره دکمه میکروفون را بزن تا گفتار به‌صورت محلی تشخیص داده شود.');
+        return;
+      }
+
       const recognition = new SpeechRecognition();
       if (!('processLocally' in recognition)) {
-        setError('این مرورگر تشخیص گفتار کاملاً روی دستگاه را پشتیبانی نمی‌کند؛ برای جلوگیری از ارسال صدا به سرویس بیرونی، فرمان صوتی غیرفعال ماند.');
+        setError('این مرورگر امکان اجبار پردازش گفتار روی دستگاه را ندارد؛ فرمان صوتی غیرفعال ماند.');
         return;
       }
       recognition.processLocally = true;
@@ -183,16 +204,18 @@ export const LocalAIView: React.FC = () => {
         setInput(transcript);
         setVoiceState('idle');
       };
-      recognition.onerror = () => {
+      recognition.onerror = (event: any) => {
         setVoiceState('idle');
-        setError('تشخیص گفتار محلی انجام نشد. بسته زبان فارسی ممکن است روی دستگاه نصب نباشد.');
+        setError(event?.error === 'language-not-supported'
+          ? 'بسته زبان فارسی روی دستگاه در دسترس نیست.'
+          : 'تشخیص گفتار محلی انجام نشد. مجوز میکروفون و بسته زبان فارسی را بررسی کن.');
       };
       recognition.onend = () => setVoiceState('idle');
       setVoiceState('listening');
       recognition.start();
     } catch (err) {
       setVoiceState('idle');
-      setError(err instanceof Error ? err.message : 'شروع میکروفون ناموفق بود.');
+      setError(err instanceof Error ? err.message : 'شروع میکروفون محلی ناموفق بود.');
     }
   };
 
