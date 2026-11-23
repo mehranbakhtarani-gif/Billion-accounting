@@ -83,10 +83,18 @@ interface DraftInvoiceRow {
   expiryDate?: string;
 }
 
-export const InvoicesView: React.FC<{ initialIntent?: string; clearIntent?: () => void }> = ({
-  initialIntent,
-  clearIntent,
-}) => {
+type AIDraftInvoice = {
+  invoiceType: 'sale' | 'purchase' | 'proforma';
+  partyId?: string;
+  items: Array<{ productId: string; quantity: number; unitPrice: number; discount?: number }>;
+};
+
+export const InvoicesView: React.FC<{
+  initialIntent?: string;
+  clearIntent?: () => void;
+  initialInvoiceDraft?: AIDraftInvoice | null;
+  clearInvoiceDraft?: () => void;
+}> = ({ initialIntent, clearIntent, initialInvoiceDraft, clearInvoiceDraft }) => {
   const {
     invoices,
     parties,
@@ -280,6 +288,54 @@ export const InvoicesView: React.FC<{ initialIntent?: string; clearIntent?: () =
     else if (initialIntent === 'filter-purchase') setFilterType('purchase');
     clearIntent?.();
   }, [initialIntent, clearIntent]);
+
+  useEffect(() => {
+    if (!initialInvoiceDraft) return;
+    const validRows = initialInvoiceDraft.items
+      .map((item) => {
+        const product = products.find((candidate) => candidate.id === item.productId);
+        if (!product || !Number.isFinite(item.quantity) || item.quantity <= 0) return null;
+        const quantity = Math.round(item.quantity * 100) / 100;
+        const kgPerCarton = product.kgPerCarton && product.kgPerCarton > 0 ? product.kgPerCarton : 0;
+        const bobbinsPerCarton = product.bobbinsPerCarton && product.bobbinsPerCarton > 0 ? product.bobbinsPerCarton : 0;
+        return {
+          productId: product.id,
+          quantity,
+          cartonCount: kgPerCarton > 0 ? Math.round((quantity / kgPerCarton) * 100) / 100 : 0,
+          bobbinCount: kgPerCarton > 0 && bobbinsPerCarton > 0 ? Math.round((quantity / kgPerCarton) * bobbinsPerCarton) : 0,
+          unitPrice: Math.max(0, Math.round(item.unitPrice)),
+          discount: Math.max(0, Math.round(item.discount ?? 0)),
+          lotNumber: product.lotNumber || '',
+          receivedDate: getLocalIsoDate(),
+          expiryDate: '',
+        } satisfies DraftInvoiceRow;
+      })
+      .filter((row): row is DraftInvoiceRow => row !== null);
+
+    if (validRows.length === 0) {
+      showToast('پیش‌نویس هوشمند قلم کالای معتبر ندارد؛ کالاها را در انبار بررسی کن.');
+      clearInvoiceDraft?.();
+      return;
+    }
+
+    setInvoiceType(initialInvoiceDraft.invoiceType);
+    setApplyVat(true);
+    setCurrencyCode(BASE_CURRENCY_CODE);
+    setExchangeRate(1);
+    setPartyId(
+      initialInvoiceDraft.partyId && parties.some((party) => party.id === initialInvoiceDraft.partyId)
+        ? initialInvoiceDraft.partyId
+        : (parties[0]?.id ?? '')
+    );
+    setDate(getTodayShamsi());
+    setDueDate(getTodayShamsi());
+    setPaidCash(0);
+    setPaidBank(0);
+    setPaidCheque(0);
+    setDraftItems(validRows);
+    setShowComposer(true);
+    clearInvoiceDraft?.();
+  }, [initialInvoiceDraft, clearInvoiceDraft, products, parties, showToast]);
 
   // Exact integer Rial computation alongside foreign-currency equivalents (zero rounding drift)
   const computedItems: InvoiceItem[] = useMemo(() => {
