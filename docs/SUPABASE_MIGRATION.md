@@ -1,42 +1,49 @@
-# Billion — Supabase-only architecture
+# Billion — Supabase architecture and migration
 
-Status: Firebase/Firestore application dependencies and configuration have been removed from the repository. The React accounting data context now uses Supabase Auth, Postgres, RLS, RPC transactions, and Realtime.
-
-Target project: **Holoo pro** (`qsdlthvnfmjbodtdkbqc`). The unrelated `Glass-Accounting` project is not used.
+Target Supabase project: **Billion** (`pnzxxdaxvjfacztussxl`, region `eu-west-1`). The previous Holoo pro Supabase project is not the target for this repository.
 
 ## Active application path
 
-- Browser-safe client: `src/lib/supabaseClient.ts`.
-- Passwordless auth and enrollment: `src/lib/supabaseEnrollment.ts`.
+- Browser client: `src/lib/supabaseClient.ts` (publishable key only).
+- Passwordless session and enrollment: `src/lib/supabaseEnrollment.ts`.
 - Company-scoped accounting records: `public.billion_records`.
 - Company membership: `public.billion_company_members`.
 - Device registry and one-time invitations: `public.billion_company_devices`, `public.billion_company_invites`.
-- Atomic multi-record write RPC: `billion_apply_record_batch`.
+- Atomic batch write RPC: `billion_apply_record_batch`.
+- Device heartbeat RPC: `billion_touch_device`.
 - Realtime subscription: Supabase Realtime on `billion_records`.
-- The app uses local IndexedDB for offline snapshots; Supabase is the cloud authority after a device has been enrolled.
+- Offline snapshots and outbox: local IndexedDB. Supabase is the cloud authority after enrollment.
 
-## Required one-time Supabase dashboard setup
+## Database migration order
 
-1. Authentication → Sign In / Providers → enable **Anonymous Sign-Ins**.
-2. Edge Functions → Secrets → set `BILLION_BOOTSTRAP_TOKEN` to a newly generated random value of at least 32 characters. Keep it server-side; never place it in source code or a `VITE_*` variable.
-3. On the first installation, select “first device” and enter that bootstrap token. This creates the single company and owner membership.
-4. The owner selects “invite device” to create a single-use invite valid for 24 hours. Enter the invite token on each of the other two installations.
-5. Enrollment is capped at three active devices. The invitation and membership backend enforces this cap; device IDs are metadata, not credentials.
+The repository migration files are versioned in the same order as the applied project history:
 
-## Data-loss acceptance and migration boundary
+1. `20261123001513_billion_core_schema_secure_enrollment.sql`
+2. `20261123001517_billion_inventory_lots_fifo_records.sql`
+3. `20261123001518_billion_device_aware_operation_log.sql`
+4. `20261123001546_billion_harden_enrollment_rpc.sql`
+5. `20261123001607_billion_invoker_rls_accounting_writes.sql`
 
-The old Firebase adapter, SDK dependency, app configuration, Firestore rules, and PWA Firebase network routes have been removed. No Firestore export/import is performed, as the owner explicitly accepted losing the previous cloud data.
+The baseline is additive and leaves the legacy `holoo_apex_*` tables untouched. It creates one-company, membership, device, invite, record and operation-log structures. The later migrations add the FIFO record types, device sequencing, atomic idempotent batch writes and invoker-based RLS policies.
 
-Existing local IndexedDB snapshots may still be present on devices, but they are not automatically uploaded or merged into the new Supabase company. The first company bootstrap creates a fresh seed dataset. Export any local data you later decide to retain before clearing app storage.
+## One-time setup still required
 
-## Security
+1. Supabase Authentication → Sign In / Providers → enable **Anonymous Sign-Ins**. This is required by `signInAnonymously()` in the PWA. It has not been verified as enabled through the available project-management connection.
+2. The first installation uses the one-time bootstrap token provisioned for the project. Only its SHA-256 hash is stored in the non-exposed `billion_private.bootstrap_credentials` schema; the raw token is not committed to GitHub or put in a Vite variable.
+3. After bootstrap, the owner creates one-time invitations, each valid for 24 hours. The raw invitation is shown once; only its hash is stored.
+4. The database enforces a maximum of three active devices. Device IDs are metadata, not credentials.
 
-- The browser contains only the Supabase publishable key.
-- Service-role credentials remain inside Supabase Edge Functions.
-- Database reads/writes are scoped to the authenticated company membership through RLS.
-- Atomic writes are applied through a Postgres function and cannot write across company IDs.
-- Anonymous auth is passwordless but each installation has its own Supabase user identity. One-time company invites establish membership; sharing a device ID does not grant access.
+## Security model
 
-## Validation still required
+- The PWA contains only a publishable key. Service-role credentials are used only by the deployed `billion-enrollment` Edge Function.
+- The Edge Function requires a valid Supabase JWT (`verify_jwt=true`) and checks the caller identity before enrollment.
+- Reads and writes are scoped by RLS membership. Accounting batch writes and device heartbeat use `SECURITY INVOKER`; bootstrap/invite-consumption RPCs are restricted to `service_role`.
+- Invitation and bootstrap secrets are stored as SHA-256 hashes and are single-use. Invite expiry is 24 hours.
+- Inventory lot movements are append-only at the database policy and RPC layers.
 
-GitHub Actions type-check, tests, and production build must pass on the final branch head. Then test the bootstrap and invitation flow in Supabase with three real installations, including record creation, edit, delete, and realtime propagation. Do not treat the application as production-ready until those end-to-end checks pass.
+## Current validation status
+
+- The core tables and five ordered migrations are applied to project `pnzxxdaxvjfacztussxl`.
+- `billion-enrollment` is deployed with JWT verification enabled.
+- Security advisors show no public/authenticated-executable SECURITY DEFINER function warnings. Remaining RLS-without-policy notices are intentional for the invite table (service-role-only) and untouched legacy Holoo tables.
+- No company or accounting records have been created yet. Anonymous Auth must be enabled, then bootstrap and three-device end-to-end tests must pass before production use.
