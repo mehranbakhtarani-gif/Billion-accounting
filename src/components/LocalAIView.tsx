@@ -128,7 +128,6 @@ export const LocalAIView: React.FC = () => {
       setModelProgress('مدل روی این دستگاه آماده است.');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'بارگیری مدل محلی ناموفق بود.');
-      if (deviceCheck !== 'ready') setDeviceCheck('unsupported');
     } finally {
       setLoading(false);
     }
