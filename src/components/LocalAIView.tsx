@@ -1,6 +1,6 @@
 import React, { useMemo, useRef, useState } from 'react';
-import { Bot, Cpu, Mic, MicOff, Send, ShieldCheck, Sparkles, Volume2, X } from 'lucide-react';
-import { CreateMLCEngine, type MLCEngine } from '@mlc-ai/web-llm';
+import { Bot, Cpu, Mic, MicOff, Send, ShieldCheck, Sparkles } from 'lucide-react';
+import type { MLCEngine } from '@mlc-ai/web-llm';
 import { useAccounting } from '../context/AccountingContext';
 
 type ChatMessage = { role: 'user' | 'assistant'; content: string };
@@ -86,6 +86,7 @@ export const LocalAIView: React.FC = () => {
     try {
       setLoading(true);
       setModelProgress('در حال آماده‌سازی موتور محلی…');
+      const { CreateMLCEngine } = await import('@mlc-ai/web-llm');
       const engine = await CreateMLCEngine(MODEL_ID, {
         initProgressCallback: (report) => setModelProgress(report.text || 'در حال بارگیری مدل…'),
       });
