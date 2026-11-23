@@ -193,14 +193,14 @@ export const LocalAIView: React.FC<{ onOpenProductDraft: (draft: Partial<Product
       const stringFields = ['sku', 'barcode', 'name', 'category', 'warehouse', 'unit', 'secondaryUnit', 'bobbinUnit', 'yarnCount', 'lotNumber', 'originCountry'] as const;
       stringFields.forEach((key) => {
         if (typeof parsed[key] === 'string' && parsed[key]) {
-          (draft as Record<string, unknown>)[key] = String(parsed[key]).slice(0, 180);
+          Object.assign(draft, { [key]: String(parsed[key]).slice(0, 180) });
         }
       });
       const numberFields = ['kgPerCarton', 'bobbinsPerCarton', 'buyPrice', 'sellPrice', 'stock', 'reorderPoint'] as const;
       numberFields.forEach((key) => {
         if (parsed[key] !== null && parsed[key] !== undefined && parsed[key] !== '') {
           const value = Number(parsed[key]);
-          if (Number.isFinite(value) && value >= 0) (draft as Record<string, unknown>)[key] = value;
+          if (Number.isFinite(value) && value >= 0) Object.assign(draft, { [key]: value });
         }
       });
       if (typeof parsed.vatExempt === 'boolean') draft.vatExempt = parsed.vatExempt;
