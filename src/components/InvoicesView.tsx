@@ -291,14 +291,14 @@ export const InvoicesView: React.FC<{
 
   useEffect(() => {
     if (!initialInvoiceDraft) return;
-    const validRows = initialInvoiceDraft.items
-      .map((item) => {
+    const validRows: DraftInvoiceRow[] = initialInvoiceDraft.items
+      .flatMap((item): DraftInvoiceRow[] => {
         const product = products.find((candidate) => candidate.id === item.productId);
-        if (!product || !Number.isFinite(item.quantity) || item.quantity <= 0) return null;
+        if (!product || !Number.isFinite(item.quantity) || item.quantity <= 0) return [];
         const quantity = Math.round(item.quantity * 100) / 100;
         const kgPerCarton = product.kgPerCarton && product.kgPerCarton > 0 ? product.kgPerCarton : 0;
         const bobbinsPerCarton = product.bobbinsPerCarton && product.bobbinsPerCarton > 0 ? product.bobbinsPerCarton : 0;
-        return {
+        return [{
           productId: product.id,
           quantity,
           cartonCount: kgPerCarton > 0 ? Math.round((quantity / kgPerCarton) * 100) / 100 : 0,
@@ -308,9 +308,8 @@ export const InvoicesView: React.FC<{
           lotNumber: product.lotNumber || '',
           receivedDate: getLocalIsoDate(),
           expiryDate: '',
-        } satisfies DraftInvoiceRow;
-      })
-      .filter((row): row is DraftInvoiceRow => row !== null);
+        }];
+      });
 
     if (validRows.length === 0) {
       showToast('پیش‌نویس هوشمند قلم کالای معتبر ندارد؛ کالاها را در انبار بررسی کن.');
